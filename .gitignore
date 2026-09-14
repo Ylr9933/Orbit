@@ -1,0 +1,99 @@
+# Local runtime data, experiment outputs, and extra working trees.
+# Root anchoring keeps similarly named source and fixture directories trackable.
+/var/
+/data/
+/datasets/
+/artifacts/
+/runs/
+/logs/
+/checkpoints/
+/tmp/
+/worktrees/
+/.worktrees/
+.cache/
+
+# Local environment files; sanitized examples and templates are versioned.
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.template
+!.env.*.template
+.envrc.local
+/configs/local/
+/configs/*.local.*
+/configs/profiles/*.local.*
+
+# Local credentials. Keep shared agent instructions and settings trackable.
+/.secrets/
+/secrets/
+/.ssh/
+/.netrc
+/.codex/auth.json
+/.claude/.credentials.json
+/.claude/settings.local.json
+
+# Python environments, bytecode, packaging output, and tool caches.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.uv-cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.pyre/
+.hypothesis/
+.tox/
+.nox/
+.ipynb_checkpoints/
+
+# JavaScript dependencies, package-manager caches, and incremental metadata.
+node_modules/
+.pnpm-store/
+.npm/
+.vite/
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build output and test reports. Do not ignore generated source or schemas.
+/build/
+/dist/
+/htmlcov/
+/coverage/
+/coverage.xml
+.coverage
+.coverage.*
+/test-results/
+/playwright-report/
+/src/web/build/
+/src/web/dist/
+/src/web/coverage/
+/src/web/test-results/
+/src/web/playwright-report/
+
+# Editor and operating-system files; explicitly allow shared VS Code config.
+/.idea/
+/.vscode/*
+!/.vscode/extensions.json
+!/.vscode/settings.json
+!/.vscode/tasks.json
+!/.vscode/launch.json
+*.local.code-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Dependency locks, schemas, small fixtures, and documentation stay versioned.
+# Avoid broad patterns such as *.json, *.yaml, *.log, or generated/.
