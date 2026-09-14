@@ -50,6 +50,8 @@ scripts/                 # Development, code generation, and CI helpers
 
 The layout describes module ownership; most implementation files and supporting configuration are currently empty. Local runtime data belongs in the ignored `var/` directory or an external state directory. Empty scaffold directories that need versioning use `.gitkeep` files.
 
+This tree shows the current scaffold. The [module architecture proposal](docs/architecture/agent-environment-modules.md) recommends organizing the backend by functional module around Agent and Environment; that layout has not been implemented yet.
+
 The proposed engineering baseline is a Python backend with FastAPI, a TypeScript/React frontend, Docker execution, Ray scheduling, and centralized metadata and artifact storage. Exact versions and working installation commands will be established during S0. See the [engineering design](docs/architecture/repository-architecture.md) for boundaries and tradeoffs.
 
 ## Start here
@@ -59,6 +61,7 @@ The proposed engineering baseline is a Python backend with FastAPI, a TypeScript
 | [Project status](docs/project-status.md) | Current stage, delivered outcomes, gaps, and next priorities |
 | [Agent development rules](AGENTS.md) | Branch isolation, scope, validation, persistence, and handoff requirements |
 | [Goals and architecture](docs/architecture/Agent_Infra_目标与架构设计_v0.1.md) | Product scope and the initial system design, in Chinese |
+| [Module architecture proposal](docs/architecture/agent-environment-modules.md) | Agent/Environment boundaries, public capabilities, proposed source layout, and development sequence, in Chinese |
 | [Repository architecture](docs/architecture/repository-architecture.md) | Code organization, interfaces, collaboration, and stage acceptance, in Chinese |
 | [Original architecture sketch](docs/architecture/arch.jpg) | The source sketch behind the initial design |
 
