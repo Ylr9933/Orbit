@@ -1,0 +1,1 @@
+"""CLI protocol boundary."""

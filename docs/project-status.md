@@ -1,54 +1,49 @@
 # Project Status
 
-Updated at: 2026-09-15T11:21:00+08:00
+Updated at: 2026-09-15T12:04:07+08:00
 
-Basis: The version on `main` describes integrated outcomes; task-branch edits propose changes pending integration. Initial baseline: `c315583`.
+Basis: On main this document describes integrated outcomes. This task-branch update proposes
+S0 acceptance after integration of chore/s0-foundation, based on main baseline fbef28a.
 
-Current stage: S0 - repository foundation.
+Current stage: S0 accepted within the repository scope; next stage S1.
 
 ## Stage overview
 
 | Stage | Status | Current conclusion |
 | --- | --- | --- |
-| S0 - repository foundation | in_progress | Architecture documents, the scaffold, agent rules, README, ignore policy, and local Git setup are present. Executable tooling remains outstanding. |
-| S1 - contracts and task examples | not_started | No implemented contracts, generation pipeline, or executable task examples. |
+| S0 - repository foundation | accepted | Functional package layout, locked installation, checks, tests and Python/Web builds validated in an independent clean directory. |
+| S1 - contracts and task examples | not_started | Business contracts, shared fakes and two task examples remain to be defined. |
 | S2 - complete single-node workflows | not_started | No working research or benchmark execution path. |
-| S3 - two-node execution and failure handling | not_started | No verified Ray dispatch, device mapping, or recovery behavior. |
-| S4 - frontend and batch evaluation | not_started | No implemented console or batch evaluation workflow. |
+| S3 - two-node execution and failure handling | not_started | No verified Ray dispatch or resource recovery. |
+| S4 - frontend and batch evaluation | not_started | A Web starting page builds; business console and batch workflows are absent. |
 
 ## Available outcomes
 
-- Product and repository architecture documents are available, with an [Agent/Environment module proposal](architecture/agent-environment-modules.md) for review.
-- The [environment and operations Q&A](architecture/environment-operations-qa.md) covers preparation automation, node onboarding and monitoring, trace persistence, both execution modes, and source-reviewed ASI-Bench integration requirements. These are design outcomes only.
-- The directory and empty-file scaffold has been created. The proposed functional module layout has not been implemented.
-- [Agent development rules](../AGENTS.md) define branch isolation, validation, task records, and the project overview.
-- [Documentation routing](README.md) and the [development readiness assessment](development/development-readiness.md) are documented; AGENTS.md and CLAUDE.md carry identical policy and placement guidance.
-- [README](../README.md) provides the project entrypoint; [.gitignore](../.gitignore) defines local-file exclusions.
-- Initial commit `c315583` is present on local `main` and the locally recorded `origin/main`. Publishing remains with the repository owner; remote settings have not been inspected.
+- [Module architecture](architecture/agent-environment-modules.md) now maps to functional source packages; business interfaces remain proposals.
+- Python package and installed CLI support version reporting and side-effect-free TOML/environment configuration validation.
+- React/TypeScript Web starter, uv/pnpm locks, Make commands, lint/format/type/import checks and 17 deterministic tests pass; wheel and Web builds are verified.
+- CI configuration, contributor guidance, review routing, PR template, synchronized agent rules and documentation checks are implemented.
+- [Environment and operations Q&A](architecture/environment-operations-qa.md) retains design guidance for automation, clusters, traces and both execution modes; it is not runtime evidence.
 
 ## Main gaps
 
-- Branch protection and required-review settings have not been verified.
-- Dependency manifests, lockfiles, build commands, CI configuration, and implementation files remain placeholders.
-- CODEOWNERS, the PR template, contributor instructions, and editor/Git attribute configuration are also empty; policy checks are not automated yet.
-- No application build, runtime behavior, or stage acceptance has been validated.
-- Natural-language preparation, installation workflows, and ASI-Bench device/provenance compatibility still need implementation and real-environment evidence.
+- Hosted CI has not run for this branch; GitHub main protection and reviewer access remain unverified. S0 acceptance is local engineering evidence, not hosted integration evidence.
+- No business API, real Agent, Docker/Ray backend, durable records, native evaluation or runtime visibility enforcement exists.
+- Fine-grained public/private import checks and usable module fakes accompany S1 contracts; current checks enforce module direction and independent peers.
+- Actual four-person identities/review assignments and license selection remain open.
 
 ## Next priorities
 
-1. Complete S0 tooling and review setup: working Python/Web installation, checks and builds, contributor instructions, and verified branch/PR protection.
-2. Agree the minimum environment-preparation and execution contracts, interface ownership, and integration checks before broad parallel module development.
-3. Implement S1 contracts, supporting fakes, and two task examples toward a Local single-node execution path; verify native benchmark compatibility before Ray integration.
+1. Integrate S0 through review; verify hosted checks and main protection before shared development.
+2. Assign module owners and agree S1 minimum contracts, errors, cancellation and shared fakes.
+3. Prepare two task examples, then integrate the first Local/Docker execution path with durable output and confirmed cleanup.
 
 ## Project-level blockers
 
-None confirmed for local development preparation. Compatible toolchain versions and review ownership remain setup decisions.
+None for starting S1 design on task branches. Publishing and hosting configuration remain with the maintainer.
 
 ## Related records
 
-- [Documentation routing, synchronized rules, and readiness assessment](changes/20260915-documentation-routing-c47e92.md).
-- [Environment automation, cluster setup, traces, and execution-mode Q&A](changes/20260915-environment-operations-a31e8c.md).
-- [Agent/Environment module boundaries and proposed source layout](changes/20260914-module-boundaries-812d9b.md).
-- [Agent workflow and progress-recording setup](changes/20260914-agent-workflow-a6892f.md).
-- [Ignore policy, README, and local Git bootstrap](changes/20260914-repository-bootstrap-d7f84b.md).
-- [Repository architecture and stage acceptance criteria](architecture/repository-architecture.md).
+- [S0 implementation and validation](changes/20260915-s0-foundation-b7e492.md).
+- [S0 scope and acceptance](development/s0-engineering-foundation.md).
+- [Development sequence](development/development-sequence.md) and [four-person allocation](development/four-person-collaboration.md).
