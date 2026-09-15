@@ -71,6 +71,7 @@ See [contributor configuration guidance](CONTRIBUTING.md#configuration-and-secre
 - [Environment, cluster, trace and execution-mode questions](docs/architecture/environment-operations-qa.md)
 - [Development sequence](docs/development/development-sequence.md)
 - [S0 plan and acceptance](docs/development/s0-engineering-foundation.md)
+- [Four-person collaboration plan](docs/development/four-person-collaboration.md)
 - [Agent rules](AGENTS.md), mirrored in [CLAUDE.md](CLAUDE.md)
 
 Develop on task branches and include significant-task records. Publishing and PR merges follow

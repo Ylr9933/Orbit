@@ -1,6 +1,6 @@
 # Project Status
 
-Updated at: 2026-09-15T12:01:17+08:00
+Updated at: 2026-09-15T12:04:07+08:00
 
 Basis: On main this document describes integrated outcomes. This task-branch update proposes
 S0 acceptance after integration of chore/s0-foundation, based on main baseline fbef28a.
@@ -46,4 +46,4 @@ None for starting S1 design on task branches. Publishing and hosting configurati
 
 - [S0 implementation and validation](changes/20260915-s0-foundation-b7e492.md).
 - [S0 scope and acceptance](development/s0-engineering-foundation.md).
-- [Development sequence](development/development-sequence.md).
+- [Development sequence](development/development-sequence.md) and [four-person allocation](development/four-person-collaboration.md).
