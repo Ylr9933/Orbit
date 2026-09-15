@@ -35,5 +35,8 @@
 5. [开发顺序](development/development-sequence.md)、[协作开发准备度](development/development-readiness.md)：确定开发先后；准备度文档保留 S0 实施前评估。
 6. [S0 工程基础计划与验收](development/s0-engineering-foundation.md)、[贡献指南](../CONTRIBUTING.md)：查看当前可执行的安装、检查和协作入口。
 7. [四人协作分工](development/four-person-collaboration.md)：认领 S1/S2 模块职责、接口共同评审和集成任务。
+8. [S1 开发计划](development/s1-contracts-and-examples.md)：待评审的最小契约、替身、任务样例与验收安排，尚未实施。
+9. [Agent 模块与可替换 CLI Agent](architecture/agent-module.md)：公共抽象、Codex/Claude Code/DSH、宿主机/容器模式、认证隔离和后续集成边界。
+10. [资源管理、Docker 与 Ray 多节点](architecture/resource-management.md)：资源 YAML、宿主机实时观测、资源不足、Docker 限额、Ray 调度和集群认证方案。
 
 `AGENTS.md` 与 `CLAUDE.md` 中的简表用于快速定位；具体归档示例与阅读导航在本文件维护。更新规则时同步两个根规则文件。

@@ -15,6 +15,8 @@
 
 S0 的落实结果见[工程基础计划与验收](s0-engineering-foundation.md)，后续协作见[四人分工](four-person-collaboration.md)。
 
+下一阶段的范围与验收建议见[S1 开发计划](s1-contracts-and-examples.md)（待评审，尚未实施）。
+
 **这里的顺序是集成顺序，不要求所有人依次等待。** 接口确定后，可以这样并行：
 
 - Environment、Resources、Records 分别开发单机实现。
