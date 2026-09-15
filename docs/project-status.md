@@ -1,6 +1,6 @@
 # Project Status
 
-Updated at: 2026-09-14T14:24:31+00:00
+Updated at: 2026-09-15T10:48:04+08:00
 
 Basis: The version on `main` describes integrated outcomes; task-branch edits propose changes pending integration. Initial baseline: `c315583`.
 
@@ -19,6 +19,7 @@ Current stage: S0 - repository foundation.
 ## Available outcomes
 
 - Product and repository architecture documents are available, with an [Agent/Environment module proposal](architecture/agent-environment-modules.md) for review.
+- The [environment and operations Q&A](architecture/environment-operations-qa.md) covers preparation automation, node onboarding and monitoring, trace persistence, both execution modes, and source-reviewed ASI-Bench integration requirements. These are design outcomes only.
 - The directory and empty-file scaffold has been created. The proposed functional module layout has not been implemented.
 - [Agent development rules](../AGENTS.md) define branch isolation, validation, task records, and the project overview.
 - [README](../README.md) provides the project entrypoint; [.gitignore](../.gitignore) defines local-file exclusions.
@@ -29,12 +30,13 @@ Current stage: S0 - repository foundation.
 - Branch protection and required-review settings have not been verified.
 - Dependency manifests, lockfiles, build commands, CI configuration, and implementation files remain placeholders.
 - No application build, runtime behavior, or stage acceptance has been validated.
+- Natural-language preparation, installation workflows, and ASI-Bench device/provenance compatibility still need implementation and real-environment evidence.
 
 ## Next priorities
 
-1. Review the proposed module boundaries and source layout before implementing the core interfaces.
+1. Agree the minimum environment-preparation and execution contracts, including the operational workflows and acceptance conditions in the Q&A.
 2. Complete S0 tooling and review setup: working Python/Web installation, checks and builds, plus verified branch/PR protection.
-3. Define the minimum Agent/Environment/Run contracts, supporting fakes, and two task examples for S1.
+3. Implement S1 contracts, supporting fakes, and two task examples toward a Local single-node execution path; verify native benchmark compatibility before Ray integration.
 
 ## Project-level blockers
 
@@ -42,6 +44,7 @@ None confirmed for local development preparation. Compatible toolchain versions 
 
 ## Related records
 
+- [Environment automation, cluster setup, traces, and execution-mode Q&A](changes/20260915-environment-operations-a31e8c.md).
 - [Agent/Environment module boundaries and proposed source layout](changes/20260914-module-boundaries-812d9b.md).
 - [Agent workflow and progress-recording setup](changes/20260914-agent-workflow-a6892f.md).
 - [Ignore policy, README, and local Git bootstrap](changes/20260914-repository-bootstrap-d7f84b.md).
