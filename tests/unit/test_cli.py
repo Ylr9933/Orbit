@@ -5,6 +5,10 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from agent_infra.gateways.cli.main import run
+
 
 def test_installed_cli_from_another_directory(tmp_path: Path) -> None:
     env = {key: value for key, value in os.environ.items() if not key.startswith("AGENT_INFRA_")}
@@ -25,3 +29,22 @@ def test_cli_reports_configuration_error_without_traceback(tmp_path: Path) -> No
     assert result.returncode == 2
     assert "Configuration error:" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_agent_doctor_prints_machine_readable_probe(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = run(
+        lambda path: {},
+        lambda provider: {
+            "provider": provider,
+            "available": True,
+            "authenticated": True,
+            "container_auth_reusable": True,
+        },
+        lambda provider: {},
+        ["agent", "doctor", "codex"],
+    )
+
+    assert result == 0
+    assert json.loads(capsys.readouterr().out)["provider"] == "codex"

@@ -3,8 +3,8 @@
 A modular infrastructure project centered on **Agent** and **Environment**, coordinated through
 Run, Tasks, Resources and Records, with thin protocol gateways and a Web console.
 
-S0 provides installable Python and Web development foundations. Real agents, task execution,
-Docker/Ray scheduling, persistence and business APIs are not implemented yet.
+S0 provides installable Python and Web development foundations. The current Agent slice adds a
+Codex adapter; task execution, Docker/Ray scheduling, persistence and business APIs remain pending.
 See [project status](docs/project-status.md) for acceptance and integration state.
 
 ## Quick start
@@ -19,6 +19,7 @@ make verify
 uv run --locked python scripts/ci/smoke_wheel.py
 uv run --locked agent-infra --version
 uv run --locked agent-infra config-check --config configs/defaults.toml
+uv run --locked agent-infra agent doctor codex
 make dev-web
 ```
 
@@ -47,10 +48,11 @@ src/agent_infra/
 src/web/           React/TypeScript frontend
 ```
 
-Only the configuration/CLI foundation is implemented in the backend. Other module packages
-establish ownership without placeholder business implementations. Cross-module calls use public
-contracts; concrete backends are assembled in bootstrap. The static dependency graph is enforced
-by import-linter; finer public/private boundaries accompany S1 contracts.
+The backend implements its engineering foundation plus the first Agent public contracts and Codex
+adapter. Other module packages establish ownership without placeholder business implementations.
+Cross-module calls use public contracts; concrete backends are assembled in bootstrap. The static
+dependency graph is enforced by import-linter; finer public/private boundaries accompany S1
+contracts.
 
 `tests/` holds validation; `configs/` holds safe tracked configuration; `scripts/` holds developer
 and CI utilities. `deploy/`, `examples/` and `schemas/` reserve deployment, examples and generated
@@ -68,6 +70,7 @@ See [contributor configuration guidance](CONTRIBUTING.md#configuration-and-secre
 ## Design and development
 
 - [Agent/Environment architecture](docs/architecture/agent-environment-modules.md)
+- [Agent module and Codex integration](docs/architecture/agent-module.md)
 - [Environment, cluster, trace and execution-mode questions](docs/architecture/environment-operations-qa.md)
 - [Development sequence](docs/development/development-sequence.md)
 - [S0 plan and acceptance](docs/development/s0-engineering-foundation.md)
