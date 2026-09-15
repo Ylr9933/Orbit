@@ -1,21 +1,20 @@
 # Project Status
 
-Updated at: 2026-09-15T20:54:54+08:00
+Updated at: 2026-09-15T21:18:46+08:00
 
-Basis: This task branch proposes Tasks and local Run/Environment on main baseline `99dbd1a` and
-the task-design commit `8b95188`. Agent and local Resources are integrated in that main baseline;
-the Tasks and Run/Environment additions below remain task-branch outcomes until merged.
-This branch builds on Tasks commit 8f09c14; it does not claim integration into main.
+Basis: this documentation integration branch is based on `main` at `a2fcf10`. Agent, Resources,
+Tasks and the local Run/Environment slice are integrated in that baseline; this branch only adds
+and refreshes implementation guides.
 
-Current stage: S1 in progress after integration of the Agent and local resource vertical slices.
+Current stage: S1 remains in progress, with an early S2 single-node Docker slice integrated.
 
 ## Stage overview
 
 | Stage | Status | Current conclusion |
 | --- | --- | --- |
 | S0 - repository foundation | accepted | Functional package layout, locked installation, checks, tests and Python/Web builds validated in an independent clean directory. |
-| S1 - contracts and task examples | in_progress | Agent contracts and three adapters plus resource request/observation/lease contracts exist; cross-module lifecycle contracts, shared fakes and task examples remain. |
-| S2 - complete single-node workflows | not_started | No working research or benchmark execution path. |
+| S1 - contracts and task examples | in_progress | Agent, Resources, Tasks and Run/Environment contracts plus task examples exist; tool binding, native benchmark equivalence and remaining public boundaries are incomplete. |
+| S2 - complete single-node workflows | in_progress | A CPU Docker path supports solver-only research and isolated fixture evaluation; real Agent, GPU and native benchmark validation remain. |
 | S3 - two-node execution and failure handling | not_started | No verified Ray dispatch or resource recovery. |
 | S4 - frontend and batch evaluation | not_started | A Web starting page builds; business console and batch workflows are absent. |
 
@@ -26,9 +25,9 @@ Current stage: S1 in progress after integration of the Agent and local resource 
 - The CLI supports provider-selected `agent doctor` and `agent setup`, including aliases. A shared fixed-version Node Agent image recipe replaces the Codex-only recipe.
 - [Resource management design](architecture/resource-management.md) defines YAML admission, host monitoring, Docker enforcement, Ray scheduling and secure multi-node bootstrap boundaries.
 - Python code strictly parses versioned resource YAML, observes Linux CPU/memory and NVIDIA GPUs, and grants concurrency-safe single-node leases with distinct waiting and unsatisfiable outcomes.
-- Task-branch outcome: [Tasks APIs](reference/tasks.md) parse versioned manifests, project solver views, fingerprint and copy allowed materials, review/revise research drafts, check resource bounds and index native-prepared workspaces. An explicit evaluator registry includes a small platform-only fixture scorer.
+- [Tasks APIs](reference/tasks.md) parse versioned manifests, project solver views, fingerprint and copy allowed materials, review/revise research drafts, check resource bounds and index native-prepared workspaces. An explicit evaluator registry includes a small platform-only fixture scorer.
 - The CLI validates requests and reads host snapshots. This host returned 80 logical CPUs, about 251 GiB physical memory and four RTX 3090 GPUs; an in-memory one-GPU lease/release smoke passed without starting a job.
-- Task-branch outcome: local Run, Docker Environment and controller records support solver-only research and clean evaluator containers; see [execution reference](reference/run-environment.md).
+- Local Run, Docker Environment and controller records support solver-only research and clean evaluator containers; see [execution reference](reference/run-environment.md).
 - React/TypeScript Web starter, uv/pnpm locks, Make commands and all static checks remain valid; 104 deterministic tests, Python distributions, dependency-aware isolated wheel smoke and Web production build pass.
 - CI configuration, contributor guidance, review routing, PR template, synchronized agent rules and documentation checks are implemented.
 - [Environment and operations Q&A](architecture/environment-operations-qa.md) retains design guidance for automation, clusters, traces and both execution modes; it is not runtime evidence.
