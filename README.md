@@ -63,7 +63,7 @@ The proposed engineering baseline is a Python backend with FastAPI, a TypeScript
 | [Goals and architecture](docs/architecture/Agent_Infra_目标与架构设计_v0.1.md) | Product scope and the initial system design, in Chinese |
 | [Module architecture proposal](docs/architecture/agent-environment-modules.md) | Agent/Environment boundaries, public capabilities, proposed source layout, and development sequence, in Chinese |
 | [Environment and operations Q&A](docs/architecture/environment-operations-qa.md) | Environment automation, cluster onboarding, trace persistence, and both execution modes, with ASI-Bench findings, in Chinese |
-| [Development sequence](docs/architecture/development-sequence.md) | Implementation order, parallel work, and the first runnable milestone, in Chinese |
+| [Development sequence](docs/development/development-sequence.md) | Implementation order, parallel work, and the first runnable milestone, in Chinese |
 | [Repository architecture](docs/architecture/repository-architecture.md) | Code organization, interfaces, collaboration, and stage acceptance, in Chinese |
 | [Original architecture sketch](docs/architecture/arch.jpg) | The source sketch behind the initial design |
 
