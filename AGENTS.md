@@ -72,6 +72,7 @@ Consult [the documentation map](docs/README.md) before adding or moving document
 | `docs/development/` | Development sequence, contributor setup, testing, and collaboration guides |
 | `docs/operations/` | Deployment, node administration, monitoring, backup, recovery, and troubleshooting runbooks |
 | `docs/reference/` | API, configuration, command, and compatibility reference, tied to an explicit version/status |
+| `docs/implementation/` | Maintainer walkthroughs of implemented code paths, object relationships, failure behavior, and extension points, kept aligned with source code |
 | `docs/changes/` | Task records following section 6 |
 | `docs/assets/` | Small images and other assets used by documentation |
 

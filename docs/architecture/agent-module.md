@@ -1,6 +1,6 @@
 # Agent 模块设计与可替换 CLI Agent 实现
 
-状态：首批实现，基于 `feat/agent-codex`；Environment 执行器和真实任务运行尚未实现。
+状态：首批 Agent adapter 已合入 `main`；Environment 执行器和真实任务运行尚未实现。
 
 ## 1. 目标与边界
 

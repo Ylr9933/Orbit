@@ -1,10 +1,9 @@
 # Project Status
 
-Updated at: 2026-09-15T18:55:03+08:00
+Updated at: 2026-09-15T19:19:58+08:00
 
-Basis: This task-branch version proposes the state after `feat/resource-management` and its stacked
-`feat/agent-codex` parent are integrated. The branch ultimately descends from the unmerged
-`docs/s1-plan` commit 67958a0 and main baseline 0a4a05a.
+Basis: `main` at `99dbd1a`, which includes the S1 plan, replaceable Agent adapters and local
+resource-management slice. This documentation branch does not change runtime capabilities.
 
 Current stage: S1 in progress after integration of the Agent and local resource vertical slices.
 
@@ -42,9 +41,9 @@ Current stage: S1 in progress after integration of the Agent and local resource 
 
 ## Next priorities
 
-1. Review and integrate the stacked Agent and resource slices after resolving their `docs/s1-plan` dependency.
-2. Implement the Environment Docker adapter that applies a lease's CPU, memory and GPU UUID limits and verifies cleanup before release.
-3. Persist queue/lease state through Run/Records and validate the single-node workflow before adding the Ray backend and two-node bootstrap.
+1. Implement the Environment Docker adapter that applies a lease's CPU, memory and GPU UUID limits and verifies cleanup before release.
+2. Persist queue/lease state through Run/Records and validate the single-node workflow.
+3. Add the Ray backend and two-node bootstrap only after the local execution path is stable.
 
 ## Project-level blockers
 
