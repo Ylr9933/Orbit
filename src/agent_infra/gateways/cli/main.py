@@ -23,9 +23,9 @@ def run(
     agent = commands.add_parser("agent", help="Inspect configured Agent providers")
     agent_commands = agent.add_subparsers(dest="agent_command", required=True)
     doctor = agent_commands.add_parser("doctor", help="Check provider installation and login")
-    doctor.add_argument("provider", choices=("codex",))
+    doctor.add_argument("provider", help="Provider name, for example codex, claude-code, or dsh")
     setup = agent_commands.add_parser("setup", help="Install a missing provider, then check it")
-    setup.add_argument("provider", choices=("codex",))
+    setup.add_argument("provider", help="Provider name, for example codex, claude-code, or dsh")
     args = parser.parse_args(argv)
     if args.command == "config-check":
         try:
@@ -41,4 +41,7 @@ def run(
     except (OSError, RuntimeError, ValueError) as error:
         parser.exit(2, f"Agent diagnostic error: {error}\n")
     print(json.dumps(agent_result, sort_keys=True))
-    return 0 if agent_result.get("available") and agent_result.get("authenticated") else 1
+    available = agent_result.get("available") is True
+    compatible = agent_result.get("compatible", True) is True
+    authentication_failed = agent_result.get("authenticated") is False
+    return 0 if available and compatible and not authentication_failed else 1

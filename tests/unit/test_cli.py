@@ -48,3 +48,41 @@ def test_agent_doctor_prints_machine_readable_probe(
 
     assert result == 0
     assert json.loads(capsys.readouterr().out)["provider"] == "codex"
+
+
+def test_agent_doctor_accepts_provider_without_generic_auth_probe(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = run(
+        lambda path: {},
+        lambda provider: {
+            "provider": provider,
+            "available": True,
+            "authenticated": None,
+            "container_auth_reusable": False,
+        },
+        lambda provider: {},
+        ["agent", "doctor", "dsh"],
+    )
+
+    assert result == 0
+    assert json.loads(capsys.readouterr().out)["provider"] == "dsh"
+
+
+def test_agent_doctor_rejects_incompatible_provider(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = run(
+        lambda path: {},
+        lambda provider: {
+            "provider": provider,
+            "available": True,
+            "compatible": False,
+            "authenticated": None,
+        },
+        lambda provider: {},
+        ["agent", "doctor", "dsh"],
+    )
+
+    assert result == 1
+    assert json.loads(capsys.readouterr().out)["compatible"] is False

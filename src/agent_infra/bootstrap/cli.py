@@ -3,9 +3,22 @@
 from dataclasses import asdict
 from pathlib import Path
 
+from agent_infra.agents import AgentRegistry
+from agent_infra.agents.claude_code import ClaudeCodeAdapter
 from agent_infra.agents.codex import CodexAdapter
+from agent_infra.agents.deepseek_harness import DeepSeekHarnessAdapter
 from agent_infra.bootstrap.settings import load_settings
 from agent_infra.gateways.cli.main import run
+
+_AGENTS = AgentRegistry(
+    (CodexAdapter(), ClaudeCodeAdapter(), DeepSeekHarnessAdapter()),
+    aliases={
+        "claude": "claude-code",
+        "claudecode": "claude-code",
+        "deepseek": "dsh",
+        "deepseek-harness": "dsh",
+    },
+)
 
 
 def _check_config(path: Path | None) -> dict[str, str]:
@@ -13,15 +26,11 @@ def _check_config(path: Path | None) -> dict[str, str]:
 
 
 def _probe_agent(provider: str) -> dict[str, object]:
-    if provider != "codex":
-        raise ValueError(f"Unsupported Agent provider: {provider}")
-    return asdict(CodexAdapter().probe())
+    return asdict(_AGENTS.get(provider).probe())
 
 
 def _setup_agent(provider: str) -> dict[str, object]:
-    if provider != "codex":
-        raise ValueError(f"Unsupported Agent provider: {provider}")
-    return asdict(CodexAdapter().ensure_installed())
+    return asdict(_AGENTS.get(provider).ensure_installed())
 
 
 def main() -> int:

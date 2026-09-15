@@ -1,99 +1,110 @@
-# Agent 模块设计与 Codex 首个实现
+# Agent 模块设计与可替换 CLI Agent 实现
 
-状态：首个实现，基于 `feat/agent-codex`；文中明确标出的后续能力尚未实现。
+状态：首批实现，基于 `feat/agent-codex`；Environment 执行器和真实任务运行尚未实现。
 
 ## 1. 目标与边界
 
-Agent 模块负责把不同 Agent 的能力、认证状态、启动参数和原生轨迹转换成项目内稳定的表达。首批支持 Codex CLI，后续可增加 Claude Code、DeepSeek harness、自研 Agent 框架和 `workflow + LLM API`。
+Agent 模块把不同 Agent 的能力、安装状态、启动参数和原生轨迹转换成项目内稳定的表达。当前接入 Codex CLI、Claude Code 和 DeepSeek Harness（DSH）；Run 或用户通过 provider 名称选择实现，不需要修改业务流程。
 
 Agent 模块不创建 Docker 容器、不分配 CPU/GPU、不维护进程和超时，也不写数据库。Environment 执行 Agent 给出的启动计划，Run 协调生命周期，Records 保存标准事件和完整原生轨迹。这个边界使更换 Agent 不需要修改 Docker/Ray 后端，更换执行后端也不需要重写 Agent 适配器。
 
 ```mermaid
 flowchart LR
-    Run[Run 协调] --> Agent[Agent 公共接口]
-    Agent --> Codex[Codex CLI adapter]
-    Agent --> Claude[Claude Code adapter\n后续]
-    Agent --> Harness[自研 harness / workflow\n后续]
+    Run[Run 协调] --> Registry[Agent Registry]
+    Registry --> Codex[Codex adapter]
+    Registry --> Claude[Claude Code adapter]
+    Registry --> DSH[DeepSeek Harness adapter]
     Codex --> Plan[启动计划 + 事件解码]
+    Claude --> Plan
+    DSH --> Plan
     Plan --> Env[Environment runtime]
     Env --> Host[宿主机进程]
     Env --> Docker[任务 Docker]
-    Env --> Raw[原始 stdout/stderr/产物]
+    Env --> Raw[stdout / stderr / 产物]
     Raw --> Records[Records]
 ```
 
-## 2. 公共抽象
+## 2. 代码结构与公共抽象
 
-当前公共接口在 `src/agent_infra/agents/api.py`，分为两层：
-
-| 接口 | 用途 |
+| 位置或接口 | 作用 |
 | --- | --- |
-| `AgentAdapter` | 所有 Agent 的发现层：描述 provider、集成类型、能力，并检查安装和认证状态 |
-| `CommandAgentAdapter` | Codex、Claude Code 等命令行 Agent：生成无 shell 的启动计划并解码事件流 |
-| `AgentRunRequest` | Run 提供的稳定输入：run ID、提示词、工作区、运行位置、模型、推理强度，以及预留的恢复会话 ID |
-| `AgentLaunchPlan` | Environment 消费的启动要求：argv、cwd、stdin、环境变量、挂载和容器镜像 |
-| `AgentEvent` | 少量统一事件种类，加上 `native_type` 和完整原生 payload |
-| `AgentProbe` | 安装版本、登录状态和容器认证是否可复用；不返回账号名或凭据内容 |
+| `agents/api.py` | provider 无关的请求、能力、启动计划、挂载、诊断和事件类型 |
+| `agents/_cli_support.py` | npm CLI 探测、安装和私有配置文件复制，只供适配器内部复用 |
+| `agents/registry.py` | 按 provider 选择适配器；支持少量用户友好的别名 |
+| `agents/codex.py` | Codex 原生命令、认证和事件映射 |
+| `agents/claude_code.py` | Claude Code 原生命令、认证和事件映射 |
+| `agents/deepseek_harness.py` | DSH headless/profile 协议、配置和事件映射 |
+| `AgentAdapter` | 所有 Agent 的发现层：描述 provider、集成类型、能力并探测状态 |
+| `CommandAgentAdapter` | 外部命令 Agent：生成无 shell 的启动计划并解码事件流 |
+| `AgentRunRequest` | Run 提供的稳定输入：run ID、提示词、工作区、位置、模型、推理强度和恢复 ID |
+| `AgentLaunchPlan` | Environment 消费的 argv、cwd、stdin、环境变量、挂载和镜像要求 |
+| `AgentEvent` | 少量统一事件种类，并保留 `native_type` 和完整原生 payload |
 
-统一事件只用于跨 Agent 查询，包括 session、message、tool call、tool result、usage、completed 和 error。原生 JSONL 仍应完整保存，因此不会因统一格式丢掉 Codex、Claude Code 或自研框架的特有字段。Records 接入后保存原始流和标准事件；本次只实现解码，不实现持久化。
+新增一个同类 CLI Agent 时通常需要增加适配器文件和测试，并在 composition root 注册；若使用现有 npm/JSONL 约定，可以复用公共辅助层和通用镜像。仅增加一个 Python 文件不足以让 CLI、镜像、配置复制和测试自动认识新 provider。
 
-自研 Agent 有两种接入方式。已有 CLI/harness 可实现 `CommandAgentAdapter`；Python workflow 或 LLM API 服务实现共同的发现接口，并在后续 Run 契约中提供进程内或服务型执行端口。当前不会为了 Codex 提前固定所有自研框架的异步、流式和检查点语义。
+自研 CLI/harness 可以实现 `CommandAgentAdapter`。进程内 Python workflow 或 `workflow + LLM API` 不必伪装成命令行；它们实现共同的发现接口，并在 Run 契约确定后增加进程内或服务型执行端口。
 
-## 3. 两种运行场景
+## 3. 三个 provider 的共同点与差异
 
-### 3.1 日常科研：Agent 在宿主机
+Canonical provider 为 `codex`、`claude-code` 和 `dsh`。CLI 也接受 `claude`、`claudecode`、`deepseek` 和 `deepseek-harness` 别名。
 
-用户继续使用宿主机已经登录的 Codex。平台生成宿主机启动计划时保留用户的 Codex 配置，默认采用 Codex 的 `workspace-write` 沙箱，并通过 stdin 传提示词。未来 Environment 暴露受控的容器创建、命令、日志和产物接口后，宿主机 Codex 通过这些接口控制训练容器；Agent 不直接管理 Docker 生命周期。
+| Provider | 非交互命令 | 模型选择 | 会话恢复 | 容器私有目录 |
+| --- | --- | --- | --- | --- |
+| Codex | `codex exec --json`，提示词走 stdin | 每 Run 的 `model`、`reasoning_effort` | 当前明确拒绝 | `/home/agent/.codex` |
+| Claude Code | `claude --print --output-format stream-json --verbose`，提示词走 stdin | 每 Run 的 `model`、`reasoning_effort` | `--resume` | `/home/agent/.claude` |
+| DSH | `dsh --profile headless --json`，提示词走 stdin | 由 DSH active profile 管理 | `--session-id` | `/home/agent/.dsh` |
 
-本模式适合交互研究、持续对话和人工调整。用户目前可直接使用宿主机 Codex 交互界面；项目已能发现 Codex、检查登录和生成非交互启动计划。由项目托管交互会话，以及完整的宿主机 Agent → Environment → Docker 执行链路属于后续 Environment/Run 集成。
+公共请求不会抹平原生限制。DSH 0.1.5-rc.1 没有结构化事件和恢复参数，因此实现固定到已发布的 `0.1.6-alpha.1`，诊断会把其他版本标成不兼容，`agent setup dsh` 会安装所需版本。DSH 仍处于 developer preview，升级前必须重新验证 headless 协议。
 
-### 3.2 榜单评测：Agent 与任务在容器内
+统一事件包括 session、message、tool call、tool result、usage、completed 和 error。适配器保留每条原生 JSON payload；Records 接入后同时保存原始 stdout/stderr 和统一事件。格式异常的行转成 error 事件，不会让整条轨迹静默丢失。
 
-容器镜像安装固定版本的 Codex，工作区挂载到 `/workspace`，每个 Run 的独立 Codex home 挂载到 `/home/agent/.codex`。外层 Docker 已承担隔离时，计划才允许使用 Codex 的 `--dangerously-bypass-approvals-and-sandbox`；宿主机计划会拒绝这个组合。评测模式同时忽略宿主机用户配置和规则，避免个人 MCP、plugin 或 exec policy 改变榜单结果。
+## 4. 宿主机与容器模式
 
-`deploy/docker/codex-cli.Dockerfile` 提供固定版本的基础镜像。真正的任务镜像应由 Environment 将任务依赖与 Agent 层组合，并记录最终镜像 digest；当前仓库还没有该镜像组合器和 Docker runtime。
+日常科研时，Environment 将宿主机计划作为本地进程执行，Agent 使用用户已经配置的原生 home。未来宿主机 Agent 通过 Environment 的受控接口操作训练容器；Agent 适配器仍不直接持有 Docker client。
 
-## 4. 安装与认证
+榜单评测时，Environment 为每个 Run 创建私有配置目录和工作区，再按 `AgentLaunchPlan` 挂载进任务容器。Codex 只复制 `auth.json`；Claude Code 只复制 `.credentials.json`；DSH 复制 `settings.yaml`（或等价格式）和 `.credentials.yaml`。目录权限为 `0700`、文件为 `0600`，不复制个人规则、MCP、会话历史或 `.env`。运行结束后由 Environment 删除副本。
 
-执行以下命令进行无副作用检查：
+Claude Code 使用系统 keychain/OAuth 而没有 `.credentials.json` 时，宿主机模式仍可用，但诊断会报告容器认证不可复用。DSH 使用环境变量提供密钥而没有 `.credentials.yaml` 时也一样；Environment 后续需要实现显式 secret injection，当前不能把整个宿主机 home 当作替代方案。
+
+容器模式只有在外层 Environment 提供隔离时，才允许适配器关闭 Agent 自身的交互审批。Codex 使用外层 sandbox 模式；Claude Code 使用 `bypassPermissions` 并关闭个人 customization；DSH 的工具和审批策略由固定 headless profile 管理。
+
+## 5. 安装、诊断与镜像
 
 ```bash
 agent-infra agent doctor codex
+agent-infra agent doctor claude-code
+agent-infra agent doctor dsh
+
+agent-infra agent setup codex
+agent-infra agent setup claude-code
+agent-infra agent setup dsh
 ```
 
-执行以下命令保证 Codex 存在；已安装时不会重复安装，缺失时调用官方 npm 包安装命令。登录仍由用户完成，因为浏览器、device code 或 API key 的选择属于账号操作。
+`doctor` 不修改状态，输出安装、版本、认证、兼容性和容器配置可复用性，不包含账号标识或凭据内容。`setup` 仅在缺失时安装 Codex/Claude Code；DSH 还会校准到 headless JSON 协议所需版本。登录和模型/API key 配置由用户在各 Agent 的原生界面完成。
+
+`deploy/docker/node-agent-cli.Dockerfile` 是三个 Node CLI Agent 共用的固定版本基础层。例如：
 
 ```bash
-agent-infra agent setup codex
-codex login
+docker build -f deploy/docker/node-agent-cli.Dockerfile \
+  --build-arg AGENT_NPM_PACKAGE=@openai/codex \
+  --build-arg AGENT_VERSION=0.154.0 \
+  -t agent-infra/codex-cli:0.154.0 .
 ```
 
-诊断结果会给出版本、登录状态和容器认证是否可复用，不包含账号标识。官方说明 `CODEX_HOME` 默认是 `~/.codex`，其中的 `auth.json` 等同密码。实现只把 `auth.json` 复制到任务私有目录，权限设为目录 `0700`、文件 `0600`；不会复制个人 `config.toml`，不会输出认证命令的 stdout，也不会挂载整个宿主机 home。
+Claude Code 使用 `@anthropic-ai/claude-code`/`2.1.272`，DSH 使用 `@deepseek-ai/dsh`/`0.1.6-alpha.1`。真正的任务镜像应由 Environment 把任务依赖和这个 Agent 层组合，并记录最终 image digest；通用 Dockerfile 本身不等于该组合器。
 
-任务私有认证目录以读写方式挂载，使 Codex 可以在长任务中刷新 token；刷新结果不回写宿主机文件。Environment 完成实际运行后必须删除该目录。若宿主机使用系统 keyring 而没有 `auth.json`，诊断会报告宿主机已登录但不能直接复用到容器，用户需要选择文件型存储或为自动化配置 API key/access token。
+官方接口依据：
 
-ASI-Bench 同样只向容器暴露 Codex 的 `auth.json`，并为受限运行创建独立 home。本实现保留这个隔离原则，同时采用每 Run 副本，避免多个容器直接竞争或刷新同一个宿主机文件。
+- [Codex CLI](https://developers.openai.com/codex/cli)、[Codex authentication](https://developers.openai.com/codex/auth) 和 [Codex CLI reference](https://developers.openai.com/codex/cli/reference)
+- [Claude Code CLI reference](https://docs.anthropic.com/en/docs/claude-code/cli-usage) 和 [Claude Code setup](https://docs.anthropic.com/en/docs/claude-code/getting-started)
+- [DeepSeek Harness repository and headless CLI](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/README.md)
 
-相关官方资料：
-
-- [Codex CLI 安装与使用](https://developers.openai.com/codex/cli)
-- [Codex 认证、CODEX_HOME 与 Docker 复制方式](https://developers.openai.com/codex/auth)
-- [codex exec 参数与 JSONL 输出](https://developers.openai.com/codex/cli/reference)
-
-## 5. Codex 启动与轨迹
-
-Codex 适配器使用 `codex exec --json`，提示词从 stdin 输入，避免 shell 注入和命令行长度限制。宿主机计划使用实际工作区路径；容器计划使用固定的 `/workspace`。模型和推理强度由结构化请求转换成 argv，不拼接 shell 字符串。Codex 的 resume 子命令具有不同的参数集合，当前适配器会明确拒绝恢复请求，待会话生命周期设计完成后单独实现。
-
-JSONL 的每一行会保留为原生 payload，同时映射到统一事件。工具调用和工具结果因此都可保存；实际 stdout/stderr 文件、事件追加、去重和查询由 Records 模块实现。格式异常的行转成 error 事件而不会导致整条轨迹静默丢失。
-
-## 6. 后续开发接口
-
-下一步按以下顺序接通实际执行：
+## 6. 尚未完成的执行链路
 
 1. Environment 实现本地进程和 Docker runtime，消费 `AgentLaunchPlan`，负责超时、取消、日志流和清理。
 2. Run 将 Task 输入、Resource allocation、Agent request 和 Environment runtime 组装成 Attempt。
-3. Records 同时保存统一事件、Codex 原生 JSONL、stderr、最终消息和产物引用。
-4. 增加真实的最小 Codex 宿主机运行；随后构建任务镜像并做一个受限 Docker 端到端运行。
-5. 以 `CommandAgentAdapter` 增加 Claude Code/DeepSeek harness，再根据真实自研 workflow 确定进程内和服务型执行协议。
+3. Records 同时保存统一事件、原生 JSONL、stderr、最终消息和产物引用。
+4. 在明确模型费用和运行资源后，分别完成宿主机最小任务和任务容器端到端验证。
+5. 根据真实自研 workflow 确定进程内和服务型执行协议。
 
-本次没有调用模型，也没有声称 Docker 执行链路可用。已经实现并可验证的是发现、安装入口、认证复用准备、启动计划、事件解码和 Codex 基础镜像定义。
+当前验证范围不调用模型。已实现的是 provider 选择、发现与安装、私有配置准备、启动计划、事件解码和基础镜像定义；没有 Environment runtime 时，平台仍不能真正执行这些计划。

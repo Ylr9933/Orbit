@@ -78,7 +78,9 @@ def test_setup_installs_the_official_package_when_codex_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     discoveries = iter([None, "/installed/codex"])
-    monkeypatch.setattr("agent_infra.agents.codex.shutil.which", lambda binary: next(discoveries))
+    monkeypatch.setattr(
+        "agent_infra.agents._cli_support.shutil.which", lambda binary: next(discoveries)
+    )
     calls: list[tuple[str, ...]] = []
 
     def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:

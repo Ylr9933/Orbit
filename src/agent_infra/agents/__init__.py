@@ -13,7 +13,9 @@ from agent_infra.agents.api import (
     AgentRunRequest,
     BindMount,
     CommandAgentAdapter,
+    InstallableCommandAgentAdapter,
 )
+from agent_infra.agents.registry import AgentRegistry
 
 __all__ = [
     "AgentAdapter",
@@ -28,4 +30,6 @@ __all__ = [
     "AgentRunRequest",
     "BindMount",
     "CommandAgentAdapter",
+    "InstallableCommandAgentAdapter",
+    "AgentRegistry",
 ]

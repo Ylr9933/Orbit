@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import shutil
-import stat
-import subprocess
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator
 from pathlib import Path
 
+from agent_infra.agents._cli_support import (
+    CommandRunner,
+    ensure_npm_cli,
+    probe_npm_cli,
+    run_command,
+    stage_private_files,
+)
 from agent_infra.agents.api import (
     AgentCapability,
     AgentDescriptor,
@@ -31,21 +34,6 @@ CONTAINER_WORKSPACE = "/workspace"
 CODEX_NPM_PACKAGE = "@openai/codex"
 CODEX_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "ultra"})
 
-CommandRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
-
-
-def _default_runner(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    timeout = 600 if tuple(argv[:3]) == ("npm", "install", "--global") else 10
-    return subprocess.run(
-        argv,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        check=False,
-    )
-
 
 class CodexAdapter:
     """Translate provider-neutral requests into Codex CLI process plans."""
@@ -55,7 +43,7 @@ class CodexAdapter:
         *,
         binary: str = "codex",
         container_image: str = DEFAULT_CODEX_IMAGE,
-        runner: CommandRunner = _default_runner,
+        runner: CommandRunner = run_command,
         environ: dict[str, str] | None = None,
     ) -> None:
         self._binary = binary
@@ -80,61 +68,20 @@ class CodexAdapter:
         )
 
     def probe(self) -> AgentProbe:
-        executable = shutil.which(self._binary)
-        if executable is None:
-            return AgentProbe(
-                provider=CODEX_PROVIDER,
-                available=False,
-                executable=None,
-                version=None,
-                authenticated=None,
-                container_auth_reusable=False,
-                issues=("Codex CLI is not installed or is not on PATH.",),
-                install_command=("npm", "install", "--global", CODEX_NPM_PACKAGE),
-            )
-
-        issues: list[str] = []
-        version = self._read_version(executable, issues)
-        authenticated = self._read_auth_status(executable, issues)
-        if authenticated is False:
-            issues.append("Codex login is required.")
         auth_file = self.host_codex_home / "auth.json"
-        reusable = authenticated is True and auth_file.is_file()
-        if authenticated and not reusable:
-            issues.append(
-                "Host authentication is not file-based; container reuse requires "
-                "CODEX_HOME/auth.json."
-            )
-        return AgentProbe(
+        return probe_npm_cli(
             provider=CODEX_PROVIDER,
-            available=True,
-            executable=executable,
-            version=version,
-            authenticated=authenticated,
-            container_auth_reusable=reusable,
-            issues=tuple(issues),
+            binary=self._binary,
+            npm_package=CODEX_NPM_PACKAGE,
+            runner=self._runner,
+            auth_args=("login", "status"),
+            container_config_reusable=auth_file.is_file() and not auth_file.is_symlink(),
         )
 
     def ensure_installed(self) -> AgentProbe:
         """Install the official npm package only when Codex is absent."""
 
-        current = self.probe()
-        if current.available:
-            return current
-        assert current.install_command is not None
-        try:
-            result = self._runner(current.install_command)
-        except (OSError, subprocess.SubprocessError) as error:
-            raise RuntimeError(f"Codex installation failed: {type(error).__name__}") from error
-        if result.returncode != 0:
-            detail = (
-                result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "npm failed"
-            )
-            raise RuntimeError(f"Codex installation failed: {detail}")
-        installed = self.probe()
-        if not installed.available:
-            raise RuntimeError("Codex was installed but is still not available on PATH")
-        return installed
+        return ensure_npm_cli(self.probe, self._runner)
 
     @property
     def host_codex_home(self) -> Path:
@@ -147,22 +94,11 @@ class CodexAdapter:
     def stage_container_credentials(self, destination: Path) -> Path:
         """Copy only file-based auth into a task-owned Codex home."""
 
-        source = self.host_codex_home / "auth.json"
-        if not source.is_file() or source.is_symlink():
-            raise FileNotFoundError(
-                "Codex file credentials are unavailable; sign in with file credential "
-                "storage first."
-            )
-        if destination.is_symlink():
-            raise ValueError("credential_home must not be a symbolic link")
-        destination.mkdir(parents=True, exist_ok=True, mode=0o700)
-        destination.chmod(stat.S_IRWXU)
-        target = destination / "auth.json"
-        if target.exists() or target.is_symlink():
-            raise FileExistsError("credential target already exists")
-        shutil.copyfile(source, target, follow_symlinks=False)
-        target.chmod(stat.S_IRUSR | stat.S_IWUSR)
-        return destination
+        return stage_private_files(
+            source_home=self.host_codex_home,
+            destination=destination,
+            filenames=("auth.json",),
+        )
 
     def create_launch_plan(
         self, request: AgentRunRequest, *, credential_home: Path | None = None
@@ -253,26 +189,6 @@ class CodexAdapter:
                 continue
             native_type = str(payload.get("type", "unknown"))
             yield AgentEvent(sequence, _event_kind(native_type, payload), native_type, payload)
-
-    def _read_version(self, executable: str, issues: list[str]) -> str | None:
-        try:
-            result = self._runner([executable, "--version"])
-        except (OSError, subprocess.SubprocessError) as error:
-            issues.append(f"Unable to read Codex version: {type(error).__name__}.")
-            return None
-        if result.returncode != 0:
-            issues.append("Codex version command failed.")
-            return None
-        match = re.search(r"(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)", result.stdout)
-        return match.group(1) if match else result.stdout.strip() or None
-
-    def _read_auth_status(self, executable: str, issues: list[str]) -> bool | None:
-        try:
-            result = self._runner([executable, "login", "status"])
-        except (OSError, subprocess.SubprocessError) as error:
-            issues.append(f"Unable to check Codex authentication: {type(error).__name__}.")
-            return None
-        return result.returncode == 0
 
 
 def _event_kind(native_type: str, payload: dict[str, object]) -> AgentEventKind:

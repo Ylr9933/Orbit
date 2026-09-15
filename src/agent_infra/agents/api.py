@@ -63,6 +63,7 @@ class AgentProbe:
     version: str | None
     authenticated: bool | None
     container_auth_reusable: bool
+    compatible: bool = True
     issues: tuple[str, ...] = ()
     install_command: tuple[str, ...] | None = None
 
@@ -130,3 +131,9 @@ class CommandAgentAdapter(AgentAdapter, Protocol):
     ) -> AgentLaunchPlan: ...
 
     def decode_events(self, lines: Iterator[str]) -> Iterator[AgentEvent]: ...
+
+
+class InstallableCommandAgentAdapter(CommandAgentAdapter, Protocol):
+    """Command Agent that can install its CLI when it is absent."""
+
+    def ensure_installed(self) -> AgentProbe: ...
