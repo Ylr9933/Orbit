@@ -5,7 +5,7 @@ title: "Design decoupled modules around Agent and Environment"
 branch: "docs/agent-environment-modules"
 base_commit: "c3155839567572fddd2dc8ccfc8f869b529d4716"
 work_status: completed
-updated_at: "2026-09-14T14:29:49+00:00"
+updated_at: "2026-09-15T10:12:12+08:00"
 pull_request: null
 ---
 
@@ -21,6 +21,7 @@ The user clarified that the current scaffold is provisional. Evaluate a better s
 - Added navigation from the [README](../../README.md) and [previous repository design](../architecture/repository-architecture.md), distinguishing the current scaffold from the proposed layout.
 - Updated the [project overview](../project-status.md) to reflect the initial Git baseline and the new design proposal, without treating proposed capabilities as implemented.
 - Preserved runtime code, scaffold directories, agent rules, build configuration, and historical task records.
+- Following user review, clarified the original diagram with task/resource result flows through Run into Environment, documented per-attempt environment associations, and explained the eight top-level modules and collaboration through public contracts and test doubles. This refinement does not change project capabilities or priorities, so the project overview was not updated again.
 
 ## Decisions
 
@@ -30,6 +31,7 @@ The user clarified that the current scaffold is provisional. Evaluate a better s
 - Propose functional module directories, internal implementation boundaries, and a small shared contract layer. Keep one Python distribution and a small number of deployment processes initially.
 - Retain both deployment modes, truthful trace-coverage boundaries, benchmark visibility and interaction rules, single-node main allocations per attempt, and cleanup-based resource release.
 - Keep exact interfaces, source migration, and directory-rule changes for follow-up tasks. This proposal does not change the current development rules.
+- Keep the existing module split: Environment receives task requirements and allocated resources through Run. Assign module owners independently of team size; interface producers and consumers share responsibility for contracts, while the Run owner coordinates initial integration.
 
 ## Validation
 
@@ -41,8 +43,9 @@ The user clarified that the current scaffold is provisional. Evaluate a better s
 | `git diff --check` and new-file checks using `git diff --no-index --check /dev/null <file>` | Documentation snapshot below plus this task record | passed | Removed Markdown hard-break trailing spaces flagged in the initial check; the repeated whitespace checks passed. For clean new files, no-index returned 1 for file differences with no whitespace diagnostics. |
 | Compare file SHA-256 inventory with the starting workspace; inspect Git branch and diffs | Base commit plus the five task documents | passed | Only the new design, its record, README navigation, the prior-design note, and the project overview changed. No files were removed; existing source, configuration, agent rules, and historical records were unchanged. |
 | Runtime or API tests | Architecture-only task | not_run | No implementation or executable API is being introduced. |
+| Review refinement; Python link/fence/data-flow checks; `git diff --check` | Revised module document SHA-256: `a8c259d5eb0925067af0c9f40fbd437430c3a547473e1c88b48b17f1ba7555b3` | passed | Checked Tasks/Resources result arrows through Run into Environment, the arrow legend, eight-module explanation, and collaborative development boundaries. Mermaid was reviewed as text, not rendered. |
 
-Documentation snapshot: `b82ed248df75614b01ebe420d8c4110decee47c4dfa1a4d6181a95944d59246c`. Reproduce from the repository root with the following command; the task record is excluded to avoid a self-referential digest:
+Initial documentation snapshot at commit `9440dcb`: `b82ed248df75614b01ebe420d8c4110decee47c4dfa1a4d6181a95944d59246c`. The original validation rows refer to this snapshot. Reproduce from the root of a checkout of that revision with the following command; the task record is excluded to avoid a self-referential digest. The refinement is identified separately by its document hash above.
 
 ```sh
 sha256sum README.md docs/architecture/agent-environment-modules.md docs/architecture/repository-architecture.md docs/project-status.md | sha256sum
@@ -50,7 +53,7 @@ sha256sum README.md docs/architecture/agent-environment-modules.md docs/architec
 
 ## Open items and blockers
 
-- None within the authorized documentation scope. The proposal still requires design review before adoption; source migration and implementation are separate future work.
+- None within the authorized documentation scope. Concrete contracts, source migration, and real integration verification remain future work.
 
 ## Next steps
 

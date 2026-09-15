@@ -20,17 +20,21 @@ flowchart TB
     External[外部 Agent CLI] --> API
     API --> Run[Run：运行协调]
     API -->|查询记录与产物| Records[Records：持久记录与查询]
-    Run --> Tasks[Tasks：任务解析与评测]
-    Run --> Resources[Resources：资源分配与执行派发]
+    Run -->|请求任务解析与评测| Tasks[Tasks：任务解析与评测]
+    Tasks -.->|可见输入、环境要求、输出约定| Run
+    Run -->|申请资源与派发执行| Resources[Resources：资源分配与执行派发]
+    Resources -.->|节点与 CPU / GPU / 内存分配结果| Run
     Run --> Agent[Agent：后端适配与会话]
-    Run --> Env[Environment：工作区与执行能力]
+    Run -->|传入任务环境配置与资源分配，准备和管理环境| Env[Environment：工作区与执行能力]
     Agent -->|受限执行接口| Env
     Run --> Records
     Agent -->|事件与原始轨迹引用| Records
     Env -->|执行事件与产物引用| Records
 ```
 
-图中箭头表示逻辑调用关系，不表示进程位置；跨节点时由代理和 Worker 入口传递调用。Web 和外部 CLI 是可选入口。Python 导入边界见第 4 节。
+图中**实线表示逻辑调用，标签可注明调用携带的信息；虚线补充任务解析和资源分配的结果流向**，不表示反向代码依赖。图中未展开所有返回值、评测与清理步骤，也不表示进程位置；跨节点时由代理和 Worker 入口传递调用。Web 和外部 CLI 是可选入口。Python 导入边界见第 4 节。
+
+Tasks 与 Resources 的结果经 Run 传入 Environment：Tasks 给出允许访问的任务输入、环境与工具要求、输出约定，Resources 给出实际资源分配，Environment 据此准备独立 Docker、工作区和执行能力。Environment 无需自己解析 benchmark 或选择集群节点。Run 在每次 Attempt 上关联任务版本、Agent 会话、环境与资源分配；默认每次 Attempt 使用独立任务容器和工作区，评测环境按原协议安排，资源占用持续到实际清理完成。
 
 | 模块 | 负责的功能 | 不承担的职责 |
 | --- | --- | --- |
@@ -42,6 +46,10 @@ flowchart TB
 | **Records：运行记录** | 持久保存元数据、事件、原始轨迹和产物引用；提供读取与检索 | 决定业务状态迁移、触发新一轮执行或评测 |
 | **接入层** | HTTP、CLI、MCP 和 Worker 协议转换；身份与访问范围检查；调用业务接口 | 复制运行流程、直接操作 Docker/Ray/数据库 |
 | **Web** | 展示资源、运行进度、轨迹和评测结果；发送用户输入及控制请求 | 调度执行、运行 Agent 决策循环、直接访问后端存储 |
+
+以上是当前建议的**八个一级功能模块**：Agent、Environment 是两个核心；Run 负责协调；Tasks、Resources、Records 提供支撑；接入层与 Web 提供入口。它们用于明确代码归属与开发边界，不等于八个独立部署的服务。
+
+模块内部按需要继续拆组件，例如 Environment 内的工作区、工具和 Docker 后端，Tasks 内的任务解析与评测适配器，Resources 内的本地与 Ray 后端。Tool 首期归属 Environment；Docker 与 Ray 分别是环境和调度的后端实现，不额外算一级模块。后续只有出现明确的独立职责或复用需求时，再调整一级边界。
 
 `contracts` 与 `bootstrap` 是工程设施：前者承载少量公共契约，后者组装具体实现。它们不增加新的业务模块。
 
@@ -214,6 +222,8 @@ src/
 ## 8. 如何拆任务并行开发
 
 先确定一组足以跑通最小闭环的契约与替身实现，再让各模块沿自己的边界开发。初期不需要一次实现表中全部能力。
+
+可以按一级模块分配负责人，不要求八个模块对应八个人。团队可分别认领 Agent、Environment、Tasks、Resources、Records、Run、接入层和 Web；人数较少时可以合并职责，但仍保留接口边界。Run 负责人牵头最小链路集成，各接口的提供方与调用方共同确认输入输出、能力声明、错误与取消语义，并维护契约测试和可用替身。其他模块据此独立推进，接口调整时同步更新双方。模块目录分开只是分工基础，能用替身开发、替换实现并通过集成验证，才说明解耦成立。
 
 | 模块 | 首个可交付结果 | 依赖与独立验证方式 |
 | --- | --- | --- |
