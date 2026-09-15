@@ -2,6 +2,8 @@
 
 These rules apply to code, tests, configuration, documentation, and changes to this file. Use them together with the user's approved task scope and any applicable directory-level `AGENTS.md` files.
 
+`AGENTS.md` is the canonical policy; `CLAUDE.md` mirrors it for discoverability. Keep their policy content identical and update both in the same change.
+
 ## 1. Start and resume from evidence
 
 Read in this order:
@@ -9,7 +11,7 @@ Read in this order:
 1. This file and any applicable directory-level instructions.
 2. [Project status](docs/project-status.md).
 3. The relevant task record in `docs/changes/`.
-4. The relevant [repository architecture](docs/architecture/repository-architecture.md), other design documents, and actual code.
+4. Use [the documentation map](docs/README.md) to locate the relevant architecture, development guidance, and actual code. Check document status and current implementation before applying a proposed layout.
 
 Before editing, inspect the repository root, current branch, working tree, staged changes, and relevant recent commits. When Git is available, start with `git status --short --branch` and inspect the relevant diffs. Identify the task's goal, boundaries, and acceptance criteria.
 
@@ -44,6 +46,8 @@ If review or additional authorization is needed for a later action, first finish
 
 Keep unrelated refactoring, formatting sweeps, directory moves, and dependency upgrades separate. Changes to this policy, CI requirements, or branch protection must be explicitly requested governance work; never weaken them to make an unrelated task pass.
 
+Before implementation, identify the acceptance criteria, affected modules/public interfaces, and required checks in the task record when one is required. For parallel work, agree interface changes with their producers and consumers and coordinate overlapping files; routine work within an agreed boundary does not require renewed approval.
+
 ## 4. Respect the implementation boundaries
 
 - Product code belongs in `src/agent_infra/` and `src/web/`. Use the designated `docs/`, `tests/`, `deploy/`, `configs/`, `examples/`, and `scripts/` directories for their documented purposes.
@@ -53,6 +57,25 @@ Keep unrelated refactoring, formatting sweeps, directory moves, and dependency u
 - Update consumers, relevant tests, examples, and documentation when a public contract changes. Edit generated files through their source definitions and regenerate them. Maintain dependency declarations and their lockfiles together.
 - Preserve benchmark visibility, budgets, evaluation, and aggregation rules. Keep execution outcomes, scores, and cleanup status distinct. Resource release must reflect actual process and container cleanup.
 - Keep secrets, credentials, large datasets, model weights, runtime logs, and generated task artifacts out of versioned project records. Use non-sensitive references and concise evidence.
+- Cross-module calls use the designated public contracts, not another module's implementation or backend internals. Make test doubles and placeholders explicit; do not silently substitute them for failing production integrations or present their output as real execution.
+- Before real Docker, GPU, or multi-node checks, identify the target nodes, resource/time budget, and task-owned environments or jobs. Scope cleanup to those resources; do not stop unrelated workloads.
+
+### Documentation placement
+
+Consult [the documentation map](docs/README.md) before adding or moving documents.
+
+| Location | Content |
+| --- | --- |
+| `docs/product/` | Product goals, user scenarios, scope, and acceptance requirements |
+| `docs/architecture/` | System/module design, interface proposals, and design investigations |
+| `docs/adr/` | Focused architectural decisions: context, alternatives, decision, and consequences |
+| `docs/development/` | Development sequence, contributor setup, testing, and collaboration guides |
+| `docs/operations/` | Deployment, node administration, monitoring, backup, recovery, and troubleshooting runbooks |
+| `docs/reference/` | API, configuration, command, and compatibility reference, tied to an explicit version/status |
+| `docs/changes/` | Task records following section 6 |
+| `docs/assets/` | Small images and other assets used by documentation |
+
+`docs/README.md` is the navigation and placement guide; `docs/project-status.md` is the concise progress overview. Update an existing authoritative document when appropriate and link related documents instead of duplicating their content. Mark proposals and unimplemented commands explicitly; operational instructions must state their prerequisites and validation scope. When moving documents, update their links. Keep runtime artifacts and product-required prompts in their designated runtime/source locations, not in documentation assets.
 
 ## 5. Validate the actual change
 

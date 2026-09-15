@@ -59,6 +59,7 @@ The proposed engineering baseline is a Python backend with FastAPI, a TypeScript
 | Document | Purpose |
 | --- | --- |
 | [Project status](docs/project-status.md) | Current stage, delivered outcomes, gaps, and next priorities |
+| [Documentation map](docs/README.md) | Where to read, add, and maintain project documentation |
 | [Agent development rules](AGENTS.md) | Branch isolation, scope, validation, persistence, and handoff requirements |
 | [Goals and architecture](docs/architecture/Agent_Infra_目标与架构设计_v0.1.md) | Product scope and the initial system design, in Chinese |
 | [Module architecture proposal](docs/architecture/agent-environment-modules.md) | Agent/Environment boundaries, public capabilities, proposed source layout, and development sequence, in Chinese |
