@@ -12,6 +12,15 @@ from typing import Any
 
 import yaml
 
+from agent_infra.contracts.files import (
+    content_digest as content_digest,
+)
+from agent_infra.contracts.files import (
+    relative_path as relative_path,
+)
+from agent_infra.contracts.files import (
+    resolve_material as resolve_material,
+)
 from agent_infra.tasks.api import (
     FieldState,
     Material,
@@ -57,50 +66,6 @@ def canonical(value: object) -> str:
         return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
     except (ValueError, TypeError) as error:
         raise ValueError("manifest values must be finite JSON-compatible values") from error
-
-
-def relative_path(value: str) -> PurePosixPath:
-    path = PurePosixPath(value)
-    if path.is_absolute() or ".." in path.parts or not path.parts or "\\" in value:
-        raise ValueError("material path must be a non-empty relative path without traversal")
-    return path
-
-
-def resolve_material(root: Path, source: str) -> Path:
-    relative = relative_path(source)
-    current = root
-    for part in relative.parts:
-        current = current / part
-        if current.is_symlink():
-            raise ValueError("material symlinks are not supported")
-    if not current.resolve().is_relative_to(root.resolve()):
-        raise ValueError("material path escapes root")
-    return current
-
-
-def content_digest(path: Path) -> str:
-    """Hash names and contents, including empty directories; reject links and special files."""
-    digest = hashlib.sha256()
-
-    def visit(item: Path, name: str) -> None:
-        if item.is_symlink():
-            raise ValueError("material symlinks are not supported")
-        if item.is_file():
-            digest.update(canonical(["file", name]).encode())
-            file_digest = hashlib.sha256()
-            with item.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    file_digest.update(chunk)
-            digest.update(file_digest.digest())
-        elif item.is_dir():
-            digest.update(canonical(["directory", name]).encode())
-            for child in sorted(item.iterdir()):
-                visit(child, f"{name}/{child.name}")
-        else:
-            raise ValueError("material is missing or is not a regular file/directory")
-
-    visit(path, ".")
-    return "sha256:" + digest.hexdigest()
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
