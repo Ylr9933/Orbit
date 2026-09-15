@@ -117,3 +117,38 @@ def test_resource_validate_routes_the_yaml_path(
 
     assert result == 0
     assert json.loads(capsys.readouterr().out) == {"path": str(request)}
+
+
+def test_task_cli_view_hides_private_materials() -> None:
+    result = subprocess.run(
+        ["agent-infra", "task", "view", "examples/task-packages/file-result/task.yaml"],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    view = json.loads(result.stdout)
+    assert {item["id"] for item in view["materials"]} == {"instruction", "input"}
+    assert "expected" not in result.stdout
+    assert "evaluator" not in result.stdout
+
+
+def test_task_cli_draft_returns_actionable_clarifications(tmp_path: Path) -> None:
+    instruction = tmp_path / "instruction.md"
+    instruction.write_text("Study the supplied research question")
+    result = subprocess.run(
+        [
+            "agent-infra",
+            "task",
+            "draft",
+            str(instruction),
+            "--task-id",
+            "new-task",
+            "--output",
+            str(tmp_path / "task.yaml"),
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1
+    assert (tmp_path / "task.yaml").exists()
+    assert json.loads(result.stdout)["issues"][0]["code"] == "needs_output"

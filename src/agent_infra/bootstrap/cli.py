@@ -13,6 +13,17 @@ from agent_infra.agents.deepseek_harness import DeepSeekHarnessAdapter
 from agent_infra.bootstrap.settings import load_settings
 from agent_infra.gateways.cli.main import run
 from agent_infra.resources import LinuxHostResourceMonitor, load_resource_request
+from agent_infra.tasks import (
+    build_agent_view,
+    create_research_draft,
+    freeze_task,
+    load_task,
+    materialize_agent_view,
+    review_draft,
+    validate_resource_plan,
+    write_manifest,
+)
+from agent_infra.tasks.importers import import_researchclaw_workspace
 
 _AGENTS = AgentRegistry(
     (CodexAdapter(), ClaudeCodeAdapter(), DeepSeekHarnessAdapter()),
@@ -48,6 +59,45 @@ def _validate_resource_request(path: Path) -> dict[str, object]:
     return _json_mapping(asdict(load_resource_request(path)))
 
 
+def _task_action(action: str, options: dict[str, str]) -> dict[str, object]:
+    if action == "draft":
+        task = create_research_draft(
+            options["task_id"],
+            Path(options["instruction"]),
+            data=Path(options["data"]) if "data" in options else None,
+        )
+        write_manifest(task, Path(options["output"]))
+        return _json_mapping(asdict(review_draft(task)))
+    if action == "import-researchclaw":
+        task = import_researchclaw_workspace(
+            Path(options["workspace"]),
+            native_id=options["native_id"],
+            source_revision=options["source_revision"],
+        )
+        write_manifest(task, Path(options["output"]))
+        return {"status": "indexed_only", "manifest": options["output"]}
+    task = load_task(Path(options["manifest"]))
+    if action == "validate":
+        return _json_mapping(asdict(review_draft(task)))
+    if action == "view":
+        return _json_mapping(asdict(build_agent_view(task)))
+    if action == "freeze":
+        return _json_mapping(asdict(freeze_task(task)))
+    if action == "prepare":
+        return _json_mapping(
+            asdict(
+                materialize_agent_view(
+                    task,
+                    freeze_task(task),
+                    Path(options["destination"]),
+                )
+            )
+        )
+    if action == "resource-check":
+        return _json_mapping(asdict(validate_resource_plan(task, Path(options["request"]))))
+    raise ValueError(f"Unknown task action: {action}")
+
+
 def _json_mapping(value: dict[str, Any]) -> dict[str, object]:
     return {key: _json_value(item) for key, item in value.items()}
 
@@ -69,4 +119,5 @@ def main() -> int:
         _setup_agent,
         _inspect_resources,
         _validate_resource_request,
+        task_action=_task_action,
     )

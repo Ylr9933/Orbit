@@ -1,6 +1,6 @@
 # Tasks 建模：任务材料、可见性与原生 benchmark 转换
 
-状态：设计提案，待评审。当前 `tasks/` 只有模块占位；本文的对象、meta-file 和调用接口均尚未实现。现有 Agent 启动计划和 Resources 请求格式是衔接基础。
+状态：设计已开始落地。任务契约、相对路径 manifest、可见视图、草稿修订、资源校验、工作区索引导入和评测准备已实现；自动编写工作流、工具注入、原生评分等价和真实隔离仍待完成。具体支持字段与命令见 [Tasks API 参考](../reference/tasks.md)。下文保留完整目标，示意格式不等于全部已实现。
 
 ## 1. 核心结论
 
@@ -287,4 +287,4 @@ Agent 生成的 meta-file 应当解释“related_work 是可见参考资料”�
 4. **一个 benchmark adapter**：先挑一个固定版本与样例，比较原生和平台的可见工作区、参数与同一提交的评分；再按相同契约接入第二种目录结构。
 5. **真实隔离和闭环**：连接 Environment、Run、Records，验证隐藏评测不可读、提交冻结、失败状态、原生预算和反馈次数，以及清理后资源释放。
 
-本轮完成建模，不新增运行命令、schema loader 或 benchmark adapter。现有模块边界见 [Agent / Environment 模块设计](agent-environment-modules.md)，资源分配语义见 [资源管理设计](resource-management.md)。
+实现按以上顺序推进，具体已完成范围见 [Tasks API 参考](../reference/tasks.md)。现有模块边界见 [Agent / Environment 模块设计](agent-environment-modules.md)，资源分配语义见 [资源管理设计](resource-management.md)。

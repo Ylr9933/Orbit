@@ -14,6 +14,8 @@ def run(
     inspect_resources: Callable[[], dict[str, object]],
     validate_resource_request: Callable[[Path], dict[str, object]],
     argv: Sequence[str] | None = None,
+    *,
+    task_action: Callable[[str, dict[str, str]], dict[str, object]] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(description="Agent Infra engineering utilities")
     parser.add_argument("--version", action="version", version=version("agent-infra"))
@@ -33,7 +35,44 @@ def run(
     resource_commands.add_parser("inspect", help="Read a host CPU, memory and GPU snapshot")
     validate = resource_commands.add_parser("validate", help="Validate a resource request YAML")
     validate.add_argument("request", type=Path)
+    task = commands.add_parser("task", help="Prepare and inspect task manifests")
+    task_commands = task.add_subparsers(dest="task_command", required=True)
+    for name in ("validate", "view", "freeze"):
+        entry = task_commands.add_parser(name)
+        entry.add_argument("manifest")
+    prepare = task_commands.add_parser("prepare")
+    prepare.add_argument("manifest")
+    prepare.add_argument("destination")
+    resource_check = task_commands.add_parser("resource-check")
+    resource_check.add_argument("manifest")
+    resource_check.add_argument("request")
+    draft = task_commands.add_parser("draft")
+    draft.add_argument("instruction")
+    draft.add_argument("--task-id", required=True)
+    draft.add_argument("--data")
+    draft.add_argument("--output", required=True)
+    native = task_commands.add_parser("import-researchclaw")
+    native.add_argument("workspace")
+    native.add_argument("--native-id", required=True)
+    native.add_argument("--source-revision", required=True)
+    native.add_argument("--output", required=True)
     args = parser.parse_args(argv)
+    if args.command == "task":
+        if task_action is None:
+            parser.exit(2, "Task service is not configured\n")
+        try:
+            result = task_action(
+                args.task_command,
+                {
+                    key: value
+                    for key, value in vars(args).items()
+                    if key not in {"command", "task_command"} and value is not None
+                },
+            )
+        except (OSError, ValueError) as error:
+            parser.exit(2, f"Task error: {error}\n")
+        print(json.dumps(result, sort_keys=True))
+        return 1 if result.get("status") == "needs_input" else 0
     if args.command == "config-check":
         try:
             config_result = check_config(args.config)

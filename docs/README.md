@@ -38,6 +38,6 @@
 8. [S1 开发计划](development/s1-contracts-and-examples.md)：待评审的最小契约、替身、任务样例与验收安排，尚未实施。
 9. [Agent 模块与可替换 CLI Agent](architecture/agent-module.md)：公共抽象、Codex/Claude Code/DSH、宿主机/容器模式、认证隔离和后续集成边界。
 10. [资源管理、Docker 与 Ray 多节点](architecture/resource-management.md)：资源 YAML、宿主机实时观测、资源不足、Docker 限额、Ray 调度和集群认证方案。
-11. [Tasks 建模与 benchmark 转换](architecture/task-model.md)：任务材料索引、可见视图、工具注入、资源意图、科研任务补全与原生评测保留；设计提案，尚未实现。
+11. [Tasks 建模与 benchmark 转换](architecture/task-model.md)、[Tasks API 与命令](reference/tasks.md)：完整目标与首批实现范围；任务契约、可见视图、草稿和索引导入已落地，自动工作流、工具运行与原生评测等价仍待接入。
 
 `AGENTS.md` 与 `CLAUDE.md` 中的简表用于快速定位；具体归档示例与阅读导航在本文件维护。更新规则时同步两个根规则文件。

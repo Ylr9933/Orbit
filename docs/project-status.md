@@ -1,10 +1,10 @@
 # Project Status
 
-Updated at: 2026-09-15T18:55:03+08:00
+Updated at: 2026-09-15T20:17:22+08:00
 
-Basis: This task-branch version proposes the state after `feat/resource-management` and its stacked
-`feat/agent-codex` parent are integrated. The branch ultimately descends from the unmerged
-`docs/s1-plan` commit 67958a0 and main baseline 0a4a05a.
+Basis: This task branch proposes the Tasks foundation on main baseline `99dbd1a` and
+the task-design commit `8b95188`. Agent and local Resources are integrated in that main baseline;
+the Tasks additions below remain task-branch outcomes until merged.
 
 Current stage: S1 in progress after integration of the Agent and local resource vertical slices.
 
@@ -25,6 +25,7 @@ Current stage: S1 in progress after integration of the Agent and local resource 
 - The CLI supports provider-selected `agent doctor` and `agent setup`, including aliases. A shared fixed-version Node Agent image recipe replaces the Codex-only recipe.
 - [Resource management design](architecture/resource-management.md) defines YAML admission, host monitoring, Docker enforcement, Ray scheduling and secure multi-node bootstrap boundaries.
 - Python code strictly parses versioned resource YAML, observes Linux CPU/memory and NVIDIA GPUs, and grants concurrency-safe single-node leases with distinct waiting and unsatisfiable outcomes.
+- Task-branch outcome: [Tasks APIs](reference/tasks.md) parse versioned manifests, project solver views, fingerprint and copy allowed materials, review/revise research drafts, check resource bounds and index native-prepared workspaces. An explicit evaluator registry includes a small platform-only fixture scorer.
 - The CLI validates requests and reads host snapshots. This host returned 80 logical CPUs, about 251 GiB physical memory and four RTX 3090 GPUs; an in-memory one-GPU lease/release smoke passed without starting a job.
 - React/TypeScript Web starter, uv/pnpm locks, Make commands and all static checks remain valid; 66 deterministic tests, Python distributions, dependency-aware isolated wheel smoke and Web production build pass.
 - CI configuration, contributor guidance, review routing, PR template, synchronized agent rules and documentation checks are implemented.
@@ -35,14 +36,14 @@ Current stage: S1 in progress after integration of the Agent and local resource 
 - Hosted CI has not run for this branch; GitHub main protection and reviewer access remain unverified. S0 acceptance is local engineering evidence, not hosted integration evidence.
 - No Environment executor consumes Agent launch plans yet; no model request or real Agent task has been validated.
 - This host's Claude Code login has no copyable `.credentials.json`, so Claude container authentication needs explicit secret injection or file credentials. DSH has no generic side-effect-free authentication probe and its structured headless protocol is pinned to a preview release.
-- Run/Attempt lifecycle contracts, Tasks, durable resource leases/queues, Records, evaluation, cancellation and shared fakes remain absent.
+- Task authoring model orchestration, real tool injection and native benchmark evaluator equivalence remain incomplete; indexed imports are not compatibility certification. Run/Attempt, durable leases/queues, Records and cancellation remain absent.
 - Docker limits and GPU mapping are designed but no Environment Docker adapter applies them yet. Ray is not installed or started, and multi-node authentication/deployment remains unvalidated.
 - Fine-grained public/private import checks still need to accompany the remaining S1 contracts.
 - Actual four-person identities/review assignments and license selection remain open.
 
 ## Next priorities
 
-1. Review and integrate the stacked Agent and resource slices after resolving their `docs/s1-plan` dependency.
+1. Complete Tasks integration: authoring orchestration, ToolBinding and native benchmark equivalence, using the task-branch foundation.
 2. Implement the Environment Docker adapter that applies a lease's CPU, memory and GPU UUID limits and verifies cleanup before release.
 3. Persist queue/lease state through Run/Records and validate the single-node workflow before adding the Ray backend and two-node bootstrap.
 
@@ -59,3 +60,4 @@ configuration remain with the maintainer.
 - [Development sequence](development/development-sequence.md) and [four-person allocation](development/four-person-collaboration.md).
 - [Replaceable command-Agent implementation record](changes/20260915-agent-codex-4d2f1a.md).
 - [Resource management implementation record](changes/20260915-resource-management-8c31e7.md).
+- [Tasks implementation progress](changes/20260915-task-implementation-a71e40.md).
