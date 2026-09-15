@@ -1,99 +1,80 @@
 # Agent Infra
 
-Agent Infra is an early-stage infrastructure project for running and evaluating pluggable agents across research tasks and benchmarks. It is designed to coordinate task environments, compute resources, execution, traces, artifacts, and evaluation while preserving each agent's behavior and each benchmark's native protocol.
+A modular infrastructure project centered on **Agent** and **Environment**, coordinated through
+Run, Tasks, Resources and Records, with thin protocol gateways and a Web console.
 
-**Current status: repository foundation (S0).** Architecture documents, development rules, and the directory scaffold are in place. Runtime services, agent integrations, frontend features, and executable tests are not implemented yet. Dependency manifests, lockfiles, and build configuration are still placeholders. See [project status](docs/project-status.md) for the current progress and next priorities.
+S0 provides installable Python and Web development foundations. Real agents, task execution,
+Docker/Ray scheduling, persistence and business APIs are not implemented yet.
+See [project status](docs/project-status.md) for acceptance and integration state.
 
-## What we are building
+## Quick start
 
-- **Pluggable agents:** adapters for complete CLI agents, workflow-based agents, and lightweight custom agents. Target integrations include Codex, Claude Code, AIDE, and a reference ReAct agent.
-- **Adaptable tasks:** a lightweight meta-spec that indexes native task instructions and configuration without imposing one directory layout on every benchmark.
-- **Managed execution:** isolated task workspaces, Docker environments, CPU/GPU/memory allocation, cancellation, and resource cleanup.
-- **Traceable evaluation:** configuration snapshots, events, original traces, artifacts, and evaluation results tied to individual runs and attempts.
-- **A shared console:** resource visibility, run and trace inspection, and an interactive entrypoint for a simple agent.
+Prerequisites: Linux, Git, Make, Python 3.12.14, Node 24.18.0, uv 0.12.10 and pnpm 10.32.1.
+Tool installation and worktree guidance: [CONTRIBUTING.md](CONTRIBUTING.md).
+Run from the repository root:
 
-These are planned capabilities, with implementation and acceptance tracked in the project overview.
-
-## Planned operating modes
-
-| Mode | Execution model | Intended use |
-| --- | --- | --- |
-| Research | An existing agent CLI uses an infra plugin or MCP entrypoint to operate a managed task container | Interactive research and long-running jobs |
-| Benchmark | The platform launches the agent inside the task container, then collects outputs and invokes evaluation according to the original protocol | Repeatable task execution and batch evaluation |
-
-Both modes share run, attempt, environment, resource, and event contracts. They retain different agent-process ownership and trace coverage. Hidden evaluation materials remain subject to the benchmark's visibility rules.
-
-The first distributed milestone assigns independent runs to multiple nodes through Ray, with each attempt's main execution resources on one node. Multi-node execution within a single task is a later extension.
-
-## Repository layout
-
-```text
-src/
-├── agent_infra/          # Python backend, adapters, CLI, MCP, and Worker entrypoints
-│   ├── domain/          # Entities and execution invariants
-│   ├── contracts/       # Versioned boundary data models
-│   ├── ports/           # Interfaces for external capabilities
-│   ├── application/     # Run, task, tool, and evaluation workflows
-│   ├── adapters/        # Agents, benchmarks, Docker, Ray, and storage
-│   ├── entrypoints/     # Protocol and process entrypoints
-│   └── bootstrap/       # Configuration and dependency assembly
-└── web/                 # Independent frontend project
-docs/                    # Architecture, project status, task records, and guides
-schemas/                 # Versioned schema snapshots generated from source
-tests/                   # Unit, contract, integration, and end-to-end tests
-examples/                # Small task packages and usage examples
-configs/                 # Versioned, non-sensitive application configuration
-deploy/                  # Product images and deployment definitions
-scripts/                 # Development, code generation, and CI helpers
-.github/                 # Hosting-platform workflows and collaboration templates
+```sh
+make setup
+make verify
+uv run --locked python scripts/ci/smoke_wheel.py
+uv run --locked agent-infra --version
+uv run --locked agent-infra config-check --config configs/defaults.toml
+make dev-web
 ```
 
-The layout describes module ownership; most implementation files and supporting configuration are currently empty. Local runtime data belongs in the ignored `var/` directory or an external state directory. Empty scaffold directories that need versioning use `.gitkeep` files.
+Open http://127.0.0.1:5173 locally, or forward that port over SSH for a remote server.
+The page is a development starting point; it has no business backend. Ctrl-C stops the server.
+Use `make dev-web WEB_PORT=5174` when working concurrently.
 
-This tree shows the current scaffold. The [module architecture proposal](docs/architecture/agent-environment-modules.md) recommends organizing the backend by functional module around Agent and Environment; that layout has not been implemented yet.
+`make check` runs format, lint, type, import-boundary, policy-parity and local document-link checks.
+`make test` runs deterministic tests without external services. `make build` produces a Python
+wheel/source distribution in `dist/` and Web assets in `src/web/dist/`. `make verify` runs all three.
+Install commands require registry access (or populated caches); CI uses the same commands.
 
-The proposed engineering baseline is a Python backend with FastAPI, a TypeScript/React frontend, Docker execution, Ray scheduling, and centralized metadata and artifact storage. Exact versions and working installation commands will be established during S0. See the [engineering design](docs/architecture/repository-architecture.md) for boundaries and tradeoffs.
+## Code organization
 
-## Start here
+```text
+src/agent_infra/
+  agents/          Agent sessions and backend adaptation
+  environments/    Workspaces, execution and environment lifecycle
+  runs/            Run/Attempt orchestration
+  tasks/           Task parsing, visibility and native evaluation
+  resources/       Allocation, leases and dispatch
+  records/         Durable metadata, events and artifact references
+  contracts/       Small shared contracts, introduced in S1
+  gateways/        CLI, HTTP, MCP and Worker protocol boundaries
+  bootstrap/       Configuration and dependency assembly
+src/web/           React/TypeScript frontend
+```
 
-| Document | Purpose |
-| --- | --- |
-| [Project status](docs/project-status.md) | Current stage, delivered outcomes, gaps, and next priorities |
-| [Documentation map](docs/README.md) | Where to read, add, and maintain project documentation |
-| [Agent development rules](AGENTS.md) | Branch isolation, scope, validation, persistence, and handoff requirements |
-| [Goals and architecture](docs/architecture/Agent_Infra_目标与架构设计_v0.1.md) | Product scope and the initial system design, in Chinese |
-| [Module architecture proposal](docs/architecture/agent-environment-modules.md) | Agent/Environment boundaries, public capabilities, proposed source layout, and development sequence, in Chinese |
-| [Environment and operations Q&A](docs/architecture/environment-operations-qa.md) | Environment automation, cluster onboarding, trace persistence, and both execution modes, with ASI-Bench findings, in Chinese |
-| [Development sequence](docs/development/development-sequence.md) | Implementation order, parallel work, and the first runnable milestone, in Chinese |
-| [Repository architecture](docs/architecture/repository-architecture.md) | Code organization, interfaces, collaboration, and stage acceptance, in Chinese |
-| [Original architecture sketch](docs/architecture/arch.jpg) | The source sketch behind the initial design |
+Only the configuration/CLI foundation is implemented in the backend. Other module packages
+establish ownership without placeholder business implementations. Cross-module calls use public
+contracts; concrete backends are assembled in bootstrap. The static dependency graph is enforced
+by import-linter; finer public/private boundaries accompany S1 contracts.
 
-There is no supported application installation or launch procedure yet. Before using a command from a design document, check that its implementation and configuration exist. In particular, the proposed `make` targets are not executable project workflows at this stage.
+`tests/` holds validation; `configs/` holds safe tracked configuration; `scripts/` holds developer
+and CI utilities. `deploy/`, `examples/` and `schemas/` reserve deployment, examples and generated
+contract locations for later stages. `.github/` holds CI and review configuration.
+Runtime data belongs in ignored `var/` or an external state directory. See
+[the documentation map](docs/README.md) for document placement.
 
-## Development workflow
+## Configuration
 
-1. Read `AGENTS.md`, the project overview, and the relevant task record and architecture sections.
-2. Work on a task branch. Use separate worktrees for concurrent editing tasks; keep `main` read-only for development.
-3. Implement within the agreed module boundaries and validate the actual change with appropriate checks.
-4. Update `docs/changes/<task-id>.md` for significant work. Update `docs/project-status.md` when overall capabilities, milestones, or priorities change.
-5. Include implementation, its record, and any required overview update in the same PR. Follow the established authorization, review, and integration rules.
+`agent-infra config-check` validates built-in defaults, an optional explicit TOML file, then
+`AGENT_INFRA_STATE_DIR` / `AGENT_INFRA_LOG_LEVEL` environment overrides. It prints the resolved
+non-sensitive settings without creating state or starting services. `.env` is not auto-loaded.
+See [contributor configuration guidance](CONTRIBUTING.md#configuration-and-secrets).
 
-The project overview is a concise current-state summary. Task records preserve recovery context and evidence for individual changes. Git and PR history establish whether those changes have been integrated.
+## Design and development
 
-The [ignore policy](.gitignore) excludes local environments, caches, credentials, runtime data, and build output while keeping shared configuration, dependency locks, schemas, and small fixtures available for version control.
+- [Agent/Environment architecture](docs/architecture/agent-environment-modules.md)
+- [Environment, cluster, trace and execution-mode questions](docs/architecture/environment-operations-qa.md)
+- [Development sequence](docs/development/development-sequence.md)
+- [S0 plan and acceptance](docs/development/s0-engineering-foundation.md)
+- [Agent rules](AGENTS.md), mirrored in [CLAUDE.md](CLAUDE.md)
 
-## Roadmap
+Develop on task branches and include significant-task records. Publishing and PR merges follow
+the agreed authorization and review workflow. CODEOWNERS requests review; it does not activate
+branch protection. Hosted CI and main rulesets must be verified on GitHub after publishing.
 
-| Stage | Acceptance focus |
-| --- | --- |
-| S0 | A versioned repository with working installation, checks, and builds |
-| S1 | Core contracts, fake implementations, and two differently structured task examples |
-| S2 | Complete single-node research and benchmark workflows with artifacts and cleanup |
-| S3 | Verified two-node scheduling, resource accounting, and failure handling |
-| S4 | Resource, trace, and chat pages plus protocol-correct batch evaluation and export |
-
-Detailed acceptance criteria are in the architecture documents. Future extensions include more adapters, remote subjobs, multi-node execution, and checkpoint-based recovery.
-
-## License
-
-License selection is pending; `LICENSE` is currently an empty placeholder.
+License selection is pending; the empty LICENSE file grants no license.

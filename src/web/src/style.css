@@ -1,0 +1,23 @@
+body {
+  margin: 0;
+  padding: 2rem;
+  font-family: system-ui, sans-serif;
+  color: #172c40;
+  background: #f4f7fa;
+}
+main {
+  max-width: 48rem;
+  margin: 12vh auto;
+  line-height: 1.8;
+}
+h1 {
+  font-size: clamp(2rem, 6vw, 4rem);
+  line-height: 1.2;
+}
+.stage {
+  color: #245d79;
+  font-weight: 600;
+}
+.note {
+  color: #526477;
+}

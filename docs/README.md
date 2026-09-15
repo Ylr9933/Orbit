@@ -30,8 +30,9 @@
 
 1. [项目进度](project-status.md)：确认实际状态。
 2. [初始目标与需求](architecture/Agent_Infra_目标与架构设计_v0.1.md)、[仓库工程设计](architecture/repository-architecture.md)：理解项目背景与初始骨架。
-3. [Agent / Environment 模块设计](architecture/agent-environment-modules.md)：了解后续建议的功能模块边界。
+3. [Agent / Environment 模块设计](architecture/agent-environment-modules.md)：了解功能模块边界；一级目录已在 S0 落地，业务接口仍为草案。
 4. [环境与运行问题问答](architecture/environment-operations-qa.md)：了解自动建环境、集群、轨迹与两种运行方式的建议。
-5. [开发顺序](development/development-sequence.md)、[协作开发准备度](development/development-readiness.md)：确定开发先后和当前缺口。
+5. [开发顺序](development/development-sequence.md)、[协作开发准备度](development/development-readiness.md)：确定开发先后；准备度文档保留 S0 实施前评估。
+6. [S0 工程基础计划与验收](development/s0-engineering-foundation.md)、[贡献指南](../CONTRIBUTING.md)：查看当前可执行的安装、检查和协作入口。
 
 `AGENTS.md` 与 `CLAUDE.md` 中的简表用于快速定位；具体归档示例与阅读导航在本文件维护。更新规则时同步两个根规则文件。

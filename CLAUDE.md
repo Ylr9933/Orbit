@@ -51,7 +51,7 @@ Before implementation, identify the acceptance criteria, affected modules/public
 ## 4. Respect the implementation boundaries
 
 - Product code belongs in `src/agent_infra/` and `src/web/`. Use the designated `docs/`, `tests/`, `deploy/`, `configs/`, `examples/`, and `scripts/` directories for their documented purposes.
-- Follow the architecture's import direction. Domain rules remain independent; application code depends on contracts and ports; adapters implement ports; concrete dependencies are assembled in `bootstrap/`.
+- Follow the functional module layout and import direction in `pyproject.toml`: `bootstrap` assembles dependencies, `gateways` adapt protocols, `runs` coordinates module contracts, and domain modules keep their rules and backends local. Shared `contracts` remain independent. See `CONTRIBUTING.md` for the enforced dependency graph and its limits.
 - Keep HTTP, MCP, CLI, and Worker entrypoints thin. Do not expose Ray handles, Docker clients, or database sessions through public contracts.
 - Extend existing modules and interfaces before introducing alternatives. Avoid duplicate managers, DTOs, state machines, and execution paths.
 - Update consumers, relevant tests, examples, and documentation when a public contract changes. Edit generated files through their source definitions and regenerate them. Maintain dependency declarations and their lockfiles together.

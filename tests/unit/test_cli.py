@@ -1,0 +1,27 @@
+"""Exercise the installed console entry point and its failure exit status."""
+
+import json
+import os
+import subprocess
+from pathlib import Path
+
+
+def test_installed_cli_from_another_directory(tmp_path: Path) -> None:
+    env = {key: value for key, value in os.environ.items() if not key.startswith("AGENT_INFRA_")}
+    result = subprocess.run(
+        ["agent-infra", "config-check"], cwd=tmp_path, env=env, text=True, capture_output=True
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["state_dir"] == str(tmp_path / "var")
+    assert not (tmp_path / "var").exists()
+
+
+def test_cli_reports_configuration_error_without_traceback(tmp_path: Path) -> None:
+    result = subprocess.run(
+        ["agent-infra", "config-check", "--config", str(tmp_path / "missing.toml")],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "Configuration error:" in result.stderr
+    assert "Traceback" not in result.stderr
