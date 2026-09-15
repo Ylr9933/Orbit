@@ -18,7 +18,7 @@ def main() -> None:
         subprocess.run(["uv", "venv", "--python", version, str(environment)], check=True)
         python = environment / "bin/python"
         subprocess.run(
-            ["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheels[0])],
+            ["uv", "pip", "install", "--python", str(python), str(wheels[0])],
             check=True,
         )
         env = {
@@ -28,6 +28,22 @@ def main() -> None:
         }
         subprocess.run(
             [str(environment / "bin/agent-infra"), "config-check"],
+            cwd=scratch,
+            env=env,
+            check=True,
+        )
+        request = scratch / "resource.yaml"
+        request.write_text(
+            "version: 1\nrequest_id: smoke\nresources:\n  cpu: 1\n  memory: 1GiB\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                str(environment / "bin/agent-infra"),
+                "resource",
+                "validate",
+                str(request),
+            ],
             cwd=scratch,
             env=env,
             check=True,

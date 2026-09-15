@@ -23,6 +23,8 @@ uv run --locked agent-infra config-check --config configs/defaults.toml
 uv run --locked agent-infra agent doctor codex
 uv run --locked agent-infra agent doctor claude-code
 uv run --locked agent-infra agent doctor dsh
+uv run --locked agent-infra resource inspect
+uv run --locked agent-infra resource validate examples/resource-requests/single-gpu.yaml
 make dev-web
 ```
 
@@ -74,6 +76,7 @@ See [contributor configuration guidance](CONTRIBUTING.md#configuration-and-secre
 
 - [Agent/Environment architecture](docs/architecture/agent-environment-modules.md)
 - [Agent module and replaceable CLI integrations](docs/architecture/agent-module.md)
+- [Resource management, Docker and Ray design](docs/architecture/resource-management.md)
 - [Environment, cluster, trace and execution-mode questions](docs/architecture/environment-operations-qa.md)
 - [Development sequence](docs/development/development-sequence.md)
 - [S0 plan and acceptance](docs/development/s0-engineering-foundation.md)

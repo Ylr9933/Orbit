@@ -10,6 +10,14 @@ import pytest
 from agent_infra.gateways.cli.main import run
 
 
+def _no_resources() -> dict[str, object]:
+    return {}
+
+
+def _validate_resource(path: Path) -> dict[str, object]:
+    return {"path": str(path)}
+
+
 def test_installed_cli_from_another_directory(tmp_path: Path) -> None:
     env = {key: value for key, value in os.environ.items() if not key.startswith("AGENT_INFRA_")}
     result = subprocess.run(
@@ -43,6 +51,8 @@ def test_agent_doctor_prints_machine_readable_probe(
             "container_auth_reusable": True,
         },
         lambda provider: {},
+        _no_resources,
+        _validate_resource,
         ["agent", "doctor", "codex"],
     )
 
@@ -62,6 +72,8 @@ def test_agent_doctor_accepts_provider_without_generic_auth_probe(
             "container_auth_reusable": False,
         },
         lambda provider: {},
+        _no_resources,
+        _validate_resource,
         ["agent", "doctor", "dsh"],
     )
 
@@ -81,8 +93,27 @@ def test_agent_doctor_rejects_incompatible_provider(
             "authenticated": None,
         },
         lambda provider: {},
+        _no_resources,
+        _validate_resource,
         ["agent", "doctor", "dsh"],
     )
 
     assert result == 1
     assert json.loads(capsys.readouterr().out)["compatible"] is False
+
+
+def test_resource_validate_routes_the_yaml_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    request = tmp_path / "resource.yaml"
+    result = run(
+        lambda path: {},
+        lambda provider: {},
+        lambda provider: {},
+        _no_resources,
+        _validate_resource,
+        ["resource", "validate", str(request)],
+    )
+
+    assert result == 0
+    assert json.loads(capsys.readouterr().out) == {"path": str(request)}
