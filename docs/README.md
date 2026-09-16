@@ -48,5 +48,7 @@
 
 ## 单节点执行
 
+- [Web 科研控制台方案](architecture/web-console-design.md)：项目、任务、资源、Agent、运行与记录的页面规划，以及 HTTP 接入和分期验收。
+
 - [Run / Environment 契约](architecture/run-environment-contract.md)：仅求解与隔离评测设计。
 - [执行 API 与验证说明](reference/run-environment.md)：Python 组装、记录、安全边界及真实 Docker 测试。
