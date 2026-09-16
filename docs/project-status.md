@@ -2,9 +2,9 @@
 
 Updated at: 2026-09-16T17:38:42+08:00
 
-Basis: local `main` at merge commit `dc77d51`. Agent, Resources, Tasks, the local
-Run/Environment slice, the Records design and the Records foundation are integrated in this
-baseline. The local branch has not yet been pushed to `origin/main`.
+Basis: local `main`; Records integration is represented by merge commit `dc77d51`. Agent,
+Resources, Tasks, the local Run/Environment slice, the Records design and the Records foundation
+are integrated in this baseline. The local branch has not yet been pushed to `origin/main`.
 
 Current stage: S1 remains in progress, with an early S2 single-node Docker slice integrated.
 
