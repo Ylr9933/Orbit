@@ -1,10 +1,10 @@
 # Project Status
 
-Updated at: 2026-09-16T16:44:12+08:00
+Updated at: 2026-09-16T17:38:42+08:00
 
-Basis: this Records feature branch is based on the local documentation baseline at `11bfad1`.
-Agent, Resources, Tasks and the local Run/Environment slice come from the earlier `main` baseline;
-the Records capabilities below are proposed branch outcomes until this branch is merged.
+Basis: local `main` at merge commit `dc77d51`. Agent, Resources, Tasks, the local
+Run/Environment slice, the Records design and the Records foundation are integrated in this
+baseline. The local branch has not yet been pushed to `origin/main`.
 
 Current stage: S1 remains in progress, with an early S2 single-node Docker slice integrated.
 
@@ -28,7 +28,7 @@ Current stage: S1 remains in progress, with an early S2 single-node Docker slice
 - [Tasks APIs](reference/tasks.md) parse versioned manifests, project solver views, fingerprint and copy allowed materials, review/revise research drafts, check resource bounds and index native-prepared workspaces. An explicit evaluator registry includes a small platform-only fixture scorer.
 - The CLI validates requests and reads host snapshots. This host returned 80 logical CPUs, about 251 GiB physical memory and four RTX 3090 GPUs; an in-memory one-GPU lease/release smoke passed without starting a job.
 - Local Run, Docker Environment and controller records support solver-only research and clean evaluator containers; see [execution reference](reference/run-environment.md).
-- The Records feature branch replaces the controller journal with versioned Run/Attempt manifests, idempotent canonical events, SQLite WAL metadata, content-addressed streams and Artifacts, queries, Agent event normalization, evaluator-private records, Attempt trajectories and fixed JSONL exports; see [Records reference](reference/records.md).
+- Records replaces the controller journal with versioned Run/Attempt manifests, idempotent canonical events, SQLite WAL metadata, content-addressed streams and Artifacts, queries, Agent event normalization, evaluator-private records, Attempt trajectories and fixed JSONL exports; see [Records reference](reference/records.md).
 - React/TypeScript Web starter, uv/pnpm locks, Make commands and all static checks remain valid; 111 deterministic non-E2E tests and seven real local Docker E2E cases pass on this branch. Python distributions and the Web production build also pass; the dependency-aware isolated wheel smoke remains evidence from the prior baseline.
 - CI configuration, contributor guidance, review routing, PR template, synchronized agent rules and documentation checks are implemented.
 - [Environment and operations Q&A](architecture/environment-operations-qa.md) retains design guidance for automation, clusters, traces and both execution modes; it is not runtime evidence.
