@@ -316,6 +316,19 @@ class LocalRecordsStore:
             connection.commit()
         return WriteReceipt(DurabilityLevel.DURABLE_LOCAL, 1, (run_id,))
 
+    def list_runs(self, *, limit: int = 100, offset: int = 0) -> tuple[RunRecord, ...]:
+        if not 1 <= limit <= 200 or offset < 0:
+            raise ValueError("invalid Run page")
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM runs ORDER BY created_at DESC,run_id LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        return tuple(
+            RunRecord(self._decode_run_manifest(row["manifest_json"]), str(row["status"]))
+            for row in rows
+        )
+
     def get_run(self, run_id: str) -> RunRecord:
         with closing(self._connect()) as connection:
             row = connection.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()

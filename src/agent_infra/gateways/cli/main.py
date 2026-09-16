@@ -17,10 +17,17 @@ def run(
     *,
     task_action: Callable[[str, dict[str, str]], dict[str, object]] | None = None,
     records_action: Callable[[str, dict[str, str]], dict[str, object]] | None = None,
+    web_action: Callable[[Path, Path, Path, tuple[Path, ...], int], int] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(description="Agent Infra engineering utilities")
     parser.add_argument("--version", action="version", version=version("agent-infra"))
     commands = parser.add_subparsers(dest="command", required=True)
+    web = commands.add_parser("web", help="Start the local research console")
+    web.add_argument("--records-root", type=Path, default=Path("var/runs/_records"))
+    web.add_argument("--console-dir", type=Path, default=Path("var/console"))
+    web.add_argument("--web-root", type=Path, default=Path("src/web/dist"))
+    web.add_argument("--task", type=Path, action="append", default=[])
+    web.add_argument("--port", type=int, default=8765)
     config = commands.add_parser(
         "config-check", help="Validate configuration; creates no runtime state"
     )
@@ -70,6 +77,15 @@ def run(
     export.add_argument("--root", required=True)
     export.add_argument("--destination", required=True)
     args = parser.parse_args(argv)
+    if args.command == "web":
+        if web_action is None:
+            parser.exit(2, "Web service is not configured\n")
+        try:
+            return web_action(
+                args.records_root, args.console_dir, args.web_root, tuple(args.task), args.port
+            )
+        except (OSError, ValueError):
+            parser.exit(2, "Web startup failed; check build directory, port and state paths\n")
     if args.command == "records":
         if records_action is None:
             parser.exit(2, "Records service is not configured\n")

@@ -12,6 +12,7 @@ from agent_infra.agents.claude_code import ClaudeCodeAdapter
 from agent_infra.agents.codex import CodexAdapter
 from agent_infra.agents.deepseek_harness import DeepSeekHarnessAdapter
 from agent_infra.bootstrap.settings import load_settings
+from agent_infra.bootstrap.web import serve_console
 from agent_infra.gateways.cli.main import run
 from agent_infra.records import AttemptTrajectoryBuilder, EventQuery, export_jsonl
 from agent_infra.records.local import LocalRecordsStore
@@ -160,4 +161,7 @@ def main() -> int:
         _validate_resource_request,
         task_action=_task_action,
         records_action=_records_action,
+        web_action=lambda records, console, web, tasks, port: serve_console(
+            _AGENTS, records, console, web, tasks, port
+        ),
     )
