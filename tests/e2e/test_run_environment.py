@@ -10,6 +10,8 @@ import yaml
 
 from agent_infra.environments.api import InputMount, ProcessCommand, SandboxSpec
 from agent_infra.environments.docker import DockerEnvironment
+from agent_infra.records import EventQuery
+from agent_infra.records.local import LocalRecordsStore
 from agent_infra.runs.service import LocalRunService
 from tests.unit.runs.test_service import FixtureAgent, manager, recipe, setup_task
 
@@ -30,9 +32,15 @@ def test_real_run(tmp_path, evaluation):
     result = LocalRunService(
         environment, manager(), tmp_path / "runs", node_id="local", recipes=(recipe(),)
     ).run(request, agent)
+    records = LocalRecordsStore(tmp_path / "runs" / "_records")
     assert result.status == "completed", (
         result,
-        (tmp_path / "runs" / result.run_id / "records/events.jsonl").read_text(),
+        [
+            event.event_type
+            for event in records.read_events(
+                EventQuery(attempt_id=result.attempt_id, limit=500)
+            ).items
+        ],
     )
     assert result.lease_released and result.cleanup_complete
     assert result.evaluation_status == ("completed" if evaluation else "not_requested")
@@ -70,8 +78,12 @@ def test_untrusted_submission_runs_without_answers(tmp_path):
     )
     assert result.status == "completed"
     assert json.loads(result.feedback_json) == {"passed": True}
-    events = (tmp_path / "runs" / result.run_id / "records/events.jsonl").read_text()
-    assert '"phase": "submission"' in events
+    records = LocalRecordsStore(tmp_path / "runs" / "_records")
+    events = records.read_events(EventQuery(attempt_id=result.attempt_id, limit=500)).items
+    assert any(
+        event.event_type == "phase.started" and event.payload.get("phase") == "submission"
+        for event in events
+    )
 
 
 def test_real_timeout_and_cancel(tmp_path):

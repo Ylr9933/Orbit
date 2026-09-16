@@ -17,6 +17,7 @@ class RunRequest:
 @dataclass(frozen=True, slots=True)
 class RunResult:
     run_id: str
+    attempt_id: str
     status: str
     evaluation_status: str
     feedback_json: str

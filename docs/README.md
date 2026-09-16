@@ -42,6 +42,7 @@
 11. [Tasks 建模与 benchmark 转换](architecture/task-model.md)、[Tasks API 与命令](reference/tasks.md)：完整目标与首批实现范围；任务契约、可见视图、草稿和索引导入已落地，自动工作流、工具运行与原生评测等价仍待接入。
 12. [Agent 实现解读](implementation/agent-implementation-guide.md)、[Resources 实现解读](implementation/resource-implementation-guide.md)：沿当前源码理解公共对象、调用链、关键判断、失败路径和未实现边界。
 13. [Records 模块详细设计](architecture/records-design.md)：原始证据、规范事件、产物与评测、宿主机/容器采集、存储查询，以及面向轨迹分析和 Agentic RL 的派生数据设计。
+14. [Records API 与命令](reference/records.md)、[Records 实现解读](implementation/records-implementation-guide.md)：查看已实现的本地存储、Run 接入、轨迹派生、查询命令和当前限制。
 
 `AGENTS.md` 与 `CLAUDE.md` 中的简表用于快速定位；具体归档示例与阅读导航在本文件维护。更新规则时同步两个根规则文件。
 
