@@ -18,7 +18,7 @@
 - runs.service.LocalRunService：注入 Environment、ResourceManager、节点身份和可信评测注册表；run(request, agent, cancellation=event) 同步执行一次 Attempt。
 - environments.api.Environment：prepare/start/observe/cancel/cleanup/collect；Docker 实现为 environments.docker.DockerEnvironment。
 - tasks.execution.EvaluationRecipe：可信代码注册评分命令与反馈投影；任务清单仅引用 evaluator_ref，不直接执行任意评分命令。
-- records.local.LocalRunJournal：本地 controller 事件和最终结果。
+- records.LocalRecordsStore：本地 SQLite/CAS 记录、查询和轨迹派生；完整接口见 [Records 参考](records.md)。
 
 Environment 接收通用命令，不理解 Codex、任务清单或资源调度。Run 消费现有 CommandAgentAdapter 启动计划，仅允许工作区和单次运行配置目录挂载。宿主机 Agent 控制容器、交互会话及自动重试不属于本轮入口。
 
@@ -70,7 +70,7 @@ print(result.status, result.evaluation_status, result.submission_root)
 
 每次申请前更新资源快照；并发 Run 必须共享 ResourceManager，多个 Python 进程的内存租约不会互相协调。waiting 直接返回，不在服务内排队。预算按管理员授权调整，资源 YAML 仍受到任务约束校验。
 
-Agent 配置再次复制到单次运行目录，求解容器只能访问副本；评测不复用它。凭据和原始日志可能敏感，由 controller 管理保留/删除策略，不上传 Git 或直接作为 Agent 反馈。
+Agent 配置再次复制到单次运行目录，求解容器只能访问副本；评测不复用它。Run 在容器清理后删除单次运行凭据副本，并记录清理结果。原始日志可能敏感，不上传 Git 或直接作为 Agent 反馈。
 
 ## 4. 注册评测
 
@@ -88,11 +88,11 @@ EvaluationRecipe 指定：
 
 ## 5. 记录与失败处理
 
-Run 状态目录的 <run-id>/records/ 保存 events.jsonl 和 result.json。事件记录 handle_id；Environment 状态目录的 <handle-id>/ 保存 ownership.json、stdout 和 stderr。工具调用仅在 Agent 本身输出时保留，不补造轨迹。stdout/stderr 各默认保留前 8 MiB，超出时标记截断。
+Run 的 `state_dir/_records/` 保存 SQLite 元数据和内容寻址 blob。事件记录 Attempt、Phase、handle、job、stream、Artifact 和评测关系；Agent adapter 能解码的原生输出会转为规范事件，并保留指向原始 stream 的引用。stdout/stderr 各默认保留前 8 MiB，超出时标记截断。`RunResult.attempt_id` 可用于查询和生成轨迹。
 
 单次运行目录中的 solver-submission 保存提交，submission-submission 保存预测，scorer-submission 保存私有评分输出。默认产物上限 1 GiB；科研大模型需要显式配置 DockerEnvironment 的 artifact_limit_bytes。
 
-cleanup_complete 表示容器移除已核实，lease_released 表示分配器确认释放。清理不明则保留租约；管理员根据 ownership.json 对账，仅处理本任务容器。产物和 controller 日志会保留；cleanup 不表示删除这些文件。首版没有持久租约、崩溃自动恢复或自动清理凭据机制。
+cleanup_complete 表示容器及单次运行凭据副本的清理已核实，lease_released 表示分配器确认释放。清理不明则保留租约；管理员根据 ownership.json 对账，仅处理本任务容器。Artifact 和 Records 会保留；cleanup 不表示删除这些数据。首版仍没有持久租约或崩溃自动恢复。
 
 要求 controller 和 Docker daemon 位于同一宿主机，绑定路径可访问，状态目录不向 Agent 暴露。不可把 DOCKER_HOST 指向其他节点使用此协调器。控制端文件与镜像由可信管理员维护；容器隔离不能防御拥有宿主机写权限的操作者。跨节点执行需要后续 Worker 契约。
 
@@ -104,6 +104,6 @@ make test
 uv run --locked pytest tests/e2e/test_run_environment.py -q
 ~~~
 
-最后一项实际运行 Docker；需本机已有 python:3.12-slim 与 Docker 权限。串行使用 1 CPU/256 MiB，阶段上限 15 秒，无 GPU、模型或网络。覆盖仅求解、独立评分、执行提交代码、错误答案、私有材料不可见、只读输入、超时/取消、后台进程清理和非法产物路径。
+最后一项实际运行 Docker；需本机已有 python:3.12-slim 与 Docker 权限。串行使用 1 CPU/256 MiB，阶段上限 15 秒，无 GPU、模型或网络。覆盖仅求解、独立评分、执行提交代码、错误答案、私有材料不可见、只读输入、超时/取消、后台进程清理、非法产物路径，以及 Records stream/Artifact/事件归档。
 
 CPU/内存配置在 start 中从 Docker 读取回验。GPU UUID 透传已实现，但没有 GPU 执行证据；不能据此宣称 GPU、多节点、真实 Agent 或原生 benchmark 闭环通过。

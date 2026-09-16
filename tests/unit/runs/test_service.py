@@ -10,7 +10,12 @@ from threading import Event
 import pytest
 import yaml
 
-from agent_infra.agents.api import AgentLaunchPlan, AgentPlacement
+from agent_infra.agents.api import (
+    AgentEvent,
+    AgentEventKind,
+    AgentLaunchPlan,
+    AgentPlacement,
+)
 from agent_infra.contracts.files import content_digest
 from agent_infra.environments.api import (
     CleanupResult,
@@ -20,6 +25,14 @@ from agent_infra.environments.api import (
     ProcessCommand,
     Submission,
 )
+from agent_infra.records import (
+    AttemptTrajectoryBuilder,
+    DataClass,
+    EventQuery,
+    RecordingPolicy,
+    Visibility,
+)
+from agent_infra.records.local import LocalRecordsStore
 from agent_infra.resources.api import HostResourceSnapshot, NodeCapacity
 from agent_infra.resources.local import LocalResourceManager
 from agent_infra.runs.api import RunRequest
@@ -41,6 +54,17 @@ class FixtureAgent:
         return AgentLaunchPlan(
             "fixture", AgentPlacement.CONTAINER, ("python", "-c", self.code), "/workspace", None
         )
+
+
+class TraceFixtureAgent(FixtureAgent):
+    def decode_events(self, lines):
+        for sequence, line in enumerate(lines):
+            yield AgentEvent(
+                sequence,
+                AgentEventKind.MESSAGE,
+                "fixture.message",
+                {"role": "assistant", "text": line},
+            )
 
 
 def setup_task(tmp_path, *, evaluation=True):
@@ -85,9 +109,10 @@ def recipe():
 
 
 class FakeEnvironment:
-    def __init__(self, *, outcome="exited", cleanup=True, start_fails=False):
+    def __init__(self, *, outcome="exited", cleanup=True, start_fails=False, stdout=""):
         self.specs = {}
         self.outcome, self.clean, self.start_fails = outcome, cleanup, start_fails
+        self.stdout = stdout
         self.removed = set()
 
     def prepare(self, spec):
@@ -109,7 +134,7 @@ class FakeEnvironment:
             (spec.workspace / "result.json").write_text('{"passed":true,"private":"hidden"}')
 
     def observe(self, handle, cursor=None):
-        return Observation(self.outcome, 0, "", "", LogCursor())
+        return Observation(self.outcome, 0, self.stdout, "", LogCursor(len(self.stdout), 0))
 
     def cancel(self, handle):
         return CleanupResult(self.clean)
@@ -139,7 +164,9 @@ def test_optional_evaluation(tmp_path, evaluation):
     assert result.evaluation_status == ("completed" if evaluation else "not_requested")
     assert set(env.specs) == ({"solver", "scorer"} if evaluation else {"solver"})
     assert result.feedback_json == ('{"passed": true}' if evaluation else "{}")
-    assert (tmp_path / "runs" / result.run_id / "records/result.json").exists()
+    records = LocalRecordsStore(tmp_path / "runs" / "_records")
+    assert records.get_run(result.run_id).status == "completed"
+    assert records.get_attempt(result.attempt_id).status == "completed"
 
 
 def test_declared_evaluator_cannot_be_silently_skipped(tmp_path):
@@ -152,14 +179,90 @@ def test_declared_evaluator_cannot_be_silently_skipped(tmp_path):
     assert not env.specs and result.lease_id is None
 
 
+def test_run_records_trace_artifacts_evaluation_and_reward(tmp_path):
+    env = FakeEnvironment(stdout="observable agent message")
+    result = LocalRunService(
+        env, manager(), tmp_path / "runs", node_id="local", recipes=(recipe(),)
+    ).run(setup_task(tmp_path), TraceFixtureAgent())
+    assert result.status == "completed"
+    records = LocalRecordsStore(tmp_path / "runs" / "_records")
+    events = records.read_events(EventQuery(attempt_id=result.attempt_id, limit=500)).items
+    event_types = {event.event_type for event in events}
+    assert {
+        "task.snapshot",
+        "policy.snapshot",
+        "lease.granted",
+        "process.started",
+        "process.exited",
+        "agent.message",
+        "artifact.committed",
+        "evaluation.finished",
+        "reward.assigned",
+        "lease.released",
+    } <= event_types
+    artifacts = records.list_artifacts(result.attempt_id)
+    assert {artifact.name for artifact in artifacts} == {
+        "agent-visible-task-snapshot",
+        "solver-submission",
+        "scorer-submission",
+    }
+    scorer = next(artifact for artifact in artifacts if artifact.name == "scorer-submission")
+    assert scorer.visibility is Visibility.EVALUATOR
+    assert scorer.data_class is DataClass.PRIVATE_EVALUATION
+    scorer_producer = next(
+        event.context.producer_id
+        for event in events
+        if event.event_type == "environment.ready" and event.payload.get("phase") == "scorer"
+    )
+    assert all(
+        event.visibility is Visibility.EVALUATOR
+        and event.data_class is DataClass.PRIVATE_EVALUATION
+        for event in events
+        if event.context.producer_id == scorer_producer
+    )
+    trajectory = AttemptTrajectoryBuilder(records).build(result.attempt_id)
+    assert len(trajectory.steps) == 1
+    assert "result_reward_rl_candidate" in trajectory.eligibility.eligible_for
+
+
+def test_recording_limits_are_visible_in_trace_eligibility(tmp_path):
+    service = LocalRunService(
+        FakeEnvironment(stdout="long observable output"),
+        manager(),
+        tmp_path / "runs",
+        node_id="local",
+        recording_policy=RecordingPolicy(
+            stream_bytes_per_job=5,
+            total_bytes_per_attempt=5,
+        ),
+    )
+    result = service.run(setup_task(tmp_path, evaluation=False), TraceFixtureAgent())
+    assert result.status == "completed"
+    records = LocalRecordsStore(tmp_path / "runs" / "_records")
+    events = records.read_events(EventQuery(attempt_id=result.attempt_id, limit=500)).items
+    assert any(event.event_type == "capture.truncated" for event in events)
+    trajectory = AttemptTrajectoryBuilder(records).build(result.attempt_id)
+    assert "capture_incomplete" in trajectory.eligibility.limitations
+
+
 @pytest.mark.parametrize("outcome", ["failed", "timed_out", "oom"])
 def test_execution_failure_still_cleans(tmp_path, outcome):
     env = FakeEnvironment(outcome=outcome)
-    result = LocalRunService(env, manager(), tmp_path / "runs", node_id="local").run(
-        setup_task(tmp_path, evaluation=False), FixtureAgent()
-    )
+    service = LocalRunService(env, manager(), tmp_path / "runs", node_id="local")
+    result = service.run(setup_task(tmp_path, evaluation=False), FixtureAgent())
     assert result.status == outcome
     assert result.lease_released and result.cleanup_complete
+    records = LocalRecordsStore(tmp_path / "runs" / "_records")
+    event_types = {
+        event.event_type
+        for event in records.read_events(EventQuery(attempt_id=result.attempt_id, limit=500)).items
+    }
+    assert {
+        "job.failed",
+        "phase.failed",
+        "stream.committed",
+        "environment.cleanup_finished",
+    } <= event_types
 
 
 def test_cleanup_failure_retains_lease(tmp_path):

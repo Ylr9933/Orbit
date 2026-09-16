@@ -1,5 +1,6 @@
 """Console composition root."""
 
+import json
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,8 @@ from agent_infra.agents.codex import CodexAdapter
 from agent_infra.agents.deepseek_harness import DeepSeekHarnessAdapter
 from agent_infra.bootstrap.settings import load_settings
 from agent_infra.gateways.cli.main import run
+from agent_infra.records import AttemptTrajectoryBuilder, EventQuery, export_jsonl
+from agent_infra.records.local import LocalRecordsStore
 from agent_infra.resources import LinuxHostResourceMonitor, load_resource_request
 from agent_infra.tasks import (
     build_agent_view,
@@ -98,6 +101,40 @@ def _task_action(action: str, options: dict[str, str]) -> dict[str, object]:
     raise ValueError(f"Unknown task action: {action}")
 
 
+def _records_action(action: str, options: dict[str, str]) -> dict[str, object]:
+    store = LocalRecordsStore(Path(options["root"]))
+    if action == "run":
+        return _json_mapping(asdict(store.get_run(options["identifier"])))
+    if action == "attempt":
+        return _json_mapping(asdict(store.get_attempt(options["identifier"])))
+    if action == "events":
+        page = store.read_events(
+            EventQuery(attempt_id=options["identifier"], limit=int(options["limit"]))
+        )
+        return _json_mapping(asdict(page))
+    if action == "artifacts":
+        return {
+            "items": [
+                _json_mapping(asdict(item)) for item in store.list_artifacts(options["identifier"])
+            ]
+        }
+    builder = AttemptTrajectoryBuilder(store)
+    if action == "trajectory":
+        return _json_mapping(asdict(builder.build(options["identifier"])))
+    if action == "export":
+        identifiers = json.loads(options["identifiers"])
+        if not isinstance(identifiers, list) or not all(
+            isinstance(identifier, str) for identifier in identifiers
+        ):
+            raise ValueError("export identifiers must be strings")
+        exported = export_jsonl(
+            tuple(builder.build(identifier) for identifier in identifiers),
+            Path(options["destination"]),
+        )
+        return _json_mapping(asdict(exported))
+    raise ValueError(f"Unknown Records action: {action}")
+
+
 def _json_mapping(value: dict[str, Any]) -> dict[str, object]:
     return {key: _json_value(item) for key, item in value.items()}
 
@@ -109,6 +146,8 @@ def _json_value(value: Any) -> Any:
         return {key: _json_value(item) for key, item in value.items()}
     if isinstance(value, tuple | list):
         return [_json_value(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
     return value
 
 
@@ -120,4 +159,5 @@ def main() -> int:
         _inspect_resources,
         _validate_resource_request,
         task_action=_task_action,
+        records_action=_records_action,
     )

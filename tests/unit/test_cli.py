@@ -3,11 +3,14 @@
 import json
 import os
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from agent_infra.gateways.cli.main import run
+from agent_infra.records import AttemptManifest, RunManifest
+from agent_infra.records.local import LocalRecordsStore
 
 
 def _no_resources() -> dict[str, object]:
@@ -152,3 +155,22 @@ def test_task_cli_draft_returns_actionable_clarifications(tmp_path: Path) -> Non
     assert result.returncode == 1
     assert (tmp_path / "task.yaml").exists()
     assert json.loads(result.stdout)["issues"][0]["code"] == "needs_output"
+
+
+def test_records_cli_reads_durable_attempt(tmp_path: Path) -> None:
+    root = tmp_path / "records"
+    store = LocalRecordsStore(root)
+    now = datetime.now(UTC)
+    store.begin_run(RunManifest("run", now, {"kind": "test"}))
+    store.begin_attempt(AttemptManifest("attempt", "run", now))
+    store.finish_attempt("attempt", status="completed", result={"status": "completed"})
+    store.finish_run("run", status="completed")
+    result = subprocess.run(
+        ["agent-infra", "records", "attempt", "attempt", "--root", str(root)],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "completed"
+    assert payload["manifest"]["attempt_id"] == "attempt"

@@ -16,6 +16,7 @@ def run(
     argv: Sequence[str] | None = None,
     *,
     task_action: Callable[[str, dict[str, str]], dict[str, object]] | None = None,
+    records_action: Callable[[str, dict[str, str]], dict[str, object]] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(description="Agent Infra engineering utilities")
     parser.add_argument("--version", action="version", version=version("agent-infra"))
@@ -56,7 +57,38 @@ def run(
     native.add_argument("--native-id", required=True)
     native.add_argument("--source-revision", required=True)
     native.add_argument("--output", required=True)
+    records = commands.add_parser("records", help="Inspect durable Run records and trajectories")
+    records_commands = records.add_subparsers(dest="records_command", required=True)
+    for name in ("run", "attempt", "events", "artifacts", "trajectory"):
+        entry = records_commands.add_parser(name)
+        entry.add_argument("identifier")
+        entry.add_argument("--root", required=True)
+        if name == "events":
+            entry.add_argument("--limit", type=int, default=200)
+    export = records_commands.add_parser("export")
+    export.add_argument("identifiers", nargs="+")
+    export.add_argument("--root", required=True)
+    export.add_argument("--destination", required=True)
     args = parser.parse_args(argv)
+    if args.command == "records":
+        if records_action is None:
+            parser.exit(2, "Records service is not configured\n")
+        values = {
+            key: value
+            for key, value in vars(args).items()
+            if key not in {"command", "records_command"} and value is not None
+        }
+        if isinstance(values.get("identifiers"), list):
+            values["identifiers"] = json.dumps(values["identifiers"])
+        try:
+            result = records_action(
+                args.records_command,
+                {key: str(value) for key, value in values.items()},
+            )
+        except (OSError, RuntimeError, ValueError, KeyError) as error:
+            parser.exit(2, f"Records error: {error}\n")
+        print(json.dumps(result, sort_keys=True))
+        return 0
     if args.command == "task":
         if task_action is None:
             parser.exit(2, "Task service is not configured\n")
