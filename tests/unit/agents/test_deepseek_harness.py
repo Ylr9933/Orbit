@@ -1,5 +1,6 @@
 """DeepSeek Harness adapter contract and event normalization tests."""
 
+import json
 import stat
 import subprocess
 import sys
@@ -163,9 +164,27 @@ def test_events_normalize_documented_headless_types() -> None:
         "final",
         "error",
     ]
-    lines = iter(
-        '{"type":"' + native_type + '","usage":{"tokens":1}}' for native_type in native_types
-    )
+    payloads = [
+        {"type": "session", "session_id": "session-1"},
+        {"type": "text", "text": "working"},
+        {
+            "type": "tool_call",
+            "id": "call-1",
+            "name": "read_pdf",
+            "arguments": {"path": "paper.pdf"},
+        },
+        {
+            "type": "tool_result",
+            "id": "call-1",
+            "name": "read_pdf",
+            "result": {"pages": 3},
+        },
+        {"type": "status", "usage": {"input_tokens": 4, "output_tokens": 6}},
+        {"type": "final", "status": "completed"},
+        {"type": "error", "message": "failed"},
+    ]
+    assert [payload["type"] for payload in payloads] == native_types
+    lines = iter(json.dumps(payload) for payload in payloads)
 
     events = list(DeepSeekHarnessAdapter().decode_events(lines))
 
@@ -178,3 +197,15 @@ def test_events_normalize_documented_headless_types() -> None:
         AgentEventKind.COMPLETED,
         AgentEventKind.ERROR,
     ]
+    assert events[2].canonical == {
+        "tool_call_id": "call-1",
+        "tool_name": "read_pdf",
+        "tool_type": "function",
+        "arguments": {"path": "paper.pdf"},
+    }
+    assert events[3].canonical["result"] == {"pages": 3}
+    assert events[4].canonical == {
+        "input_tokens": 4,
+        "output_tokens": 6,
+        "total_tokens": 10,
+    }

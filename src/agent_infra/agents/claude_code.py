@@ -14,6 +14,15 @@ from agent_infra.agents._cli_support import (
     run_command,
     stage_private_files,
 )
+from agent_infra.agents._event_normalization import (
+    as_mapping,
+    error_payload,
+    first_string,
+    first_value,
+    structured_value,
+    text_value,
+    usage_payload,
+)
 from agent_infra.agents.api import (
     AgentCapability,
     AgentDescriptor,
@@ -152,22 +161,129 @@ class ClaudeCodeAdapter:
         )
 
     def decode_events(self, lines: Iterator[str]) -> Iterator[AgentEvent]:
-        for sequence, line in enumerate(lines):
+        sequence = 0
+        for native_sequence, line in enumerate(lines):
             stripped = line.strip()
             if not stripped:
                 continue
             try:
                 payload = json.loads(stripped)
             except json.JSONDecodeError:
-                yield AgentEvent(sequence, AgentEventKind.ERROR, "invalid_json", {"text": stripped})
+                yield AgentEvent(
+                    sequence,
+                    AgentEventKind.ERROR,
+                    "invalid_json",
+                    {"text": stripped},
+                    {"error_type": "invalid_json", "message": stripped},
+                    native_sequence=native_sequence,
+                )
+                sequence += 1
                 continue
             if not isinstance(payload, dict):
-                yield AgentEvent(sequence, AgentEventKind.UNKNOWN, "unknown", {"value": payload})
+                yield AgentEvent(
+                    sequence,
+                    AgentEventKind.UNKNOWN,
+                    "unknown",
+                    {"value": payload},
+                    native_sequence=native_sequence,
+                )
+                sequence += 1
                 continue
             native_type = str(payload.get("type", "unknown"))
-            yield AgentEvent(
-                sequence, _claude_event_kind(native_type, payload), native_type, payload
-            )
+            parts = _claude_event_parts(native_type, payload)
+            for part_index, (kind, canonical) in enumerate(parts):
+                yield AgentEvent(
+                    sequence,
+                    kind,
+                    native_type,
+                    payload,
+                    canonical,
+                    native_sequence=native_sequence,
+                    part_index=part_index,
+                )
+                sequence += 1
+
+
+def _claude_event_parts(
+    native_type: str, payload: dict[str, object]
+) -> list[tuple[AgentEventKind, dict[str, object]]]:
+    parts: list[tuple[AgentEventKind, dict[str, object]]] = []
+    if native_type == "system":
+        session_id = first_string(payload, "session_id", "id")
+        parts.append((AgentEventKind.SESSION, {"session_id": session_id} if session_id else {}))
+    elif native_type == "result":
+        if payload.get("is_error") is True:
+            error = error_payload(payload)
+            if "message" not in error:
+                message = first_string(payload, "result")
+                if message is not None:
+                    error["message"] = message
+            parts.append((AgentEventKind.ERROR, error))
+        else:
+            canonical: dict[str, object] = {}
+            session_id = first_string(payload, "session_id")
+            finish_reason = first_string(payload, "subtype", "stop_reason", "finish_reason")
+            if session_id is not None:
+                canonical["session_id"] = session_id
+            if finish_reason is not None:
+                canonical["finish_reason"] = finish_reason
+            parts.append((AgentEventKind.COMPLETED, canonical))
+    else:
+        message_payload = as_mapping(payload.get("message"))
+        content = message_payload.get("content")
+        blocks = content if isinstance(content, list) else []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            block_type = first_string(block, "type") or "unknown"
+            if block_type == "tool_use":
+                canonical = {"tool_type": "function"}
+                call_id = first_string(block, "id", "tool_call_id")
+                name = first_string(block, "name", "tool_name")
+                arguments = first_value(block, "input", "arguments")
+                if call_id is not None:
+                    canonical["tool_call_id"] = call_id
+                if name is not None:
+                    canonical["tool_name"] = name
+                if arguments is not None:
+                    canonical["arguments"] = structured_value(arguments)
+                parts.append((AgentEventKind.TOOL_CALL, canonical))
+            elif block_type == "tool_result":
+                canonical = {}
+                call_id = first_string(block, "tool_use_id", "tool_call_id", "id")
+                name = first_string(block, "name", "tool_name")
+                result = first_value(block, "content", "result", "output")
+                is_error = block.get("is_error") is True
+                if call_id is not None:
+                    canonical["tool_call_id"] = call_id
+                if name is not None:
+                    canonical["tool_name"] = name
+                if result is not None:
+                    canonical["result"] = structured_value(result)
+                canonical["is_error"] = is_error
+                canonical["status"] = "failed" if is_error else "succeeded"
+                parts.append((AgentEventKind.TOOL_RESULT, canonical))
+            elif block_type in {"text", "thinking"}:
+                canonical = {"role": native_type}
+                text = text_value(first_value(block, "text", "content"))
+                if text is not None:
+                    canonical["text"] = text
+                parts.append((AgentEventKind.MESSAGE, canonical))
+            else:
+                parts.append((AgentEventKind.UNKNOWN, {}))
+        if not parts:
+            kind = _claude_event_kind(native_type, payload)
+            canonical = {}
+            text = text_value(content)
+            if kind is AgentEventKind.MESSAGE:
+                canonical["role"] = native_type
+                if text is not None:
+                    canonical["text"] = text
+            parts.append((kind, canonical))
+    usage = usage_payload(payload)
+    if usage:
+        parts.append((AgentEventKind.USAGE, usage))
+    return parts
 
 
 def _validate_request(request: AgentRunRequest) -> None:

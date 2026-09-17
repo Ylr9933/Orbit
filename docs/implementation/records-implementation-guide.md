@@ -66,7 +66,12 @@ Solver stdout 同时作为 job stream 和 Agent 原生 stream。若 adapter 实�
 | `ERROR` | `agent.error` |
 | `UNKNOWN` | `agent.native_event` |
 
-规范事件保留 native payload，并通过 `raw_refs` 指回原始 stream blob。即使 Agent 失败，已捕获的 stdout/stderr 也会 finalize，并尝试规范化。规范化失败产生 `capture.gap`，不删除原始记录。
+规范事件把 `AgentEvent.canonical` 放入载荷顶层，并附加 `source.native_sequence`、
+`source.part_index`、`native_type` 和完整 `native`。工具请求与结果通过 `tool_call_id` 进入同一
+correlation 和 Span；载荷 schema 使用对应的 `agent.*.v1`，normalizer 版本为 `2.0.0`。
+
+事件通过 `raw_refs` 指回原始 stream blob。即使 Agent 失败，已捕获的 stdout/stderr 也会 finalize，
+并尝试规范化。规范化失败产生 `capture.gap`，不删除原始记录。
 
 ## 5. 评测隔离
 
@@ -76,9 +81,17 @@ Evaluator 返回的允许公开 feedback 记录在 `evaluation.finished`。只�
 
 ## 6. 轨迹派生
 
-`AttemptTrajectoryBuilder` 读取已完成 Attempt 的事件图，而不修改原始数据。trajectory ID 由 Attempt、builder 版本和源 event ID 计算，因此同一输入和 builder 版本具有稳定 ID。
+`AttemptTrajectoryBuilder` 读取已完成 Attempt 的事件图，而不修改原始数据。当前 schema 为
+`records.trajectory.v2`，builder 为 `attempt-event-graph@2.0.0`。trajectory ID 由 Attempt、builder
+版本和源 event ID 计算，因此同一输入和 builder 版本具有稳定 ID。
 
-每个 step 保存 observation event、action event、后继 observation、reward、Span lineage、终止原因和 PolicySnapshot ID。当前 CLI Agent 通常没有 token ID 和 behavior logprob，因此导出会明确标记 unavailable。训练使用者必须按 `eligible_for` 和 `limitations` 筛选。
+每个 step 保存 observation event、action event、后继 observation、reward、Span lineage、终止原因
+和 PolicySnapshot ID。tool action 会按 `tool_call_id`（缺失时退回 Span）查找对应结果，即使并行
+调用使结果出现在后一个 action 之后，也会进入正确 action 的 next observation。资格特征中的
+`tool_call_correlation` 为 `complete`、`partial` 或 `unavailable`；partial 同时产生明确 limitation。
+
+当前 CLI Agent 通常没有 token ID 和 behavior logprob，因此导出会明确标记 unavailable。训练使用者
+必须按 `eligible_for`、`limitations` 和 features 筛选。
 
 ## 7. 当前限制和扩展点
 

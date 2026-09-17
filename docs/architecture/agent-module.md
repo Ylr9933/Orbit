@@ -39,7 +39,7 @@ flowchart LR
 | `CommandAgentAdapter` | 外部命令 Agent：生成无 shell 的启动计划并解码事件流 |
 | `AgentRunRequest` | Run 提供的稳定输入：run ID、提示词、工作区、位置、模型、推理强度和恢复 ID |
 | `AgentLaunchPlan` | Environment 消费的 argv、cwd、stdin、环境变量、挂载和镜像要求 |
-| `AgentEvent` | 少量统一事件种类，并保留 `native_type` 和完整原生 payload |
+| `AgentEvent` | 统一事件种类、版本化规范载荷，并保留 `native_type` 和完整原生 payload |
 
 新增一个同类 CLI Agent 时通常需要增加适配器文件和测试，并在 composition root 注册；若使用现有 npm/JSONL 约定，可以复用公共辅助层和通用镜像。仅增加一个 Python 文件不足以让 CLI、镜像、配置复制和测试自动认识新 provider。
 
@@ -57,7 +57,19 @@ Canonical provider 为 `codex`、`claude-code` 和 `dsh`。CLI 也接受 `claude
 
 公共请求不会抹平原生限制。DSH 0.1.5-rc.1 没有结构化事件和恢复参数，因此实现固定到已发布的 `0.1.6-alpha.1`，诊断会把其他版本标成不兼容，`agent setup dsh` 会安装所需版本。DSH 仍处于 developer preview，升级前必须重新验证 headless 协议。
 
-统一事件包括 session、message、tool call、tool result、usage、completed 和 error。适配器保留每条原生 JSON payload；Records 接入后同时保存原始 stdout/stderr 和统一事件。格式异常的行转成 error 事件，不会让整条轨迹静默丢失。
+统一事件包括 session、message、tool call、tool result、usage、completed 和 error。适配器保留每条
+原生 JSON payload，并额外输出供跨 provider 查询的规范载荷。规范化不是复制全部原生字段，而是
+稳定提取事件核心语义：message 的 role/text，工具的 call ID/name/arguments/result/status，usage 的
+input/output/cache/reasoning token，以及 session/completion/error 的公共标识和状态。
+
+一条原生消息可能包含多个 content block 或多个并行工具调用。适配器必须将每个 message block、
+tool call 和 tool result 分别输出为独立 `AgentEvent`，同时保存 `native_sequence` 与 `part_index`，
+使规范事件既有唯一顺序，也能回到同一原生 JSONL 行。无法识别的事件生成 `unknown`，不能猜测
+不存在的字段。
+
+Records 接入后同时保存原始 stdout/stderr、完整 native payload 和版本化规范事件。格式异常的行
+转成 error 事件，不会让整条轨迹静默丢失。规范字段用于 Web、查询、统计和轨迹派生；native 与
+raw stream 用于审计、重新解析和兼容 provider 升级。
 
 ## 4. 宿主机与容器模式
 

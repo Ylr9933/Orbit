@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 from agent_infra.agents._cli_support import (
@@ -13,6 +13,15 @@ from agent_infra.agents._cli_support import (
     probe_npm_cli,
     run_command,
     stage_private_files,
+)
+from agent_infra.agents._event_normalization import (
+    as_mapping,
+    error_payload,
+    first_string,
+    first_value,
+    structured_value,
+    text_value,
+    usage_payload,
 )
 from agent_infra.agents.api import (
     AgentCapability,
@@ -175,20 +184,127 @@ class CodexAdapter:
         )
 
     def decode_events(self, lines: Iterator[str]) -> Iterator[AgentEvent]:
-        for sequence, line in enumerate(lines):
+        sequence = 0
+        for native_sequence, line in enumerate(lines):
             stripped = line.strip()
             if not stripped:
                 continue
             try:
                 payload = json.loads(stripped)
             except json.JSONDecodeError:
-                yield AgentEvent(sequence, AgentEventKind.ERROR, "invalid_json", {"text": stripped})
+                yield AgentEvent(
+                    sequence,
+                    AgentEventKind.ERROR,
+                    "invalid_json",
+                    {"text": stripped},
+                    {"error_type": "invalid_json", "message": stripped},
+                    native_sequence=native_sequence,
+                )
+                sequence += 1
                 continue
             if not isinstance(payload, dict):
-                yield AgentEvent(sequence, AgentEventKind.UNKNOWN, "unknown", {"value": payload})
+                yield AgentEvent(
+                    sequence,
+                    AgentEventKind.UNKNOWN,
+                    "unknown",
+                    {"value": payload},
+                    native_sequence=native_sequence,
+                )
+                sequence += 1
                 continue
             native_type = str(payload.get("type", "unknown"))
-            yield AgentEvent(sequence, _event_kind(native_type, payload), native_type, payload)
+            parts = _codex_event_parts(native_type, payload)
+            for part_index, (kind, canonical) in enumerate(parts):
+                yield AgentEvent(
+                    sequence,
+                    kind,
+                    native_type,
+                    payload,
+                    canonical,
+                    native_sequence=native_sequence,
+                    part_index=part_index,
+                )
+                sequence += 1
+
+
+def _codex_event_parts(
+    native_type: str, payload: dict[str, object]
+) -> list[tuple[AgentEventKind, dict[str, object]]]:
+    kind = _event_kind(native_type, payload)
+    parts: list[tuple[AgentEventKind, dict[str, object]]] = []
+    item = as_mapping(payload.get("item"))
+    item_type = first_string(item, "type")
+    if kind is AgentEventKind.SESSION:
+        session_id = first_string(payload, "thread_id", "session_id", "id")
+        parts.append((kind, {"session_id": session_id} if session_id else {}))
+    elif kind in {AgentEventKind.TOOL_CALL, AgentEventKind.TOOL_RESULT}:
+        parts.append((kind, _codex_tool_payload(payload, item, item_type, kind)))
+    elif kind is AgentEventKind.MESSAGE:
+        text = text_value(first_value(item, "text", "content", "message"))
+        canonical: dict[str, object] = {"role": "assistant"}
+        if text is not None:
+            canonical["text"] = text
+        parts.append((kind, canonical))
+    elif kind is AgentEventKind.COMPLETED:
+        canonical = {}
+        session_id = first_string(payload, "thread_id", "session_id")
+        finish_reason = first_string(payload, "finish_reason", "status")
+        if session_id is not None:
+            canonical["session_id"] = session_id
+        if finish_reason is not None:
+            canonical["finish_reason"] = finish_reason
+        parts.append((kind, canonical))
+    elif kind is AgentEventKind.ERROR:
+        parts.append((kind, error_payload(payload)))
+    elif kind is AgentEventKind.USAGE:
+        parts.append((kind, usage_payload(payload)))
+    else:
+        parts.append((kind, {}))
+    usage = usage_payload(payload)
+    if usage and all(part[0] is not AgentEventKind.USAGE for part in parts):
+        parts.append((AgentEventKind.USAGE, usage))
+    return parts
+
+
+def _codex_tool_payload(
+    payload: dict[str, object],
+    item: Mapping[str, object],
+    item_type: str | None,
+    kind: AgentEventKind,
+) -> dict[str, object]:
+    canonical: dict[str, object] = {}
+    call_id = first_string(item, "tool_call_id", "call_id", "id") or first_string(
+        payload, "tool_call_id", "call_id", "id"
+    )
+    name = first_string(item, "tool_name", "name", "tool")
+    if item_type == "command_execution":
+        name = name or "shell"
+        canonical["tool_type"] = "command"
+    elif item_type == "mcp_tool_call":
+        canonical["tool_type"] = "mcp"
+    elif item_type:
+        canonical["tool_type"] = "function"
+    if call_id is not None:
+        canonical["tool_call_id"] = call_id
+    if name is not None:
+        canonical["tool_name"] = name
+    arguments = first_value(item, "arguments", "input", "args")
+    command = first_value(item, "command")
+    if arguments is not None:
+        canonical["arguments"] = structured_value(arguments)
+    elif command is not None:
+        canonical["arguments"] = {"command": command}
+    if kind is AgentEventKind.TOOL_RESULT:
+        result = first_value(item, "result", "output", "aggregated_output")
+        if result is not None:
+            canonical["result"] = structured_value(result)
+        exit_code = item.get("exit_code")
+        is_error = bool(item.get("error")) or (
+            isinstance(exit_code, int) and not isinstance(exit_code, bool) and exit_code != 0
+        )
+        canonical["is_error"] = is_error
+        canonical["status"] = "failed" if is_error else "succeeded"
+    return canonical
 
 
 def _event_kind(native_type: str, payload: dict[str, object]) -> AgentEventKind:

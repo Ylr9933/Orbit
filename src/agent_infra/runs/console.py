@@ -43,6 +43,22 @@ _EVENT_FIELDS = {
     "evaluation.finished": ("evaluator_ref", "feedback"),
     "reward.assigned": ("name", "value", "source"),
 }
+_AGENT_EVENT_FIELDS = {
+    "agent.session_started": ("session_id",),
+    "agent.message": ("role", "text"),
+    "tool.requested": ("tool_call_id", "tool_name", "tool_type"),
+    "tool.completed": ("tool_call_id", "tool_name", "status", "is_error"),
+    "model.usage": (
+        "input_tokens",
+        "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+    ),
+    "agent.turn_completed": ("session_id", "finish_reason"),
+    "agent.error": ("error_type", "message"),
+}
 
 
 class ConsoleService:
@@ -130,7 +146,11 @@ class ConsoleService:
                 if event.data_class in _HIDDEN or event.visibility in _HIDDEN_VISIBILITY:
                     continue
                 is_agent = event.context.producer_kind.value == "agent"
-                fields = _EVENT_FIELDS.get(event.event_type)
+                fields = (
+                    _AGENT_EVENT_FIELDS.get(event.event_type)
+                    if is_agent
+                    else _EVENT_FIELDS.get(event.event_type)
+                )
                 if not is_agent and fields is None:
                     continue
                 payload = {key: event.payload[key] for key in fields or () if key in event.payload}
