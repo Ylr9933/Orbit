@@ -327,6 +327,64 @@ class AgentTraceNormalizer(Protocol):
 
 现有 `AgentEvent` 可作为过渡表示，但需要补充 context、raw ref、调用关联、可见性和完整性字段。
 
+#### 首版字段级规范化契约
+
+首版 normalizer 采用“小而稳定的公共核心 + 完整 native”的方式，不把 provider 的所有字段平铺
+为公共字段。每个 `AgentEvent` 同时包含：
+
+- 唯一递增的规范事件 `sequence`；
+- 原生 JSONL 行号 `native_sequence` 和该行拆出的 `part_index`；
+- `kind`、`native_type` 和版本化 `payload_schema`；
+- 按下表提取的 `canonical`；
+- 完整原生 JSON 对象 `payload`。
+
+| kind | payload schema | 必须尽力提取的规范字段 |
+| --- | --- | --- |
+| session | `agent.session.v1` | `session_id` |
+| message | `agent.message.v1` | `role`、`text` |
+| tool call | `agent.tool_requested.v1` | `tool_call_id`、`tool_name`、`tool_type`、`arguments` |
+| tool result | `agent.tool_completed.v1` | `tool_call_id`、`tool_name`、`status`、`result`、`is_error` |
+| usage | `agent.model_usage.v1` | `input_tokens`、`output_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`、`reasoning_output_tokens`、`total_tokens` |
+| completed | `agent.turn_completed.v1` | `session_id`、`finish_reason` |
+| error | `agent.error.v1` | `error_type`、`message` |
+| unknown | `agent.native_event.v1` | 无；只保留来源定位和 native |
+
+字段不存在时省略，不能用空字符串、零或推测值伪装成已观测事实。`tool_type` 表达 provider
+能够直接确认的 function、MCP、command 等类型；不能确认时省略。`arguments` 和 `result` 保持
+JSON 可表示的原始结构，不要求不同工具具有相同业务 schema。
+
+一条原生消息含多个 text/tool-use/tool-result block 时，每个有独立语义的 block 生成一个规范事件。
+同一原生 payload 会暂时复制到这些事件中，并共同引用原始 stream；未来 RawRecord 支持字节范围后，
+可改为共享 native ref 而不改变规范载荷。
+
+进入 Records 后，规范字段直接位于事件 payload，provider 原文放在 `native`：
+
+```yaml
+event_type: tool.requested
+payload_schema: agent.tool_requested.v1
+payload:
+  tool_call_id: call_123
+  tool_name: read_pdf
+  tool_type: function
+  arguments:
+    path: paper.pdf
+  source:
+    native_sequence: 4
+    part_index: 1
+  native_type: assistant
+  native: { ... }
+correlation:
+  tool_call_id: call_123
+raw_refs: [sha256:...]
+normalizer:
+  name: agent-adapter
+  version: 2.0.0
+```
+
+工具结果必须使用相同 `tool_call_id` 关联请求。若 provider 没有结果中的工具名称，轨迹派生器可以
+按 call ID 从请求事件补全展示，但不能改写原始规范事件。一个原生消息中的多个工具调用必须拆成
+多个 `tool.requested`，不能用一个事件代表整组调用。
+
 ### 8.2 三种运行方式
 
 #### 平台启动宿主机 Agent
@@ -463,6 +521,11 @@ training_eligibility:
 ```
 
 `observation_refs` 应能恢复 Agent 实际可见的上下文，而不是事后把 Agent 当时不可见的信息加入 observation。私有 evaluator 信息只能进入 reward/label 的受限来源，不能倒灌到求解 observation。
+
+首版 builder 将每个 `agent.message` 和 `tool.requested` 作为独立 action。工具 action 的
+`action_payload` 使用规范字段，并保留 native；`tool.completed` 通过 `tool_call_id` 和 span 进入对应
+action 的 next observation。builder 必须报告 `tool_call_correlation` 为 `complete`、`partial` 或
+`unavailable`，不得仅因存在 `tool.requested` 就宣称工具轨迹完整。
 
 ### 10.2 训练所需的 lineage
 
@@ -857,6 +920,8 @@ Episode/Step、具体 Parquet 字段和某个 RL 框架转换器可以稍后实�
 ## 21. 外部设计依据
 
 - [OpenTelemetry Generative AI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) 提供了 Agent、模型调用、工具执行和敏感输入输出的可观测性语义。该规范仍在演进，因此本项目应记录映射版本，而不是直接把内部 schema 绑定到其当前字段。
+- [OpenInference tool calling conventions](https://github.com/Arize-ai/openinference/blob/main/spec/tool_calling.md) 将 tool call ID、名称、参数、结果和消息内多个调用作为公共语义，并在需要回放时保留有序 content part。
+- [Langfuse tracing best practices](https://langfuse.com/docs/observability/best-practices) 将每次模型和工具操作表示为有输入输出的独立嵌套 observation，避免把整个 Agent loop 压成一个最终结果。
 - [OpenTelemetry 通用语义约定](https://opentelemetry.io/docs/specs/semconv/general/) 支持用 trace/span/event 表达跨组件操作，同时将具体领域载荷放在版本化语义中。
 - [RLDS 论文](https://arxiv.org/abs/2111.02767) 将数据组织为 episode 与 step，并强调 observation、action、reward、discount、终止状态和元数据在记录与回放中的一致语义。
 - [Agent Lightning 论文](https://arxiv.org/abs/2508.03680) 展示了将任意 Agent 执行建模为 MDP、分离 Agent 执行与训练，以及通过层级 credit assignment 将轨迹转换为训练 transition 的方法。
