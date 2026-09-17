@@ -1,9 +1,10 @@
 # 项目当前状态
 
-Updated at: 2026-09-17T11:23:27+08:00
+Updated at: 2026-09-17T22:07:22+08:00
 
-Basis: 本文描述本地 `main@8a6c3f9` 已集成的事实。远端 `origin/main` 尚未包含该合并；
-Git 历史和各任务记录仍是具体变更的依据。
+Basis: 本文以本地 `main@8a6c3f9` 的已集成事实为基础；当前任务分支
+`feat/trajectory-normalization` 提议了 Agent/Records 能力和验证结果的更新，只有合并后
+才成为 `main` 的已集成事实。Git 历史和各任务记录仍是具体变更的依据。
 
 当前结论：项目已经完成工程基础、核心模块首版和一条经过 Docker fixture 验证的
 单机容器执行内核，但还没有形成普通用户可以直接提交真实 Agent 任务的完整产品闭环。
@@ -32,10 +33,10 @@ uv run --locked agent-infra --version
 uv run --locked agent-infra config-check --config configs/defaults.toml
 ```
 
-最近一次在合并后的 `main` 上执行 `make verify`，结果为：
+当前任务分支的最近一次 `make verify` 结果为：
 
 - Ruff、格式检查、Mypy、TypeScript、Biome 和模块依赖检查通过；
-- 115 个非 E2E 测试通过；
+- 116 个非 E2E 测试通过；
 - Python wheel/source distribution 和 Web 生产构建通过；
 - 文档链接以及 `AGENTS.md` / `CLAUDE.md` 一致性检查通过。
 
@@ -108,12 +109,12 @@ NodeCapacity、LocalResourceManager、DockerEnvironment、Agent adapter、凭据
 
 | 模块 | 已实现 | 还没有实现或打通 |
 | --- | --- | --- |
-| Agent | Codex、Claude Code、DSH 的 probe/install、宿主机与容器启动计划、凭据文件 staging、JSONL 事件归一化 | Run 入口自动选择 provider、自动准备凭据、真实模型任务验收、统一模型/Token/费用预算、稳定恢复语义 |
+| Agent | Codex、Claude Code、DSH 的 probe/install、宿主机与容器启动计划、凭据文件 staging、JSONL 事件字段级归一化和多工具拆分 | Run 入口自动选择 provider、自动准备凭据、真实模型任务验收、统一模型/Token/费用预算、稳定恢复语义 |
 | Tasks | 版本化 manifest、材料可见性、Agent view、冻结摘要、资源边界、研究草稿、ResearchClaw/ASI workspace 索引 | 自然语言补全工作流、稳定 Task catalog、工具实际注入、原生 benchmark 执行和评分等价性 |
 | Resources | Linux/NVIDIA 监控、资源 YAML、本机授权容量、线程安全 Lease、资源不足原因 | Web 采样与分配器共享状态、持久 Lease、等待队列、跨进程互斥、磁盘额度、Ray backend |
 | Environment | 一次性 Docker 容器、只读输入、CPU/内存/GPU UUID 参数、网络控制、日志、取消、清理和冻结输出 | 镜像构建/叠加、长生命周期环境、后台作业、交互 Session、文件/工具 API、重启恢复 |
 | Run | 同步单 Attempt 协调、求解/提交/评分分阶段、取消 Event、失败分类、清理后释放 | 后台 Controller、持久状态机、公开 submit/status/cancel/retry、排队、崩溃对账、远程 Worker |
-| Records | SQLite/CAS、Run/Attempt、幂等事件、stream、Artifact、轨迹图、训练样本和 JSONL 导出 | 宿主机 Agent 全链路采集、跨进程 spool、远端归档、指标时序、Parquet/训练框架导出、保留策略 |
+| Records | SQLite/CAS、Run/Attempt、幂等事件、stream、Artifact、规范化 tool span、关联完整性、轨迹图、训练样本和 JSONL 导出 | 宿主机 Agent 全链路采集、跨进程 spool、远端归档、指标时序、Parquet/训练框架导出、保留策略 |
 | Gateway | CLI 诊断与查询、本机鉴权 HTTP 查询 | Run 控制 API、SSE/WebSocket、MCP 工具服务器、Worker 协议、多用户鉴权 |
 | Web | 总览、科研项目、Task、Run、Resources、Agents、Records 和设置页 | 提交/取消/重试、实时日志、交互对话、产物下载、批量实验、集群管理和细粒度权限 |
 

@@ -926,18 +926,33 @@ def _agent_event_draft(event: AgentEvent, raw_refs: tuple[str, ...]) -> EventDra
         AgentEventKind.ERROR: "agent.error",
         AgentEventKind.UNKNOWN: "agent.native_event",
     }
-    call_id = _find_call_id(event.payload)
+    canonical = dict(event.canonical)
+    canonical_call_id = canonical.get("tool_call_id")
+    call_id = (
+        canonical_call_id
+        if isinstance(canonical_call_id, str) and canonical_call_id
+        else _find_call_id(event.payload)
+    )
     correlation = {"tool_call_id": call_id} if call_id is not None else {}
     span_id = "span_tool_" + call_id if call_id is not None else None
     return EventDraft(
         mapping[event.kind],
-        {"native_type": event.native_type, "native": dict(event.payload)},
+        {
+            **canonical,
+            "source": {
+                "native_sequence": event.native_sequence,
+                "part_index": event.part_index,
+            },
+            "native_type": event.native_type,
+            "native": dict(event.payload),
+        },
+        payload_schema=event.payload_schema,
         producer_sequence=event.sequence,
         correlation=correlation,
         span_id=span_id,
         raw_refs=raw_refs,
         normalizer_name="agent-adapter",
-        normalizer_version="1.0.0",
+        normalizer_version="2.0.0",
     )
 
 

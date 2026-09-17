@@ -122,9 +122,16 @@ def test_events_preserve_native_payload_and_normalize_tool_blocks() -> None:
     lines = iter(
         [
             '{"type":"system","session_id":"abc"}',
-            '{"type":"assistant","message":{"content":[{"type":"tool_use"}]}}',
-            '{"type":"user","message":{"content":[{"type":"tool_result"}]}}',
-            '{"type":"result","is_error":false}',
+            '{"type":"assistant","message":{"content":['
+            '{"type":"text","text":"checking"},'
+            '{"type":"tool_use","id":"call-1","name":"read_pdf",'
+            '"input":{"path":"paper.pdf"}},'
+            '{"type":"tool_use","id":"call-2","name":"search",'
+            '"input":{"query":"topic"}}]}}',
+            '{"type":"user","message":{"content":[{"type":"tool_result",'
+            '"tool_use_id":"call-1","content":"paper text","is_error":false}]}}',
+            '{"type":"result","is_error":false,"session_id":"abc",'
+            '"subtype":"success","usage":{"input_tokens":5,"output_tokens":7}}',
         ]
     )
 
@@ -132,8 +139,32 @@ def test_events_preserve_native_payload_and_normalize_tool_blocks() -> None:
 
     assert [event.kind for event in events] == [
         AgentEventKind.SESSION,
+        AgentEventKind.MESSAGE,
+        AgentEventKind.TOOL_CALL,
         AgentEventKind.TOOL_CALL,
         AgentEventKind.TOOL_RESULT,
         AgentEventKind.COMPLETED,
+        AgentEventKind.USAGE,
     ]
     assert events[0].payload["session_id"] == "abc"
+    assert events[1].canonical == {"role": "assistant", "text": "checking"}
+    assert events[2].canonical == {
+        "tool_type": "function",
+        "tool_call_id": "call-1",
+        "tool_name": "read_pdf",
+        "arguments": {"path": "paper.pdf"},
+    }
+    assert events[3].canonical["tool_name"] == "search"
+    assert events[4].canonical == {
+        "tool_call_id": "call-1",
+        "result": "paper text",
+        "is_error": False,
+        "status": "succeeded",
+    }
+    assert [event.native_sequence for event in events[1:4]] == [1, 1, 1]
+    assert [event.part_index for event in events[1:4]] == [0, 1, 2]
+    assert events[-1].canonical == {
+        "input_tokens": 5,
+        "output_tokens": 7,
+        "total_tokens": 12,
+    }

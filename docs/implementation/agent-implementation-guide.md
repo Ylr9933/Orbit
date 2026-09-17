@@ -100,11 +100,24 @@ adapter 的核心方法是 `create_launch_plan()`。它把统一请求翻译成�
 `SandboxSpec`。`DockerEnvironment` 已负责资源限制、stdin、stdout/stderr、取消、超时和
 清理。Agent adapter 不应绕过计划自行调用 `subprocess` 执行任务。
 
-### 3.5 AgentEvent：统一索引，原始内容仍保留
+### 3.5 AgentEvent：规范核心、原始内容和来源位置同时保留
 
-三种 CLI 都输出 JSONL，但原生字段并不相同。`decode_events()` 把每行映射成少量统一种类：`session`、`message`、`tool_call`、`tool_result`、`usage`、`completed`、`error` 和 `unknown`。
+三种 CLI 都输出 JSONL，但原生字段并不相同。`decode_events()` 把原生内容映射成 `session`、
+`message`、`tool_call`、`tool_result`、`usage`、`completed`、`error` 和 `unknown`，并按 kind 设置
+`agent.*.v1` 载荷 schema。
 
-统一种类用于 Web 展示、统计和查询；`native_type` 与完整 `payload` 仍保留，防止抽象层丢失 provider 特有信息。空行被跳过，非法 JSON 会变成 `invalid_json` 错误事件，非对象 JSON 会变成 `unknown`，因此异常输出不会被静默吞掉。
+`AgentEvent.canonical` 保存跨 provider 公共字段：message 的 role/text，工具的 call ID、名称、类型、
+参数、结果与状态，模型 usage 的分类 token 数，以及 session/completion/error 的公共信息。
+`native_type` 与完整 `payload` 继续保留。`native_sequence` 指向原生 JSONL 行，`part_index` 区分
+同一行拆出的多个 text/tool block，`sequence` 则是规范事件的唯一顺序。
+
+Claude Code 的一个 message 可以包含多个 content block；实现会把每个 text、tool_use 和
+tool_result 拆成独立事件。Codex 的 completion 与 usage、Claude 的 result 与 usage也会分别产生
+规范事件。空行被跳过，非法 JSON 变成带原文的 `invalid_json` error，非对象 JSON 变成 unknown，
+因此异常输出不会被静默吞掉。
+
+公共字段只保存实际观测值，不推测缺失信息。provider 新增字段仍留在 native 中，升级 adapter 时
+可以用 raw stream 重新规范化，而不需要把所有上游字段加入公共接口。
 
 ## 4. 一次调用的完整代码路径
 

@@ -74,8 +74,22 @@ def test_no_private_materials_events_artifacts_or_raw_references(service, tmp_pa
         (
             EventDraft(
                 "agent.message",
-                {"native": {"message": {"content": [{"text": "hello"}]}}},
+                {
+                    "role": "assistant",
+                    "text": "hello",
+                    "native": {"message": {"content": [{"text": "hello"}]}},
+                },
                 raw_refs=("HIDDEN-REF",),
+            ),
+            EventDraft(
+                "tool.requested",
+                {
+                    "tool_call_id": "call-1",
+                    "tool_name": "read_pdf",
+                    "tool_type": "function",
+                    "arguments": {"path": "HIDDEN-PATH"},
+                    "native": {"provider_private": "HIDDEN-NATIVE"},
+                },
             ),
             EventDraft(
                 "agent.message", {"native": {"text": "HIDDEN-SECRET"}}, data_class=DataClass.SECRET
@@ -101,7 +115,7 @@ def test_no_private_materials_events_artifacts_or_raw_references(service, tmp_pa
     )
     assert "HIDDEN" not in payload
     assert "private/expected.txt" not in payload and "Private fixture answer" not in payload
-    assert "hello" in payload and "public-result" in payload
+    assert "hello" in payload and "read_pdf" in payload and "public-result" in payload
     assert "raw_refs" not in payload and "blob" not in payload
     with pytest.raises(KeyError):
         service.events("absent", None)

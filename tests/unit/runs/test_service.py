@@ -67,6 +67,42 @@ class TraceFixtureAgent(FixtureAgent):
             )
 
 
+class CanonicalTraceFixtureAgent(FixtureAgent):
+    def decode_events(self, lines):
+        yield AgentEvent(
+            0,
+            AgentEventKind.MESSAGE,
+            "fixture.message",
+            {"role": "assistant", "text": "checking"},
+            {"role": "assistant", "text": "checking"},
+        )
+        yield AgentEvent(
+            1,
+            AgentEventKind.TOOL_CALL,
+            "fixture.tool_call",
+            {"id": "call-1", "name": "read_pdf", "input": {"path": "paper.pdf"}},
+            {
+                "tool_call_id": "call-1",
+                "tool_name": "read_pdf",
+                "tool_type": "function",
+                "arguments": {"path": "paper.pdf"},
+            },
+        )
+        yield AgentEvent(
+            2,
+            AgentEventKind.TOOL_RESULT,
+            "fixture.tool_result",
+            {"id": "call-1", "output": "paper text"},
+            {
+                "tool_call_id": "call-1",
+                "tool_name": "read_pdf",
+                "status": "succeeded",
+                "result": "paper text",
+                "is_error": False,
+            },
+        )
+
+
 def setup_task(tmp_path, *, evaluation=True):
     task = tmp_path / "task"
     shutil.copytree(ROOT / "examples/task-packages/file-result", task)
@@ -183,7 +219,7 @@ def test_run_records_trace_artifacts_evaluation_and_reward(tmp_path):
     env = FakeEnvironment(stdout="observable agent message")
     result = LocalRunService(
         env, manager(), tmp_path / "runs", node_id="local", recipes=(recipe(),)
-    ).run(setup_task(tmp_path), TraceFixtureAgent())
+    ).run(setup_task(tmp_path), CanonicalTraceFixtureAgent())
     assert result.status == "completed"
     records = LocalRecordsStore(tmp_path / "runs" / "_records")
     events = records.read_events(EventQuery(attempt_id=result.attempt_id, limit=500)).items
@@ -195,6 +231,8 @@ def test_run_records_trace_artifacts_evaluation_and_reward(tmp_path):
         "process.started",
         "process.exited",
         "agent.message",
+        "tool.requested",
+        "tool.completed",
         "artifact.committed",
         "evaluation.finished",
         "reward.assigned",
@@ -220,8 +258,19 @@ def test_run_records_trace_artifacts_evaluation_and_reward(tmp_path):
         for event in events
         if event.context.producer_id == scorer_producer
     )
+    tool_call = next(event for event in events if event.event_type == "tool.requested")
+    tool_result = next(event for event in events if event.event_type == "tool.completed")
+    assert tool_call.payload_schema == "agent.tool_requested.v1"
+    assert tool_call.payload["tool_name"] == "read_pdf"
+    assert tool_call.payload["arguments"] == {"path": "paper.pdf"}
+    assert tool_call.payload["native"]["name"] == "read_pdf"
+    assert tool_call.correlation == tool_result.correlation == {"tool_call_id": "call-1"}
+    assert tool_call.span_id == tool_result.span_id == "span_tool_call-1"
     trajectory = AttemptTrajectoryBuilder(records).build(result.attempt_id)
-    assert len(trajectory.steps) == 1
+    assert len(trajectory.steps) == 2
+    assert trajectory.steps[1].action_payload["tool_name"] == "read_pdf"
+    assert tool_result.event_id in trajectory.steps[1].next_observation_event_ids
+    assert trajectory.eligibility.features["tool_call_correlation"] == "complete"
     assert "result_reward_rl_candidate" in trajectory.eligibility.eligible_for
 
 

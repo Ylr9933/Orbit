@@ -17,9 +17,9 @@ from agent_infra.records.api import (
     Visibility,
 )
 
-TRAJECTORY_SCHEMA_VERSION = "records.trajectory.v1"
+TRAJECTORY_SCHEMA_VERSION = "records.trajectory.v2"
 TRAJECTORY_BUILDER_NAME = "attempt-event-graph"
-TRAJECTORY_BUILDER_VERSION = "1.0.0"
+TRAJECTORY_BUILDER_VERSION = "2.0.0"
 
 _ACTION_TYPES = frozenset({"agent.message", "tool.requested"})
 _OBSERVATION_TYPES = frozenset(
@@ -102,6 +102,10 @@ class AttemptTrajectoryBuilder:
         visible = tuple(event for event in trace.events if _eligible_source_event(event))
         rewards = tuple(event for event in visible if event.event_type in _REWARD_TYPES)
         actions = tuple(event for event in visible if event.event_type in _ACTION_TYPES)
+        tool_actions = tuple(event for event in actions if event.event_type == "tool.requested")
+        tool_results = tuple(
+            event for event in visible if event.event_type in {"tool.completed", "tool.failed"}
+        )
         policy_event = next(
             (event for event in reversed(visible) if event.event_type == "policy.snapshot"),
             None,
@@ -125,10 +129,26 @@ class AttemptTrajectoryBuilder:
                 for event in visible[previous_action_index + 1 : position]
                 if event.event_type in _OBSERVATION_TYPES
             )
-            next_observations = tuple(
-                event.event_id
+            next_observation_events = tuple(
+                event
                 for event in visible[position + 1 : next_position]
                 if event.event_type in _OBSERVATION_TYPES
+            )
+            if action.event_type == "tool.requested":
+                next_observation_events = tuple(
+                    event
+                    for event in next_observation_events
+                    if event.event_type not in {"tool.completed", "tool.failed"}
+                )
+            correlated_tool_results = (
+                _matching_tool_results(action, tool_results)
+                if action.event_type == "tool.requested"
+                else ()
+            )
+            next_observations = tuple(
+                dict.fromkeys(
+                    event.event_id for event in (*next_observation_events, *correlated_tool_results)
+                )
             )
             scoped_rewards = tuple(
                 event.event_id
@@ -160,7 +180,8 @@ class AttemptTrajectoryBuilder:
                             span
                             for span in (
                                 action.span_id,
-                                *(event.span_id for event in visible[position + 1 : next_position]),
+                                *(event.span_id for event in next_observation_events),
+                                *(event.span_id for event in correlated_tool_results),
                             )
                             if span is not None
                         )
@@ -183,6 +204,16 @@ class AttemptTrajectoryBuilder:
             limitations.append("terminal_reward_unavailable")
         if gaps:
             limitations.append("capture_incomplete")
+        if not tool_actions:
+            tool_correlation = "unavailable"
+        elif all(
+            _tool_call_id(action) is not None and _matching_tool_results(action, tool_results)
+            for action in tool_actions
+        ):
+            tool_correlation = "complete"
+        else:
+            tool_correlation = "partial"
+            limitations.append("tool_call_correlation_partial")
         features = {
             "observation": "partial" if actions else "unavailable",
             "action": "complete" if actions else "unavailable",
@@ -191,6 +222,7 @@ class AttemptTrajectoryBuilder:
             "terminal_reward": "present" if rewards else "absent",
             "private_evaluation_filtered": "true",
             "capture": "partial" if gaps else "complete",
+            "tool_call_correlation": tool_correlation,
         }
         source_ids = tuple(event.event_id for event in visible)
         stable = hashlib.sha256(
@@ -247,6 +279,25 @@ def export_jsonl(trajectories: tuple[TrajectoryView, ...], destination: Path) ->
     _sync(manifest_temporary)
     manifest_temporary.replace(destination / manifest_name)
     return result
+
+
+def _tool_call_id(event: EventEnvelope) -> str | None:
+    value = event.correlation.get("tool_call_id")
+    if isinstance(value, str) and value:
+        return value
+    payload_value = event.payload.get("tool_call_id")
+    return payload_value if isinstance(payload_value, str) and payload_value else None
+
+
+def _matching_tool_results(
+    action: EventEnvelope, results: tuple[EventEnvelope, ...]
+) -> tuple[EventEnvelope, ...]:
+    call_id = _tool_call_id(action)
+    if call_id is not None:
+        return tuple(result for result in results if _tool_call_id(result) == call_id)
+    if action.span_id is not None:
+        return tuple(result for result in results if result.span_id == action.span_id)
+    return ()
 
 
 def _eligible_source_event(event: EventEnvelope) -> bool:

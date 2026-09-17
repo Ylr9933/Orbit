@@ -4,6 +4,16 @@ from collections.abc import Mapping
 
 
 def event_text(payload: Mapping[str, object]) -> str:
+    text = payload.get("text")
+    if isinstance(text, str):
+        return text[:8000]
+    tool_name = payload.get("tool_name")
+    status = payload.get("status")
+    if isinstance(tool_name, str):
+        return (tool_name + (f" · {status}" if isinstance(status, str) else ""))[:8000]
+    message = payload.get("message")
+    if isinstance(message, str):
+        return message[:8000]
     native = payload.get("native")
     if not isinstance(native, dict):
         return ""

@@ -195,8 +195,10 @@ def test_jsonl_events_preserve_native_payload_and_normalize_common_kinds() -> No
     lines = iter(
         [
             '{"type":"thread.started","thread_id":"abc"}',
-            '{"type":"item.completed","item":{"type":"command_execution"}}',
-            '{"type":"turn.completed","usage":{"input_tokens":2}}',
+            '{"type":"item.completed","item":{"type":"command_execution",'
+            '"id":"call-1","command":"pytest","aggregated_output":"2 passed",'
+            '"exit_code":0}}',
+            '{"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":3}}',
             "not-json",
         ]
     )
@@ -207,7 +209,25 @@ def test_jsonl_events_preserve_native_payload_and_normalize_common_kinds() -> No
         AgentEventKind.SESSION,
         AgentEventKind.TOOL_RESULT,
         AgentEventKind.COMPLETED,
+        AgentEventKind.USAGE,
         AgentEventKind.ERROR,
     ]
     assert events[0].payload["thread_id"] == "abc"
+    assert events[0].canonical == {"session_id": "abc"}
+    assert events[1].canonical == {
+        "tool_type": "command",
+        "tool_call_id": "call-1",
+        "tool_name": "shell",
+        "arguments": {"command": "pytest"},
+        "result": "2 passed",
+        "is_error": False,
+        "status": "succeeded",
+    }
+    assert events[3].canonical == {
+        "input_tokens": 2,
+        "output_tokens": 3,
+        "total_tokens": 5,
+    }
+    assert events[2].native_sequence == events[3].native_sequence == 2
+    assert (events[2].part_index, events[3].part_index) == (0, 1)
     assert events[-1].native_type == "invalid_json"

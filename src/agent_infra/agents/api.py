@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
@@ -45,6 +45,18 @@ class AgentEventKind(StrEnum):
     COMPLETED = "completed"
     ERROR = "error"
     UNKNOWN = "unknown"
+
+
+AGENT_EVENT_PAYLOAD_SCHEMAS: Mapping[AgentEventKind, str] = {
+    AgentEventKind.SESSION: "agent.session.v1",
+    AgentEventKind.MESSAGE: "agent.message.v1",
+    AgentEventKind.TOOL_CALL: "agent.tool_requested.v1",
+    AgentEventKind.TOOL_RESULT: "agent.tool_completed.v1",
+    AgentEventKind.USAGE: "agent.model_usage.v1",
+    AgentEventKind.COMPLETED: "agent.turn_completed.v1",
+    AgentEventKind.ERROR: "agent.error.v1",
+    AgentEventKind.UNKNOWN: "agent.native_event.v1",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +124,22 @@ class AgentEvent:
     kind: AgentEventKind
     native_type: str
     payload: Mapping[str, object]
+    canonical: Mapping[str, object] = field(default_factory=dict)
+    payload_schema: str = ""
+    native_sequence: int | None = None
+    part_index: int = 0
+
+    def __post_init__(self) -> None:
+        if self.sequence < 0 or self.part_index < 0:
+            raise ValueError("Agent event sequence values must be non-negative")
+        if not self.native_type.strip():
+            raise ValueError("Agent event native_type must not be empty")
+        if {"native", "native_type", "source"} & self.canonical.keys():
+            raise ValueError("Agent event canonical payload contains reserved fields")
+        if not self.payload_schema:
+            object.__setattr__(self, "payload_schema", AGENT_EVENT_PAYLOAD_SCHEMAS[self.kind])
+        if self.native_sequence is None:
+            object.__setattr__(self, "native_sequence", self.sequence)
 
 
 class AgentAdapter(Protocol):

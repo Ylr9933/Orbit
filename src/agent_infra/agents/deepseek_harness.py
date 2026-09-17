@@ -15,6 +15,15 @@ from agent_infra.agents._cli_support import (
     run_command,
     stage_private_files,
 )
+from agent_infra.agents._event_normalization import (
+    as_mapping,
+    error_payload,
+    first_string,
+    first_value,
+    structured_value,
+    text_value,
+    usage_payload,
+)
 from agent_infra.agents.api import (
     AgentCapability,
     AgentDescriptor,
@@ -180,20 +189,97 @@ class DeepSeekHarnessAdapter:
         )
 
     def decode_events(self, lines: Iterator[str]) -> Iterator[AgentEvent]:
-        for sequence, line in enumerate(lines):
+        sequence = 0
+        for native_sequence, line in enumerate(lines):
             stripped = line.strip()
             if not stripped:
                 continue
             try:
                 payload = json.loads(stripped)
             except json.JSONDecodeError:
-                yield AgentEvent(sequence, AgentEventKind.ERROR, "invalid_json", {"text": stripped})
+                yield AgentEvent(
+                    sequence,
+                    AgentEventKind.ERROR,
+                    "invalid_json",
+                    {"text": stripped},
+                    {"error_type": "invalid_json", "message": stripped},
+                    native_sequence=native_sequence,
+                )
+                sequence += 1
                 continue
             if not isinstance(payload, dict):
-                yield AgentEvent(sequence, AgentEventKind.UNKNOWN, "unknown", {"value": payload})
+                yield AgentEvent(
+                    sequence,
+                    AgentEventKind.UNKNOWN,
+                    "unknown",
+                    {"value": payload},
+                    native_sequence=native_sequence,
+                )
+                sequence += 1
                 continue
             native_type = str(payload.get("type", "unknown"))
-            yield AgentEvent(sequence, _dsh_event_kind(native_type, payload), native_type, payload)
+            parts = _dsh_event_parts(native_type, payload)
+            for part_index, (kind, canonical) in enumerate(parts):
+                yield AgentEvent(
+                    sequence,
+                    kind,
+                    native_type,
+                    payload,
+                    canonical,
+                    native_sequence=native_sequence,
+                    part_index=part_index,
+                )
+                sequence += 1
+
+
+def _dsh_event_parts(
+    native_type: str, payload: dict[str, object]
+) -> list[tuple[AgentEventKind, dict[str, object]]]:
+    kind = _dsh_event_kind(native_type, payload)
+    canonical: dict[str, object] = {}
+    if kind is AgentEventKind.SESSION:
+        session_id = first_string(payload, "session_id", "id")
+        if session_id is not None:
+            canonical["session_id"] = session_id
+    elif kind is AgentEventKind.MESSAGE:
+        canonical["role"] = "assistant"
+        text = text_value(first_value(payload, "text", "content", "message", "thinking"))
+        if text is not None:
+            canonical["text"] = text
+    elif kind in {AgentEventKind.TOOL_CALL, AgentEventKind.TOOL_RESULT}:
+        function = as_mapping(payload.get("function"))
+        call_id = first_string(payload, "tool_call_id", "call_id", "id")
+        name = first_string(payload, "tool_name", "name") or first_string(function, "name")
+        if call_id is not None:
+            canonical["tool_call_id"] = call_id
+        if name is not None:
+            canonical["tool_name"] = name
+        canonical["tool_type"] = "function"
+        if kind is AgentEventKind.TOOL_CALL:
+            arguments = first_value(payload, "arguments", "args", "input")
+            if arguments is None:
+                arguments = first_value(function, "arguments", "args")
+            if arguments is not None:
+                canonical["arguments"] = structured_value(arguments)
+        else:
+            result = first_value(payload, "result", "output", "content")
+            if result is not None:
+                canonical["result"] = structured_value(result)
+            is_error = payload.get("is_error") is True or payload.get("error") is not None
+            canonical["is_error"] = is_error
+            canonical["status"] = "failed" if is_error else "succeeded"
+    elif kind is AgentEventKind.USAGE:
+        canonical.update(usage_payload(payload))
+    elif kind is AgentEventKind.COMPLETED:
+        session_id = first_string(payload, "session_id")
+        finish_reason = first_string(payload, "finish_reason", "status")
+        if session_id is not None:
+            canonical["session_id"] = session_id
+        if finish_reason is not None:
+            canonical["finish_reason"] = finish_reason
+    elif kind is AgentEventKind.ERROR:
+        canonical.update(error_payload(payload))
+    return [(kind, canonical)]
 
 
 def _dsh_event_kind(native_type: str, payload: dict[str, object]) -> AgentEventKind:
