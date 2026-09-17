@@ -48,5 +48,8 @@
 
 ## 单节点执行
 
+- [Web 科研控制台方案](architecture/web-console-design.md)：完整页面规划、模块边界与分期验收。
+- [Web 控制台使用说明](operations/web-console.md)：已实现简版的启动、SSH 访问、页面范围、HTTP 接口与验证方式。
+
 - [Run / Environment 契约](architecture/run-environment-contract.md)：仅求解与隔离评测设计。
 - [执行 API 与验证说明](reference/run-environment.md)：Python 组装、记录、安全边界及真实 Docker 测试。

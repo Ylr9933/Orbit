@@ -3,9 +3,9 @@
 A modular infrastructure project centered on **Agent** and **Environment**, coordinated through
 Run, Tasks, Resources and Records, with thin protocol gateways and a Web console.
 
-S0 provides installable Python and Web development foundations. The current Agent slice adds
-replaceable Codex, Claude Code and DeepSeek Harness adapters; task execution, Docker/Ray
-scheduling, persistence and business APIs remain pending.
+The current prototype includes replaceable Codex, Claude Code and DeepSeek Harness adapters,
+Tasks and single-node Resources, a local Docker Run/Environment slice, durable Records, and
+a simple local research Web console. Distributed execution and complete workflow control remain pending.
 See [project status](docs/project-status.md) for acceptance and integration state.
 
 ## Quick start
@@ -25,12 +25,15 @@ uv run --locked agent-infra agent doctor claude-code
 uv run --locked agent-infra agent doctor dsh
 uv run --locked agent-infra resource inspect
 uv run --locked agent-infra resource validate examples/resource-requests/single-gpu.yaml
-make dev-web
+pnpm build
+uv run --locked agent-infra web
 ```
 
-Open http://127.0.0.1:5173 locally, or forward that port over SSH for a remote server.
-The page is a development starting point; it has no business backend. Ctrl-C stops the server.
-Use `make dev-web WEB_PORT=5174` when working concurrently.
+Open the token-bearing local URL printed by the Web command (port 8765). It provides host
+resource monitoring, project/milestone editing, Tasks, Agent diagnostics and recorded Run traces.
+See the [Web console guide](docs/operations/web-console.md) for task registration, existing Records,
+SSH forwarding and current limits. Ctrl-C stops the console. `make dev-web` remains the isolated
+Vite frontend development entrypoint without a default backend proxy.
 
 `make check` runs format, lint, type, import-boundary, policy-parity and local document-link checks.
 `make test` runs deterministic tests without external services. `make build` produces a Python
@@ -53,8 +56,8 @@ src/agent_infra/
 src/web/           React/TypeScript frontend
 ```
 
-The backend implements its engineering foundation plus the first Agent public contracts and three
-CLI adapters. Other module packages establish ownership without placeholder business implementations.
+The backend implements initial public contracts and local workflows across the functional modules.
+See project status for validation scope and remaining integration gaps.
 Cross-module calls use public contracts; concrete backends are assembled in bootstrap. The static
 dependency graph is enforced by import-linter; finer public/private boundaries accompany S1
 contracts.

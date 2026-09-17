@@ -1,6 +1,6 @@
 # Records API 与命令参考
 
-> 实现状态：`records.event.v1` 与本地 SQLite/CAS 后端已实现。本文对应 `feat/records-foundation`；合并前不代表 `main` 已具备这些能力。
+> 实现状态：`records.event.v1` 与本地 SQLite/CAS 后端已实现。Web 首版增加 Run 列表查询；分支交付和合并状态见项目进度及任务记录。
 
 ## 1. 已实现范围
 
@@ -16,7 +16,8 @@ Records 当前提供：
 - Attempt 级 trajectory 派生、训练资格说明和固定 JSONL 导出；
 - Run 对 task、lease、environment job、提交、评测、reward、清理和释放的记录。
 
-尚未实现远端对象存储、多节点 spool 上传、HTTP 权限服务、托管宿主机 Agent 和 Parquet/训练框架专用导出。
+尚未实现远端对象存储、多节点 spool 上传、多用户权限服务、托管宿主机 Agent 和 Parquet/训练框架专用导出。
+本机单管理员 HTTP 查询见 [Web 控制台](../operations/web-console.md)。
 
 ## 2. 本地存储
 
@@ -80,6 +81,9 @@ events = store.read_events(EventQuery(attempt_id="attempt-1"))
 - Artifact 中的文件按 SHA-256 去重，目录由带版本的 manifest 描述。
 
 ### 3.2 查询语义
+
+`RecordsReader.list_runs(limit=100, offset=0)` 返回 RunRecord 元组，按创建时间倒序、run_id 排序。
+limit 必须为 1–200，offset 非负；不创建新 Run。offset 分页不是冻结快照，新增运行期间跨页可能重复或移动。
 
 `EventQuery` 支持 Run、Attempt、事件类型、producer 类型和数量限制。`next_cursor` 是不透明的本地游标；调用者不应解析或修改。
 
