@@ -1,10 +1,9 @@
 # 项目当前状态
 
-Updated at: 2026-09-17T22:07:22+08:00
+Updated at: 2026-09-17T22:15:05+08:00
 
-Basis: 本文以本地 `main@8a6c3f9` 的已集成事实为基础；当前任务分支
-`feat/trajectory-normalization` 提议了 Agent/Records 能力和验证结果的更新，只有合并后
-才成为 `main` 的已集成事实。Git 历史和各任务记录仍是具体变更的依据。
+Basis: 本文描述本地 `main@727d6af` 已集成的事实。远端 `origin/main`
+尚未包含该合并；Git 历史和各任务记录仍是具体变更的依据。
 
 当前结论：项目已经完成工程基础、核心模块首版和一条经过 Docker fixture 验证的
 单机容器执行内核，但还没有形成普通用户可以直接提交真实 Agent 任务的完整产品闭环。
@@ -33,7 +32,7 @@ uv run --locked agent-infra --version
 uv run --locked agent-infra config-check --config configs/defaults.toml
 ```
 
-当前任务分支的最近一次 `make verify` 结果为：
+最近一次在合并后的 `main@727d6af` 上执行 `make verify`，结果为：
 
 - Ruff、格式检查、Mypy、TypeScript、Biome 和模块依赖检查通过；
 - 116 个非 E2E 测试通过；
