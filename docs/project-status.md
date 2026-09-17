@@ -2,11 +2,11 @@
 
 Updated at: 2026-09-16T21:09:27+08:00
 
-Basis: integrated baseline `main@c6acc18`; this task-branch version proposes the additional
-Web outcomes below after merging `feat/web-console`. Implementation completion is not merge evidence.
+Basis: this document's integrated version on `main`; the Web implementation is carried by
+feature commit `16c67df`. Git history remains the source of truth for the enclosing merge commit.
 
 Current stage: S1 contracts and S2 single-node execution remain in progress; an early S4 local
-console is now implemented on this branch. The project is not yet a complete production platform.
+console is integrated. The project is not yet a complete production platform.
 
 ## Stage overview
 
