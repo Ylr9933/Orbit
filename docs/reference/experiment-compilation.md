@@ -90,7 +90,8 @@ agent-infra task view /resolved/task.yaml
 agent-infra task freeze /resolved/task.yaml
 ```
 
-research context 额外返回最近 5 个 compiled_tasks；run_references 仍为空，不冒充已执行的 Run。
+research context 额外返回最近 5 个 compiled_tasks；D 批 CLI 组装还会查询同状态目录的最近 Run 引用，
+具体见[本机执行命令](local-run-controller.md)。编译本身不会启动 Run。
 编译进程在发布后、数据库登记前中断时，保持原方案/材料和执行参数重试即可验证已发布包并补登记。
 强制终止可能留下 `.compile-*` 临时目录或未登记包；本版不自动扫描删除，避免误清理。确认无编译进程后可按任务归属手工处理。
 

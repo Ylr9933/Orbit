@@ -83,5 +83,7 @@ tasks/settings.py 复用 manifest 的 YAML 和 section 校验，不在 Projects 
 
 优先使用 `tests/unit/projects/test_compilation.py` 定位 C 批问题；存储拆分须同时跑原初始化和研究测试。
 `scripts/acceptance/project_compilation.py` 使用真实 CLI 和小材料，`smoke_wheel.py` 在仓库外安装后复用相同验收。
-不要把未来 Run 关联写成另一个任务执行器。下一步 D01 应消费冻结引用、验证内容并调用现有 LocalRunService。
-当前空的 run_references 和 execution_validated=false 是明确边界，不应通过填模拟结果让它们“看起来打通”。
+Run 关联由 D 批 bootstrap 解析冻结引用、验证内容，再调用既有 LocalRunService。
+调用链与维护入口见 [Controller 实现说明](local-run-controller.md)，没有在 Projects 内另建执行器。
+编译输出的 execution_validated=false 表示尚未运行；D 批 CLI context 的 run_references 来自实际控制记录，
+不能用模拟结果代替执行证据。Projects 领域服务本身不负责查询 Controller。

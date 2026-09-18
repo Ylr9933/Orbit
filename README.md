@@ -5,11 +5,17 @@ Run, Tasks, Resources and Records, with thin protocol gateways and a Web console
 
 The current prototype includes replaceable Codex, Claude Code and DeepSeek Harness adapters,
 Tasks and single-node Resources, a local Docker Run/Environment slice, durable Records, and
-a simple local research Web console. Distributed execution and complete workflow control remain pending.
+a simple local research Web console. A local controller now connects compiled research Tasks to
+container Codex execution, persistent status, cancellation, trajectories and downloadable results.
+Distributed execution and automatic research iteration remain pending.
 See [project status](docs/project-status.md) for acceptance and integration state.
 
 Local project initialization is also available: preserve a research goal, create its workspace,
 and reopen or recover it without an Agent, Docker, or a running server.
+
+For a complete small CPU experiment, follow the [statistics example](examples/research/cpu-statistics/README.md).
+See the [Run controller commands](docs/reference/local-run-controller.md) and
+[implementation guide](docs/implementation/local-run-controller.md) for setup and recovery.
 
 ## Quick start
 

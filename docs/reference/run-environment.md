@@ -1,6 +1,8 @@
 # 单节点 Run / Environment 使用说明
 
-状态：首版 Python API；设计边界见[执行契约](../architecture/run-environment-contract.md)。真实 Docker 验证采用确定性命令夹具，未调用真实模型。尚无 Run CLI、HTTP 运行接口或分布式 Worker。
+状态：同步 Python 执行内核；设计边界见[执行契约](../architecture/run-environment-contract.md)。
+本文的内核 Docker 测试使用确定性命令夹具。D 批新增[本机 Controller / CLI / HTTP](local-run-controller.md)，
+并另有真实 Codex 验收；分布式 Worker 尚未实现。
 
 ## 1. 两种完成方式
 

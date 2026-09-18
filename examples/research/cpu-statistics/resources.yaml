@@ -1,0 +1,5 @@
+version: 1
+request_id: cpu-statistics
+resources:
+  cpu: 1
+  memory: 2GiB

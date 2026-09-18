@@ -6,6 +6,7 @@ from typing import Any
 from agent_infra.projects import ProjectError
 from agent_infra.projects.local import LocalProjectStore
 from agent_infra.projects.research import ResearchService, load_research_draft
+from agent_infra.runs.control_store import RunControlStore
 
 
 def research_action(
@@ -44,7 +45,15 @@ def research_action(
             )
         }
     if action == "context":
-        return service.context(identifier)
+        result = service.context(identifier)
+        root = store.root.parent / "controller"
+        result["run_references"] = (
+            RunControlStore(root).list_runs(project_id=result["project"]["project_id"], limit=20)
+            if (root / "control.sqlite3").is_file()
+            else []
+        )
+        result["execution_links_supported"] = True
+        return result
     if action == "check":
         return service.check(identifier, revision)
     if action == "export":

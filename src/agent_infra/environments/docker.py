@@ -24,6 +24,7 @@ from agent_infra.environments.api import (
     SandboxSpec,
     Submission,
 )
+from agent_infra.environments.recovery import write_ownership
 
 
 @dataclass
@@ -152,12 +153,20 @@ class DockerEnvironment:
             name = f"agent-infra-{self._owner[:12]}-{handle.id[:12]}"
             self._instances[handle.id] = _Instance(spec, name, image["Id"], log_dir)
             self._keys[spec.key] = handle
-            (log_dir / "ownership.json").write_text(
-                json.dumps(
-                    {"owner": self._owner, "name": name, "key": spec.key, "image_id": image["Id"]}
-                )
-            )
+            self._journal(self._instances[handle.id], "prepared")
             return handle
+
+    def _journal(self, item: _Instance, lifecycle: str) -> None:
+        write_ownership(
+            item.log_dir / "ownership.json",
+            {
+                "owner": self._owner,
+                "name": item.name,
+                "key": item.spec.key,
+                "image_id": item.image_id,
+                "lifecycle": lifecycle,
+            },
+        )
 
     def _inspect(self, instance: _Instance) -> dict[str, Any] | None:
         ids = self._docker(
@@ -252,7 +261,9 @@ class DockerEnvironment:
             args += ["--entrypoint", command.argv[0], item.image_id, *command.argv[1:]]
             item.command = command
             try:
+                self._journal(item, "creating")
                 self._docker(args)
+                self._journal(item, "created")
                 info = self._inspect(item)
                 if info is None:
                     raise RuntimeError("created container disappeared")
@@ -387,13 +398,23 @@ class DockerEnvironment:
         with self._lock:
             item = self._get(handle)
             try:
-                if self._inspect(item) is not None:
+                existing = self._inspect(item)
+                if (
+                    existing is None
+                    and json.loads((item.log_dir / "ownership.json").read_text()).get("lifecycle")
+                    == "creating"
+                ):
+                    return CleanupResult(
+                        False, "unacknowledged Docker create; cleanup is uncertain"
+                    )
+                if existing is not None:
                     self._docker(["rm", "--force", item.name])
                 if self._inspect(item) is not None:
                     return CleanupResult(False, "container still exists")
                 item.removed = True
                 if item.process is not None:
                     item.process.wait(timeout=5)
+                self._journal(item, "removed")
                 return CleanupResult(True)
             except (RuntimeError, OSError, subprocess.SubprocessError):
                 return CleanupResult(False, "container removal could not be verified")

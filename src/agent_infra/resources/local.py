@@ -13,6 +13,7 @@ from agent_infra.resources.api import (
     GpuCapacity,
     HostResourceSnapshot,
     NodeCapacity,
+    ResourceAssessment,
     ResourceLease,
     ResourceRequest,
     ResourceShortage,
@@ -100,6 +101,31 @@ class LocalResourceManager:
             self._request_leases[request.request_id] = lease.lease_id
             self._requests[request.request_id] = request
             return AllocationDecision(AllocationStatus.GRANTED, lease=lease)
+
+    def assess(self, request: ResourceRequest) -> ResourceAssessment:
+        """Admission preview only; never creates a lease or reserves capacity."""
+        with self._lock:
+            impossible = self._capacity_shortages(request)
+            if impossible:
+                return ResourceAssessment(AllocationStatus.UNSATISFIABLE, shortages=impossible)
+            snapshot = self._fresh_snapshot()
+            if snapshot is None:
+                return ResourceAssessment(
+                    AllocationStatus.WAITING,
+                    shortages=(
+                        ResourceShortage(
+                            "telemetry",
+                            "fresh snapshot",
+                            "missing or stale",
+                            "refresh host telemetry before submitting",
+                        ),
+                    ),
+                )
+            shortages, _ = self._temporary_shortages(request, snapshot)
+            return ResourceAssessment(
+                AllocationStatus.WAITING if shortages else AllocationStatus.GRANTED,
+                shortages=shortages,
+            )
 
     def release(self, lease_id: str) -> bool:
         with self._lock:

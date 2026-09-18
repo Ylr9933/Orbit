@@ -7,11 +7,13 @@
 B01–B04 在 `feat/research-planning` 实现，B05 已通过限定范围的真实 Codex 验收，证据见
 [研究规划记录](../changes/20260918-research-planning-b6f2a1.md)，使用见[命令参考](../reference/research-planning.md)。
 C01–C03 在 `feat/experiment-compilation` 实现，证据见[编译记录](../changes/20260918-experiment-compilation-c42d8e.md)，
-使用见[编译命令](../reference/experiment-compilation.md)。下文保留任务拆分与验收要求；D 批及其后续仍待实施。
+使用见[编译命令](../reference/experiment-compilation.md)。D01–D07 在 `feat/local-run-controller` 实现，
+验收见[Controller 记录](../changes/20260918-local-run-controller-d73a91.md)，
+使用见[本机执行命令](../reference/local-run-controller.md)。下文保留原任务拆分；实际集成以 Git 为准。
 
 ## 1. 从哪里开始
 
-**A/B 批提供初始化和研究规划，C 批将采用的实验转为冻结 Task；下一步进入 D01 执行预检与运行关联。**
+**A/B 批提供初始化和规划，C 批编译冻结 Task，D 批形成小型 CPU 容器科研闭环；下一步进入 H01 长期环境与 Job 契约。**
 
 第一个可验收结果是：用户提供一句研究目标和目标目录，系统创建项目框架，完整保存原始目标，
 退出后重新打开仍能找到同一个项目；重复初始化不会覆盖文件。此时不需要模型、Docker、GPU 或 MCP。

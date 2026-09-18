@@ -164,6 +164,12 @@ class AllocationDecision:
             raise ValueError("only a granted decision may contain a lease")
 
 
+@dataclass(frozen=True, slots=True)
+class ResourceAssessment:
+    status: AllocationStatus
+    shortages: tuple[ResourceShortage, ...] = ()
+
+
 class ResourceManager(Protocol):
     def update_snapshot(self, snapshot: HostResourceSnapshot) -> None: ...
 

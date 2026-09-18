@@ -11,6 +11,7 @@ from agent_infra.agents import AgentRegistry
 from agent_infra.agents.claude_code import ClaudeCodeAdapter
 from agent_infra.agents.codex import CodexAdapter
 from agent_infra.agents.deepseek_harness import DeepSeekHarnessAdapter
+from agent_infra.bootstrap.controller import run_action
 from agent_infra.bootstrap.projects import project_action
 from agent_infra.bootstrap.settings import load_settings
 from agent_infra.bootstrap.web import serve_console
@@ -163,6 +164,7 @@ def main() -> int:
         task_action=_task_action,
         records_action=_records_action,
         project_action=project_action,
+        run_action=run_action,
         web_action=lambda records, console, web, tasks, port: serve_console(
             _AGENTS, records, console, web, tasks, port
         ),

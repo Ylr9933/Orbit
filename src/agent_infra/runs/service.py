@@ -98,10 +98,22 @@ class LocalRunService:
             raise ValueError("duplicate evaluation recipe")
 
     def run(
-        self, request: RunRequest, agent: CommandAgentAdapter, *, cancellation: Event | None = None
+        self,
+        request: RunRequest,
+        agent: CommandAgentAdapter,
+        *,
+        cancellation: Event | None = None,
+        run_id: str | None = None,
+        attempt_id: str | None = None,
     ) -> RunResult:
-        run_id = uuid.uuid4().hex
-        attempt_id = "attempt_" + uuid.uuid4().hex
+        run_id = run_id or uuid.uuid4().hex
+        attempt_id = attempt_id or "attempt_" + uuid.uuid4().hex
+        for identifier in (run_id, attempt_id):
+            if not identifier or any(
+                c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+                for c in identifier
+            ):
+                raise ValueError("invalid run/attempt identity")
         root = self.state_dir / run_id
         root.mkdir(parents=True, mode=0o700)
         now = datetime.now(UTC)
@@ -115,6 +127,9 @@ class LocalRunService:
                     "solver_image": request.solver_image,
                     "timeout_seconds": request.timeout_seconds,
                     "network": request.network,
+                    "resolved_image": request.resolved_image,
+                    "model": request.model,
+                    "lineage": json.loads(request.lineage_json),
                 },
                 self.recording_policy,
             )
@@ -275,6 +290,7 @@ class LocalRunService:
             terminal_status: str | None = None
             exit_code: int | None = None
             phase_error: BaseException | None = None
+            terminal_observed = False
             try:
                 self.environment.start(handle, command)
                 environment_sink.append_events(
@@ -294,11 +310,22 @@ class LocalRunService:
                 cursor = LogCursor()
                 deadline = time.monotonic() + command.timeout_seconds
                 while True:
-                    if cancellation is not None and cancellation.is_set():
-                        self.environment.cancel(handle)
-                        terminal_status = "cancelled"
-                        raise _PhaseFailure("cancelled")
+                    stop_reason = (
+                        "cancelled"
+                        if cancellation is not None and cancellation.is_set()
+                        else "timed_out"
+                        if time.monotonic() > deadline
+                        else None
+                    )
+                    if stop_reason:
+                        terminal_status = stop_reason
+                        if not self.environment.cancel(handle).complete:
+                            raise _PhaseFailure(stop_reason)
                     observed = self.environment.observe(handle, cursor)
+                    if stop_reason:
+                        # Cancellation proved the process stopped. Drain the final buffered
+                        # output before finalizing streams, including a failed Agent turn.
+                        observed = replace(observed, status=stop_reason)
                     cursor = observed.cursor
                     stdout_offset, stdout_cut, stdout_kept = append_limited(
                         environment_sink,
@@ -317,6 +344,7 @@ class LocalRunService:
                         stream_truncated or stdout_cut or stderr_cut or observed.logs_truncated
                     )
                     if observed.status not in {"running", "prepared"}:
+                        terminal_observed = True
                         terminal_status, exit_code = observed.status, observed.exit_code
                         environment_sink.append_events(
                             (
@@ -342,10 +370,6 @@ class LocalRunService:
                                 observed.status if observed.status != "exited" else "failed"
                             )
                         break
-                    if time.monotonic() > deadline:
-                        self.environment.cancel(handle)
-                        terminal_status = "timed_out"
-                        raise _PhaseFailure("timed_out")
                     time.sleep(0.05)
             except BaseException as failure:
                 phase_error = failure
@@ -379,7 +403,7 @@ class LocalRunService:
                 )
             finally:
                 capture = CaptureStatus.TRUNCATED if stream_truncated else CaptureStatus.COMPLETE
-                if terminal_status is None:
+                if not terminal_observed:
                     capture = CaptureStatus.PARTIAL
                 stdout_stream = environment_sink.finalize_stream(stdout_id, capture)
                 stderr_stream = environment_sink.finalize_stream(stderr_id, capture)
@@ -507,6 +531,8 @@ class LocalRunService:
                 raise ValueError("solver timeout must be positive and finite")
             task = load_task(request.task_manifest)
             snapshot = freeze_task(task)
+            if request.expected_snapshot is not None and snapshot != request.expected_snapshot:
+                raise ValueError("frozen Task contents changed after preflight; compile again")
             view = build_agent_view(task)
             run_sink.append_events(
                 (
@@ -607,6 +633,8 @@ class LocalRunService:
                         workspace,
                         AgentPlacement.CONTAINER,
                         AgentPermissionMode.OUTER_SANDBOX,
+                        model=request.model,
+                        reasoning_effort=request.reasoning_effort,
                     ),
                     credential_home=credential_home,
                 )
@@ -621,14 +649,21 @@ class LocalRunService:
                                 "prompt_sha256": "sha256:"
                                 + hashlib.sha256(prompt.encode()).hexdigest(),
                                 "argv": list(launch.argv),
-                                "environment_names": [name for name, _ in launch.environment],
+                                "environment_names": [
+                                    name
+                                    for name, _ in (
+                                        *launch.environment,
+                                        *request.connection_environment,
+                                    )
+                                ],
                                 "task_artifact_id": task_artifact.artifact_id,
                             },
                             artifact_refs=(task_artifact.artifact_id,),
                         ),
                     )
                 )
-                if (launch.container_image or request.solver_image) != request.solver_image:
+                approved_image = request.resolved_image or request.solver_image
+                if (launch.container_image or approved_image) != approved_image:
                     raise ValueError("Agent image does not match approved run image")
                 if launch.placement is not AgentPlacement.CONTAINER:
                     raise ValueError("this runner requires a container Agent plan")
@@ -646,7 +681,7 @@ class LocalRunService:
                 solver_spec = SandboxSpec(
                     run_id + ":solver",
                     "solver",
-                    launch.container_image or request.solver_image,
+                    launch.container_image or approved_image,
                     workspace,
                     lease.cpu_cores,
                     lease.memory_bytes,
@@ -666,7 +701,7 @@ class LocalRunService:
                         launch.argv,
                         launch.cwd,
                         launch.stdin_text,
-                        launch.environment,
+                        (*launch.environment, *request.connection_environment),
                         request.timeout_seconds,
                     ),
                     paths,

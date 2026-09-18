@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_infra.tasks.api import TaskSnapshot
+
 
 @dataclass(frozen=True, slots=True)
 class RunRequest:
@@ -12,6 +14,12 @@ class RunRequest:
     timeout_seconds: float = 60
     network: bool = False
     credential_home: Path | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    resolved_image: str | None = None
+    expected_snapshot: TaskSnapshot | None = None
+    lineage_json: str = "{}"
+    connection_environment: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
