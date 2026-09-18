@@ -63,8 +63,11 @@ uv run --locked agent-infra project research context ./position-encoding
 ```
 
 Research drafts, experiment proposals, revisions and user decisions are durable. See the
-[research planning guide](docs/reference/research-planning.md). Task execution and linking these
-workspaces to the existing Web catalog remain subsequent work.
+[research planning guide](docs/reference/research-planning.md). Adopted experiments can be compiled
+into frozen Tasks with `agent-infra project compile`; see the
+[compilation guide](docs/reference/experiment-compilation.md) and
+[code walkthrough](docs/implementation/project-workflow-code-guide.md).
+Task execution and linking these workspaces to the existing Web catalog remain subsequent work.
 
 ## Code organization
 

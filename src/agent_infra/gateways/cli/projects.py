@@ -1,6 +1,34 @@
 """Project argument definitions; behavior is injected by the composition root."""
 
+from __future__ import annotations
+
 import argparse
+
+
+def add_compilation_arguments(actions: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    for name in ("compile", "compiled-tasks", "resolve-task", "rebind"):
+        entry = actions.add_parser(name)
+        entry.add_argument("--state-dir", help="Control state root")
+        if name == "resolve-task":
+            entry.add_argument("task_id")
+            entry.add_argument("--task-revision", required=True)
+            continue
+        entry.add_argument(
+            "identifier", help="Project ID or current workspace path; rebind requires ID"
+        )
+        if name == "compile":
+            entry.add_argument("--experiment", required=True)
+            entry.add_argument(
+                "--revision", type=int, required=True, help="Adopted research revision"
+            )
+            entry.add_argument("--execution", help="Project-relative execution settings YAML")
+            entry.add_argument("--max-material-bytes", type=int, default=1024**3)
+        elif name == "compiled-tasks":
+            entry.add_argument("--limit", type=int, default=20)
+            entry.add_argument("--offset", type=int, default=0)
+        elif name == "rebind":
+            entry.add_argument("--directory", required=True, help="Existing moved workspace")
+            entry.add_argument("--expected-revision", required=True, type=int)
 
 
 def add_init_arguments(parser: argparse.ArgumentParser) -> None:

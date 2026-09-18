@@ -1,12 +1,12 @@
 # 项目当前状态
 
-Updated at: 2026-09-18T20:32:27+08:00
+Updated at: 2026-09-18T22:21:41+08:00
 
 Basis: 以本文在本地 `main` 中的版本为集成状态依据；涵盖原基线 `f8f47f3`、A 批初始化 `c9f3498` 与 B 批研究规划 `39e97f0`。
-开发分支上的本文是合并后的状态提案；实际集成以 Git 历史为准，本地合并不代表远端同步或部署。
+当前任务分支另提出 C 批实验编译合并后的状态；实际集成以 Git 历史为准，本地合并不代表远端同步或部署。
 
 当前结论：工程基础、核心模块首版、本机容器执行内核和简版 Web 已建立；现已补充本地科研项目初始化和研究规划的持久接口。
-用户可以保存研究目标并创建工作区，并保存研究方案；正式 Run 提交入口与真实 Agent 实验仍未形成产品闭环。
+用户可以创建工作区、保存研究方案，并将采用的实验与材料编译成冻结 Task；正式 Run 提交入口与真实 Agent 实验仍未形成产品闭环。
 
 ## 阶段概览
 
@@ -25,6 +25,8 @@ Basis: 以本文在本地 `main` 中的版本为集成状态依据；涵盖原�
   真实子进程中断/并发和独立安装验证见[本次记录](changes/20260918-project-init-72a94b.md)。
 - **研究规划（本次）**：Brief/Plan/Experiment 快照、来源声明、版本差异、精确确认、只读检查与恢复上下文；
   支持受保护的 Markdown 投影、显式笔记导入和项目内研究 Skill。B05 实际交互证据见[研究规划记录](changes/20260918-research-planning-b6f2a1.md)。
+- **实验编译（C 批）**：选定实验与材料生成独立 Task 包，支持内容摘要、历史关联、重复编译、缺项报告和移动后的项目重绑定。
+  使用真实 Tasks 接口和独立 CLI/wheel 验证；维护结构与范围见[编译记录](changes/20260918-experiment-compilation-c42d8e.md)。
 - **Agent、Tasks、Resources**：Codex/Claude Code/DSH 适配、任务清单与可见性、benchmark 索引、资源 YAML、
   Linux/NVIDIA 监控和进程内 Lease；CLI 可诊断、准备任务和校验资源。
 - **Run / Environment / Records**：Python 可组装单 Attempt 的求解、冻结提交、隔离评测、取消、清理和资源释放；
@@ -37,7 +39,7 @@ Basis: 以本文在本地 `main` 中的版本为集成状态依据；涵盖原�
 
 ## 主要缺口
 
-- **研究入口**：Task 编译、结果关联和自动迭代尚未实现；保存或确认方案不会启动实验。
+- **研究入口**：结果关联和自动迭代尚未实现；保存、确认和编译方案都不会启动实验。大数据外部不可变存储适配尚缺。
 - **单机执行入口**：没有公开 submit/status/cancel/retry、后台 Controller 或 bootstrap 统一组装；
   Run 仍需调用者用 Python 配置，真实 Agent 镜像与凭据流程尚未验收。
 - **环境与资源**：缺少长作业、Session、MCP、自动镜像构建、持久 Lease、队列与崩溃对账；
@@ -48,9 +50,9 @@ Basis: 以本文在本地 `main` 中的版本为集成状态依据；涵盖原�
 
 ## 下一步优先级
 
-1. 按[科研工作流细分计划](development/research-workflow-implementation-plan.md)推进 C01–C03：
-   将保存的实验方案关联并编译成现有 Task，冻结材料和版本，明确执行缺项。
-2. D 批补齐共享资源服务、执行入口、已有镜像和真实 Codex 单次实验验收。
+1. 按[科研工作流细分计划](development/research-workflow-implementation-plan.md)推进 D01–D02：
+   消费冻结 Task 引用，预检镜像、工具与预算，持久记录提交意图和项目关联。
+2. D03–D07 补齐共享资源服务、后台执行、恢复、已有镜像和真实 Codex 单次实验验收。
 3. H 批实现宿主机 MCP 科研作业，再推进环境自动构建和实验迭代；W01 统一适配新旧 Project。
 
 ## 项目级阻塞与限制
@@ -61,6 +63,7 @@ Basis: 以本文在本地 `main` 中的版本为集成状态依据；涵盖原�
 
 ## 相关记录与说明
 
+- [实验编译记录](changes/20260918-experiment-compilation-c42d8e.md)、[编译使用说明](reference/experiment-compilation.md)、[代码结构](implementation/project-workflow-code-guide.md)
 - [研究规划记录](changes/20260918-research-planning-b6f2a1.md)、[使用说明](reference/research-planning.md)、[快照 ADR](adr/20260918-research-planning.md)
 - [Project 初始化记录](changes/20260918-project-init-72a94b.md)、[命令参考](reference/projects.md)、[存储与恢复 ADR](adr/20260918-project-initialization.md)
 - [初期检查和复盘](architecture/初期检查和复盘.md)、[0917 设计微调](architecture/0917设计微调.md)

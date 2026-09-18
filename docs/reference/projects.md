@@ -1,7 +1,7 @@
 # Project 初始化：命令与使用说明
 
 状态：A00–A07 已实现，适用于 Agent Infra 0.1.0 的本地 Linux CLI。
-本页描述项目骨架、持久元数据和恢复；研究规划见[独立说明](research-planning.md)，Task 编译、Docker 启动与 Web 关联仍在后续阶段。
+本页描述项目骨架、持久元数据和恢复；研究规划见[独立说明](research-planning.md)，Task 编译与目录重绑定见[C 批命令](experiment-compilation.md)。Docker 启动与 Web 关联仍在后续阶段。
 设计取舍见 [ADR](../adr/20260918-project-initialization.md)，验收见[任务记录](../changes/20260918-project-init-72a94b.md)。
 
 ## 1. 最直接的用法
@@ -129,7 +129,7 @@ uv run --locked agent-infra project show ./my-research --state-dir /existing/sta
 `project show` 返回 store 中的项目，并报告 `manifest_matches` 和 `workspace_error`。
 使用 ID 查询仍可检查丢失工作区的元数据；使用路径查询需要该目录内有可解析的 `project.yaml`。
 手工修改 `project.yaml` 不会自动更新 store，也不会形成新的 revision。请将研究笔记写到 `docs/`。
-本版不提供导入、项目移动或改名命令；移动目录不改变 ID，但必须恢复原位置才能继续正常访问。
+本版不自动移动目录或导入任意目录。用户自行移动工作区后，可用 C 批 `project rebind` 显式绑定新路径，保留 ID 和历史；详见[操作说明](experiment-compilation.md)。
 
 ## 5. 开发接口与验证边界
 

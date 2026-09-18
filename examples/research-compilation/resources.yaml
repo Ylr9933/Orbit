@@ -1,0 +1,7 @@
+version: 1
+request_id: compilation-fixture
+resources:
+  cpu: 1
+  memory: 1GiB
+  gpu:
+    count: 0

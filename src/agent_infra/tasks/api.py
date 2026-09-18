@@ -106,6 +106,15 @@ class TaskSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskReference:
+    """Portable task identity; filesystem locations are resolved separately."""
+
+    task_id: str
+    revision: str
+    snapshot: TaskSnapshot
+
+
+@dataclass(frozen=True, slots=True)
 class DraftReview:
     status: str
     issues: tuple[TaskIssue, ...]

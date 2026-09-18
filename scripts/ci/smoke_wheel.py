@@ -160,6 +160,19 @@ def main() -> None:
         assert "references/commands.md" in instructions["files"]
         installed = research("skill", project["project_id"], "--install")
         assert (Path(installed["skill_path"]) / "SKILL.md").is_file()
+        subprocess.run(
+            [
+                str(python),
+                str(root / "scripts/acceptance/project_compilation.py"),
+                "--cli",
+                cli,
+                "--output-dir",
+                str(scratch / "compilation-acceptance"),
+            ],
+            cwd=scratch,
+            env=env,
+            check=True,
+        )
     print("Wheel installation and isolated package/CLI smoke checks passed.")
 
 

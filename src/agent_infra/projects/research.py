@@ -10,6 +10,7 @@ from typing import Any
 
 from agent_infra.contracts.files import resolve_material
 from agent_infra.projects import _filesystem as fs
+from agent_infra.projects._compilation_store import CompilationStore
 from agent_infra.projects.api import InitializationStatus, Project, ProjectConflict, ProjectError
 from agent_infra.projects.local import LocalProjectStore
 from agent_infra.projects.research_api import ResearchDraft, ResearchRevision
@@ -144,6 +145,10 @@ class ResearchService:
             "next_step": document["next_step"],
             "run_references": [],
             "execution_links_supported": False,
+            "compiled_tasks": [
+                item.to_dict()
+                for item in CompilationStore(self.store.database).list(project.project_id, limit=5)
+            ],
             "recent_changes": self.store.research_history(
                 project.project_id, limit=5, before=latest.revision + 1 if latest else 1
             ),

@@ -53,6 +53,9 @@
 - [科研工作流细分开发计划](development/research-workflow-implementation-plan.md)：A 批初始化、B 批研究规划及后续执行的实施顺序；实际验收与集成状态以任务记录为准。
 - [Project 初始化命令](reference/projects.md)：一句目标创建研究工作区，支持指定目录、自动命名、预览、查询和恢复。
 - [科研规划使用说明](reference/research-planning.md)：保存 Brief/Plan/Experiment、版本确认、笔记导入、会话恢复及项目内 Skill。
+- [实验编译命令](reference/experiment-compilation.md)：将采用的实验与选中材料转成冻结 Task，查询历史关联，显式重绑定移动后的项目。
+- [科研工作流代码结构](implementation/project-workflow-code-guide.md)：实际模块边界、Projects 存储拆分、编译调用链及修改入口。
+- [实验编译 ADR](adr/20260918-experiment-compilation.md)：材料副本、稳定 Task 身份、发布恢复及控制库升级。
 - [研究快照 ADR](adr/20260918-research-planning.md)：研究 revision、精确确认、数据库升级与文档冲突的处理。
 - [初始化存储与恢复 ADR](adr/20260918-project-initialization.md)：权威存储、工作区所有权、并发和旧 Web catalog 的边界。
 

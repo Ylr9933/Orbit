@@ -117,7 +117,9 @@ class ProjectService:
             identity = _read_manifest(parent)
         project = self.store.get(identity.project_id).project
         if project.workspace != str(workspace):
-            raise ProjectConflict("workspace moved; automatic relocation is not supported")
+            raise ProjectConflict(
+                "workspace moved; use project rebind with its ID and new directory"
+            )
         return project
 
     def recover(self, identifier: str) -> Project:
@@ -134,7 +136,6 @@ class ProjectService:
                 self._check_identity(parent, workspace.name, p)
                 return p  # Never regenerate user-edited research documents.
             if p.initialization == InitializationStatus.PROJECTION_PENDING:
-                self._check_identity(parent, workspace.name, p)
                 with fs.child_directory(parent, workspace.name) as child:
                     current = fs.read_file(child, "project.yaml")
                     expected = manifest(p).encode("utf-8")

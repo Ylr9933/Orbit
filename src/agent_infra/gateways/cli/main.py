@@ -6,7 +6,11 @@ from collections.abc import Callable, Sequence
 from importlib.metadata import version
 from pathlib import Path
 
-from agent_infra.gateways.cli.projects import add_init_arguments, add_research_arguments
+from agent_infra.gateways.cli.projects import (
+    add_compilation_arguments,
+    add_init_arguments,
+    add_research_arguments,
+)
 from agent_infra.projects import ProjectError
 
 
@@ -33,6 +37,7 @@ def run(
         "project", help="Initialize, inspect and recover research projects"
     )
     project_commands = project.add_subparsers(dest="project_command", required=True)
+    add_compilation_arguments(project_commands)
     add_research_arguments(project_commands.add_parser("research", help="Persist research plans"))
     for name in ("init", "preview"):
         add_init_arguments(project_commands.add_parser(name))
@@ -122,7 +127,7 @@ def run(
                 2, json.dumps({"error": code, "message": str(error)}, ensure_ascii=False) + "\n"
             )
         print(json.dumps(project_result, ensure_ascii=False, indent=2))
-        return 0
+        return 1 if project_result.get("status") == "needs_input" else 0
     if args.command == "web":
         if web_action is None:
             parser.exit(2, "Web service is not configured\n")
