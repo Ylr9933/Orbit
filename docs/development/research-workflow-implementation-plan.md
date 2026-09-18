@@ -1,7 +1,7 @@
 # 科研工作流开发计划：从项目初始化到实验迭代
 
 状态：部分实施的任务分解，2026-09-18。依据 [0917 设计微调](../architecture/0917设计微调.md)。
-核对基线：代码来自本地 `main@f8f47f3`，设计提案来自 `29d4565`；后者尚未合入本地 main。
+规划基线：代码来自 `f8f47f3`，设计提案来自 `29d4565`；后续实施与集成状态见下列记录和 Git 历史。
 实施更新：A00–A07 已在 `feat/project-init` 实现，交付状态与验证见
 [任务记录](../changes/20260918-project-init-72a94b.md)，实际用法见 [Project 命令](../reference/projects.md)。
 B01–B04 在 `feat/research-planning` 实现，B05 已通过限定范围的真实 Codex 验收，证据见

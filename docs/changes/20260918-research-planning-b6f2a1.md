@@ -5,7 +5,7 @@ title: "Persist research planning and deliver a reusable planning skill (B01–B
 branch: "feat/research-planning"
 base_commit: "c9f3498110c6b30a39cf2855fbb0250ba406a7ca"
 work_status: completed
-updated_at: "2026-09-18T20:11:50+08:00"
+updated_at: "2026-09-18T20:32:27+08:00"
 pull_request: null
 ---
 
@@ -24,7 +24,7 @@ pull_request: null
 - B03：上下文、历史和差异查询，受保护的 Markdown 投影、中断恢复及显式笔记导入。B01–B03 沿用 Projects 控制库并事务升级到 schema 2；薄 CLI `agent-infra project research` 接入 save/show/history/diff/confirm/context/check/export/import-notes/skill。
 - B04：随 wheel 交付 `agent-infra-research` Skill，可安装到单个项目 `.agents/skills/`；复用 Agent 对话，指导澄清、修订、来源区分、保存和恢复，不修改全局配置。
 - B05：新增显式启用的 `scripts/acceptance/research_codex.py`，已完成三次真实模型会话和人工证据核对。运行材料留在仓库外，不进入版本控制。
-- 新增[使用说明](../reference/research-planning.md)与[快照 ADR](../adr/20260918-research-planning.md)，更新开发计划、文档导航、README 和项目概览。概览明确本分支的 A+B 能力仍是待合并状态。
+- 新增[使用说明](../reference/research-planning.md)与[快照 ADR](../adr/20260918-research-planning.md)，更新开发计划、文档导航、README 和项目概览。用户随后授权本地合并，在任务分支上将概览与开发计划调整为适用于 main 的表述。
 
 ## Decisions
 
@@ -33,6 +33,7 @@ pull_request: null
 - 复用 Codex 的交互；代码管理持久状态、精确确认和冲突，Skill 指导按需澄清。
 - 实验 ID 在同一实验修订中保持稳定；当前 context 明确返回空 run_references 和 execution_links_supported=false，避免伪造未实现的实验关联。
 - 采用决定由可信本机调用者记录，不提供多人身份认证；保存与确认都不会启动实验。具体取舍、兼容及失败行为见 ADR。
+- 本次按用户明确指令进行本地合并；设计、开发计划、A 批和 B 批分支为同一祖先链，可通过快进一并纳入。保留分支，不推送远端；集成结果由 Git 历史证明。
 
 ## Validation
 
@@ -43,6 +44,7 @@ pull_request: null
 | `uv run --locked python /disk/disk_20T/wangxuehai/.codex/skills/.system/skill-creator/scripts/quick_validate.py src/agent_infra/projects/skills/agent-infra-research` | 本分支 Skill | passed | Skill 格式校验通过。 |
 | `uv run --locked python scripts/acceptance/research_codex.py --run-real-codex --model gpt-5.6-sol --output-dir /tmp/agent-infra-b05-20260918-b6f2a1 --correction-file /tmp/agent-infra-b05-user-correction-20260918.txt --seconds 600` | B05 源码树 `dcfc155b21793cdb936c5aa424138eb4a0aa2d4b` | passed | Codex CLI 0.154.0；3 次全新真实会话均退出 0，累计 347.16 秒；逐一核对实际保存命令、内容和恢复回答。 |
 | Docker / GPU / 训练 / 其他 Agent 自动 Skill 发现 | 本分支 | not_run | 不属于获准 B 批验收范围；不据规划验收推断执行闭环可用。 |
+| 合并前 `check_repository.py`、`git diff --check` 与代码树核对 | `39e97f0` 加本次三份文档调整 | passed | 文档链接与格式检查通过；src/tests/scripts 与上次通过验收的树一致，未重复运行模型或全套测试。 |
 
 最终自动验收内容以 Git 子树标识：`src=8b423e46bc2dd13926f7a8b417fb96eacd9c809f`、
 `tests=779b60d9fee8529715098b7c2327fce2abca8975`、`scripts=2fe1eca8232bc1bc82be1a74e912f3280b7284e3`。
@@ -81,7 +83,7 @@ Skill 参数位置提示及相应测试，最终自动验收覆盖这些调整�
 
 ## Next steps
 
-- 提交任务分支供审查；发布或合并尚未执行。后续按开发计划推进 C01–C03，把一个实验编译为现有 Task。
+- 按用户授权快进本地 main 并核对祖先关系、代码树与任务记录；后续按开发计划推进 C01–C03，把一个实验编译为现有 Task。远端发布不在本次范围。
 
 ## Compatibility and rollback
 
