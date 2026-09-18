@@ -50,6 +50,8 @@
 
 ## 单节点执行
 
+- [科研工作流细分开发计划](development/research-workflow-implementation-plan.md)：将 0917 提案拆成可逐项交给 Codex 的任务，明确依赖、修改范围、验收和第一步；尚未实施。
+
 - [Web 科研控制台方案](architecture/web-console-design.md)：完整页面规划、模块边界与分期验收。
 - [Web 控制台使用说明](operations/web-console.md)：已实现简版的启动、SSH 访问、页面范围、HTTP 接口与验证方式。
 
