@@ -8,6 +8,9 @@ Tasks and single-node Resources, a local Docker Run/Environment slice, durable R
 a simple local research Web console. Distributed execution and complete workflow control remain pending.
 See [project status](docs/project-status.md) for acceptance and integration state.
 
+Local project initialization is also available: preserve a research goal, create its workspace,
+and reopen or recover it without an Agent, Docker, or a running server.
+
 ## Quick start
 
 Prerequisites: Linux, Git, Make, Python 3.12.14, Node 24.18.0, uv 0.12.10 and pnpm 10.32.1.
@@ -40,10 +43,25 @@ Vite frontend development entrypoint without a default backend proxy.
 wheel/source distribution in `dist/` and Web assets in `src/web/dist/`. `make verify` runs all three.
 Install commands require registry access (or populated caches); CI uses the same commands.
 
+To start a research project in a new directory:
+
+```sh
+uv run --locked agent-infra init ./position-encoding \
+  --name "Position encoding study" --goal "Compare position encodings on long-context tasks"
+uv run --locked agent-infra project show ./position-encoding
+```
+
+Omit the directory to derive it from `--name`; omit both to generate a unique directory.
+Add `--dry-run` to preview without writing. Existing directories are never overwritten.
+The workspace contains `docs/`, `code/`, `configs/`, `data/`, `runs/` and `artifacts/`.
+See [project initialization](docs/reference/projects.md) for state storage, retries and recovery.
+Research planning and linking these workspaces to the existing Web catalog are subsequent work.
+
 ## Code organization
 
 ```text
 src/agent_infra/
+  projects/        Research project identity, workspace initialization and recovery
   agents/          Agent sessions and backend adaptation
   environments/    Workspaces, execution and environment lifecycle
   runs/            Run/Attempt orchestration
@@ -74,6 +92,8 @@ Runtime data belongs in ignored `var/` or an external state directory. See
 `AGENT_INFRA_STATE_DIR` / `AGENT_INFRA_LOG_LEVEL` environment overrides. It prints the resolved
 non-sensitive settings without creating state or starting services. `.env` is not auto-loaded.
 See [contributor configuration guidance](CONTRIBUTING.md#configuration-and-secrets).
+Project commands use `--state-dir` / `AGENT_INFRA_STATE_DIR`, falling back to
+`$XDG_STATE_HOME/agent-infra` or `~/.local/state/agent-infra`; they do not read the TOML file.
 
 ## Design and development
 

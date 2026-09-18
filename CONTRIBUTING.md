@@ -59,7 +59,7 @@ small shared references belong in `contracts/`. Agree changes with consumers bef
 No business interfaces are defined in S0.
 
 The import-linter contract in pyproject.toml enforces dependency direction and independent peers:
-bootstrap → gateways → runs → agents/tasks → environments/resources → records → contracts.
+bootstrap → gateways → projects → runs → agents/tasks → environments/resources → records → contracts.
 The same-level pairs cannot import each other. An allowed direction does not authorize importing
 private backend code: callers use public contracts; bootstrap assembles concrete dependencies.
 S1 must add public/private contract checks with the first actual interfaces. Dynamic imports are

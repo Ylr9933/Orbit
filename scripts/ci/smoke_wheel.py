@@ -1,5 +1,6 @@
 """Install the built wheel into a disposable environment outside the source tree."""
 
+import json
 import os
 import subprocess
 import tempfile
@@ -61,6 +62,58 @@ def main() -> None:
             check=True,
         )
         assert not (scratch / "var").exists(), "CLI unexpectedly created runtime state"
+        cli = str(environment / "bin/agent-infra")
+        workspace = scratch / "research"
+        state = scratch / "state"
+        init = [
+            cli,
+            "init",
+            str(workspace),
+            "--goal",
+            "Compare position encodings",
+            "--state-dir",
+            str(state),
+        ]
+        preview = subprocess.run(
+            [*init, "--dry-run"],
+            cwd=scratch,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert "docs/background.md" in json.loads(preview.stdout)["files"]
+        assert not workspace.exists() and not state.exists()
+        created = subprocess.run(
+            init,
+            cwd=scratch,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        project = json.loads(created.stdout)["project"]
+        document = workspace / "docs/background.md"
+        document.write_text("User research notes\n", encoding="utf-8")
+        repeated = subprocess.run(
+            init,
+            cwd=scratch,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert json.loads(repeated.stdout)["project"] == project
+        assert document.read_text(encoding="utf-8") == "User research notes\n"
+        shown = subprocess.run(
+            [cli, "project", "show", project["project_id"], "--state-dir", str(state)],
+            cwd=workspace,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert json.loads(shown.stdout)["manifest_matches"] is True
     print("Wheel installation and isolated package/CLI smoke checks passed.")
 
 

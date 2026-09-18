@@ -1,0 +1,63 @@
+"""Local project composition and CLI defaults. No IO on import."""
+
+import os
+import sqlite3
+from dataclasses import asdict
+from pathlib import Path
+
+from agent_infra.projects import InitRequest, ProjectError
+from agent_infra.projects.local import LocalProjectStore
+from agent_infra.projects.service import ProjectService
+
+
+def project_action(action: str, options: dict[str, str]) -> dict[str, object]:
+    state_base = options.get("state_dir") or os.environ.get("AGENT_INFRA_STATE_DIR")
+    if state_base is None:
+        user_state = os.environ.get("XDG_STATE_HOME")
+        # User state is often relocated through ~/.local on research servers. Resolve only
+        # this trusted default; explicitly supplied state/workspace paths remain strict.
+        state_base = str(
+            ((Path(user_state) if user_state else Path.home() / ".local/state") / "agent-infra")
+            .expanduser()
+            .resolve()
+        )
+    store = LocalProjectStore(Path(state_base) / "projects")
+    service = ProjectService(store)
+    try:
+        result: dict[str, object]
+        if action in {"init", "preview"}:
+            root = options.get("root") or os.environ.get("AGENT_INFRA_PROJECTS_DIR")
+            request = InitRequest(
+                goal=options["goal"],
+                directory=Path(options["directory"]) if "directory" in options else None,
+                name=options.get("name"),
+                root=Path(root) if root else None,
+                operation_id=options.get("operation_id"),
+            )
+            if action == "preview":
+                result = asdict(service.preview(request)) | {"dry_run": True}
+            else:
+                result = {"project": service.initialize(request).to_dict()}
+        elif action == "list":
+            result = {"projects": [p.to_dict() for p in store.list_projects()]}
+        elif action in {"show", "recover"}:
+            project = (
+                service.get(options["identifier"])
+                if action == "show"
+                else service.recover(options["identifier"])
+            )
+            try:
+                matches = service.projection_matches(project)
+                workspace_error = None
+            except (OSError, ProjectError) as error:
+                matches, workspace_error = False, str(error)
+            result = {
+                "project": project.to_dict(),
+                "manifest_matches": matches,
+                "workspace_error": workspace_error,
+            }
+        else:
+            raise ProjectError(f"unknown project action: {action}")
+        return result | {"state_dir": str(store.root.parent)}
+    except sqlite3.Error as error:
+        raise ProjectError(f"project store unavailable: {error}") from error

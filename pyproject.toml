@@ -58,6 +58,7 @@ exhaustive = true
 layers = [
     "bootstrap",
     "gateways",
+    "projects",
     "runs",
     "agents | tasks",
     "environments | resources",
