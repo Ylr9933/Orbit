@@ -10,6 +10,7 @@ from agent_infra.projects.api import (
     ProjectNotFound,
     ProjectStatus,
 )
+from agent_infra.projects.research_api import ResearchDraft, ResearchRevision
 
 __all__ = [
     "InitializationStatus",
@@ -20,4 +21,6 @@ __all__ = [
     "ProjectError",
     "ProjectNotFound",
     "ProjectStatus",
+    "ResearchDraft",
+    "ResearchRevision",
 ]

@@ -114,6 +114,52 @@ def main() -> None:
             text=True,
         )
         assert json.loads(shown.stdout)["manifest_matches"] is True
+
+        def research(*arguments: str) -> dict[str, object]:
+            result = subprocess.run(
+                [cli, "project", "research", *arguments, "--state-dir", str(state)],
+                cwd=workspace,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return dict(json.loads(result.stdout))
+
+        payload = scratch / "draft.json"
+        payload.write_text(
+            json.dumps({"schema_version": 1, "brief": {"question": "Compare two methods"}})
+        )
+        saved = research(
+            "save",
+            project["project_id"],
+            "--file",
+            str(payload),
+            "--expected-revision",
+            "0",
+            "--reason",
+            "Initial proposal",
+        )
+        assert saved["projection"]["status"] == "pending"
+        assert document.read_text() == "User research notes\n"
+        imported = research(
+            "import-notes",
+            project["project_id"],
+            "--file",
+            str(document),
+            "--section",
+            "background",
+            "--expected-revision",
+            "1",
+            "--reason",
+            "User notes",
+        )
+        assert imported["projection"]["status"] == "ready"
+        assert research("context", project["project_id"])["research_revision"] == 2
+        instructions = research("skill", project["project_id"])
+        assert "references/commands.md" in instructions["files"]
+        installed = research("skill", project["project_id"], "--install")
+        assert (Path(installed["skill_path"]) / "SKILL.md").is_file()
     print("Wheel installation and isolated package/CLI smoke checks passed.")
 
 

@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from importlib.metadata import version
 from pathlib import Path
 
-from agent_infra.gateways.cli.projects import add_init_arguments
+from agent_infra.gateways.cli.projects import add_init_arguments, add_research_arguments
 from agent_infra.projects import ProjectError
 
 
@@ -33,6 +33,7 @@ def run(
         "project", help="Initialize, inspect and recover research projects"
     )
     project_commands = project.add_subparsers(dest="project_command", required=True)
+    add_research_arguments(project_commands.add_parser("research", help="Persist research plans"))
     for name in ("init", "preview"):
         add_init_arguments(project_commands.add_parser(name))
     for name in ("show", "list", "recover"):
@@ -99,10 +100,13 @@ def run(
         if project_action is None:
             parser.exit(2, "Project service is not configured\n")
         action = "init" if args.command == "init" else args.project_command
+        if action == "research":
+            action = "research-" + args.research_command
         values = {
             key: str(value)
             for key, value in vars(args).items()
-            if key not in {"command", "project_command", "dry_run"} and value is not None
+            if key not in {"command", "project_command", "research_command", "dry_run"}
+            and value is not None
         }
         if "directory_option" in values:
             if "directory" in values:

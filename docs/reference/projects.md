@@ -1,7 +1,7 @@
 # Project 初始化：命令与使用说明
 
 状态：A00–A07 已实现，适用于 Agent Infra 0.1.0 的本地 Linux CLI。
-本页描述项目骨架、持久元数据和恢复；研究规划、Task 编译、Docker 启动与 Web 关联仍在后续阶段。
+本页描述项目骨架、持久元数据和恢复；研究规划见[独立说明](research-planning.md)，Task 编译、Docker 启动与 Web 关联仍在后续阶段。
 设计取舍见 [ADR](../adr/20260918-project-initialization.md)，验收见[任务记录](../changes/20260918-project-init-72a94b.md)。
 
 ## 1. 最直接的用法
@@ -64,7 +64,7 @@ position-encoding/
 生成的 `.gitignore` 默认忽略原始数据、处理后数据、运行输出、模型权重和凭据。
 
 下一步可以让宿主机 Agent 阅读 README 和目标文档，与用户澄清背景、方法和成功标准。
-本轮还没有自动执行这个交互过程；结构化 Brief/Plan 和规划 Skill 属于 B 批。
+可安装 B 批提供的研究 Skill 并在 Agent 中继续；初始化命令本身不自动调用模型或生成方案。
 
 ## 3. 预览、查询、重试和恢复
 
@@ -141,7 +141,7 @@ uv run --locked agent-infra project show ./my-research --state-dir /existing/sta
 - `projects/rendering.py` 与包内模板：纯渲染；`_filesystem.py` 实现安全创建与不覆盖发布。
 - `bootstrap/projects.py`：对象组装及默认路径；`gateways/cli` 提供参数解析和 JSON 输出。
 
-元数据更新接口留给后续 B 批；当前 CLI 不暴露 update。
+当前 CLI 不暴露 Project 元数据 update；研究草稿通过独立的 research 命令和研究 revision 管理。
 原 Web Project catalog 保持不变，CLI 初始化的项目尚不会自动出现在 Web 中，W01 再统一适配。
 支持 Linux 本机单管理员与本地文件系统；拒绝路径中的符号链接和 `..`，不支持 NFS 多机共享控制库。
 初始化测试包含真实子进程并发、中断恢复和独立 wheel 安装；不代表研究规划或真实 Agent 实验已验收。

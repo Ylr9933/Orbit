@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 
+from agent_infra.bootstrap.research import research_action
 from agent_infra.projects import InitRequest, ProjectError
 from agent_infra.projects.local import LocalProjectStore
 from agent_infra.projects.service import ProjectService
@@ -25,7 +26,9 @@ def project_action(action: str, options: dict[str, str]) -> dict[str, object]:
     service = ProjectService(store)
     try:
         result: dict[str, object]
-        if action in {"init", "preview"}:
+        if action.startswith("research-"):
+            result = research_action(store, action.removeprefix("research-"), options)
+        elif action in {"init", "preview"}:
             root = options.get("root") or os.environ.get("AGENT_INFRA_PROJECTS_DIR")
             request = InitRequest(
                 goal=options["goal"],

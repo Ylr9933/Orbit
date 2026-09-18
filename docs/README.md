@@ -50,8 +50,10 @@
 
 ## 单节点执行
 
-- [科研工作流细分开发计划](development/research-workflow-implementation-plan.md)：将 0917 提案拆成可逐项交给 Codex 的任务；A00–A07 已实现，B 批及其后续仍待实施。
+- [科研工作流细分开发计划](development/research-workflow-implementation-plan.md)：A 批初始化、B 批研究规划及后续执行的实施顺序；实际验收与集成状态以任务记录为准。
 - [Project 初始化命令](reference/projects.md)：一句目标创建研究工作区，支持指定目录、自动命名、预览、查询和恢复。
+- [科研规划使用说明](reference/research-planning.md)：保存 Brief/Plan/Experiment、版本确认、笔记导入、会话恢复及项目内 Skill。
+- [研究快照 ADR](adr/20260918-research-planning.md)：研究 revision、精确确认、数据库升级与文档冲突的处理。
 - [初始化存储与恢复 ADR](adr/20260918-project-initialization.md)：权威存储、工作区所有权、并发和旧 Web catalog 的边界。
 
 - [Web 科研控制台方案](architecture/web-console-design.md)：完整页面规划、模块边界与分期验收。

@@ -55,7 +55,16 @@ Omit the directory to derive it from `--name`; omit both to generate a unique di
 Add `--dry-run` to preview without writing. Existing directories are never overwritten.
 The workspace contains `docs/`, `code/`, `configs/`, `data/`, `runs/` and `artifacts/`.
 See [project initialization](docs/reference/projects.md) for state storage, retries and recovery.
-Research planning and linking these workspaces to the existing Web catalog are subsequent work.
+To plan with an Agent, install the project-local research skill and resume from saved context:
+
+```sh
+uv run --locked agent-infra project research skill ./position-encoding --install
+uv run --locked agent-infra project research context ./position-encoding
+```
+
+Research drafts, experiment proposals, revisions and user decisions are durable. See the
+[research planning guide](docs/reference/research-planning.md). Task execution and linking these
+workspaces to the existing Web catalog remain subsequent work.
 
 ## Code organization
 
