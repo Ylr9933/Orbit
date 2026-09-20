@@ -13,8 +13,11 @@ from agent_infra.bootstrap.host_research import import_host_trace, project_conte
 from agent_infra.bootstrap.run_preflight import prepare_compiled_run
 from agent_infra.environments.docker import DockerEnvironment
 from agent_infra.environments.model_proxy import ModelProxyRelay, model_connection
+from agent_infra.environments.preparation_docker import DockerEnvironmentPreparer
+from agent_infra.environments.preparation_store import EnvironmentCatalog
 from agent_infra.environments.recovery import inspect_local_image, recover_owned_containers
 from agent_infra.environments.research import DockerResearchEnvironment
+from agent_infra.gateways.cli.environment import environment_client
 from agent_infra.gateways.cli.research_runtime import research_client
 from agent_infra.gateways.cli.runs import run_client
 from agent_infra.gateways.http.control import create_control_server
@@ -24,6 +27,7 @@ from agent_infra.resources import LinuxHostResourceMonitor, LocalResourceManager
 from agent_infra.runs.control_api import PreparedRun, SubmissionRequest
 from agent_infra.runs.control_store import RunControlStore
 from agent_infra.runs.controller import LocalRunController
+from agent_infra.runs.environment_preparation import EnvironmentPreparation
 from agent_infra.runs.host_lock import HostControllerLock
 from agent_infra.runs.query import RunQueries
 from agent_infra.runs.research import ResearchController
@@ -45,6 +49,8 @@ def run_action(args: argparse.Namespace) -> dict[str, Any] | int:
     state = state_root(args.state_dir)
     if args.command == "run":
         return run_client(state, args)
+    if args.command == "environment":
+        return environment_client(state, args)
     if args.command == "research":
         return research_client(state, args)
     if args.command == "mcp":
@@ -65,6 +71,7 @@ def serve_controller(
     lock = HostControllerLock(state)
     controller: LocalRunController | None = None
     research: ResearchController | None = None
+    preparation: EnvironmentPreparation | None = None
     clean = False
     relay: ModelProxyRelay | None = None
     root = state / "controller"
@@ -101,6 +108,11 @@ def serve_controller(
             lambda: resources.update_snapshot(monitor.sample()),
             lambda: recover_owned_containers(root / "environments"),
         )
+        preparation = EnvironmentPreparation(
+            controller,
+            EnvironmentCatalog(root / "preparation"),
+            DockerEnvironmentPreparer(environment),
+        )
         research = ResearchController(
             controller,
             ResearchStore(root),
@@ -109,6 +121,7 @@ def serve_controller(
             lambda identifier: project_context(state, identifier),
             inspect_local_image,
             import_host_trace,
+            preparation,
         )
         token = secrets.token_urlsafe(32)
         server = create_control_server(
@@ -146,9 +159,10 @@ def serve_controller(
         return 0
     finally:
         signal.signal(signal.SIGTERM, previous_handler)
+        preparation_clean = preparation.close() if preparation is not None else True
         research_clean = research.close() if research is not None else True
         if controller is not None:
-            clean = controller.close() and research_clean
+            clean = controller.close() and research_clean and preparation_clean
             endpoint.unlink(missing_ok=True)
         if relay is not None:
             relay.close()

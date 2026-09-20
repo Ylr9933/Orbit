@@ -367,6 +367,11 @@ Brief/Plan 的草拟或确认，以及 Run/Job 状态各自维护。0917 的单�
 
 ## 10. E 批：自动环境准备
 
+实施状态：E01–E04 在 `feat/environment-preparation` 落地 Python CPU 范围；
+基于 H 分支，不代表已合并 main。支持公开 wheel 的受限构建、独立 smoke、版本锁、预算内 MCP 修复和 H/D 引用。
+E04 已用真实 gpt-5.6-sol 完成缺依赖修复及锁定环境执行；具体检查与限制见
+[E 记录](../changes/20260920-environment-preparation-e92b6a.md)、[使用指南](../reference/environment-preparation.md)。
+
 ### E01 — 环境方案与锁定结果
 
 - **依赖/范围**：C02、D06；Environment 构建提案契约及 Project 引用。

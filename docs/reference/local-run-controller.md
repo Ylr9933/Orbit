@@ -125,3 +125,9 @@ events 支持 `--cursor` 翻页。原生 Agent 流在运行时保存，统一 Ag
 幂等冲突/忙/资源不足等返回 409，参数错误 400，后端不可用 503。
 
 故障恢复与内部结构见[维护说明](../implementation/local-run-controller.md)。
+
+## E 批验证结果
+
+冻结 Task 的 `environment` 可附带 `lock_id`，同时 `image` 必须等于该锁的固定 image ID。
+提交时检查当前提案、有效期、项目及 Codex 层；不会把过期或失败 smoke 当成 ready。
+完整配置见[环境准备指南](environment-preparation.md)。没有 `lock_id` 的原手工镜像路径保留兼容。

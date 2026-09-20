@@ -23,11 +23,24 @@ from agent_infra.records.local import LocalRecordsStore
 from agent_infra.resources.api import ResourceRequest
 from agent_infra.runs.control_api import ControlError
 from agent_infra.runs.controller import LocalRunController
+from agent_infra.runs.environment_preparation import EnvironmentPreparation
 from agent_infra.runs.query import RunQueries
 from agent_infra.runs.research_evidence import ResearchEvidence
 from agent_infra.runs.research_store import ResearchStore
 
-_MUTATIONS = {"open", "close", "start", "stop", "write", "archive", "import_trace"}
+_MUTATIONS = {
+    "open",
+    "close",
+    "start",
+    "stop",
+    "write",
+    "archive",
+    "import_trace",
+    "environment_plan",
+    "environment_propose",
+    "environment_build",
+    "environment_cancel",
+}
 
 
 class ResearchController:
@@ -40,7 +53,9 @@ class ResearchController:
         context: Callable[[str], dict[str, Any]],
         image: Callable[[str], str],
         import_trace: Callable[[RecordSink, dict[str, Any]], dict[str, Any]],
+        preparation: EnvironmentPreparation | None = None,
     ) -> None:
+        self.preparation = preparation
         self.control, self.store, self.env, self.records = controller, store, environment, records
         self.context, self.image, self.import_trace = context, image, import_trace
         self.queries = RunQueries(controller.store, records)
@@ -98,7 +113,11 @@ class ResearchController:
                         if r["request"].get("kind") == "research"
                     ]
                 }
-            run = self._run(project, options["run_id"]) if action != "open" else None
+            run = (
+                self._run(project, options["run_id"])
+                if action != "open" and not action.startswith("environment_")
+                else None
+            )
             key = None
             if action in _MUTATIONS:
                 self._identifier(operation_id)  # type: ignore[arg-type]
@@ -140,6 +159,10 @@ class ResearchController:
     def _dispatch(
         self, project: str, session: str, action: str, options: dict[str, Any], key: str | None
     ) -> dict[str, Any]:
+        if action.startswith("environment_"):
+            if self.preparation is None:
+                raise ValueError("environment preparation is not configured")
+            return self.preparation.call(project, session, action, options, key)
         if action == "open":
             return self._open(project, session, options, str(key))
         run = self._run(project, options["run_id"])
@@ -242,7 +265,16 @@ class ResearchController:
     def _open(
         self, project: str, session: str, options: dict[str, Any], key: str
     ) -> dict[str, Any]:
-        image = self.image(options["image"])
+        lock = None
+        if options.get("environment_lock"):
+            if self.preparation is None:
+                raise ValueError("environment preparation is not configured")
+            lock = self.preparation.resolve(project, options["environment_lock"])
+            if options.get("image") and options["image"] != lock["image_id"]:
+                raise ValueError("image does not match environment lock")
+            image = lock["image_id"]
+        else:
+            image = self.image(options["image"])
         cpu, memory = options.get("cpu", 1), options.get("memory_bytes", 2 * 1024**3)
         if type(cpu) not in (int, float) or type(memory) is not int or memory < 6 * 1024**2:
             raise ValueError("invalid CPU or memory")
@@ -261,6 +293,7 @@ class ResearchController:
                 "cpu": cpu,
                 "memory_bytes": memory,
                 "session_id": session,
+                "environment_lock": lock,
             },
             project,
         )

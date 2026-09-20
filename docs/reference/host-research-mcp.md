@@ -145,3 +145,9 @@ agent-infra research import-trace RUN_ID --project-id PROJECT_ID --session-id SE
 这是同一可信 OS 用户的科研服务；项目绑定防止工具误操作其他项目，不替代多用户安全边界。
 容器内监督进程和科研命令共享 UID，不承诺抵抗恶意命令破坏监督进程或逃离其进程组；结束环境会
 删除整个容器。当前无 GPU 准入、网络开关、PTY/SSH、队列、自动构建、磁盘硬配额、多节点或 Web 控制接入。
+
+## E 批环境准备接入
+
+同一 MCP 另提供六个环境准备工具；`environment_open` 可传 `environment_lock`，
+CLI 对应 `research open --environment-lock`。验证、依赖提案、有限修复与兼容边界见
+[环境准备指南](environment-preparation.md)。原直接 `image` 路径仍可用。

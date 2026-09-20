@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -79,7 +80,10 @@ class DockerEnvironment:
                 if self._get(handle).spec != spec:
                     raise ValueError("environment key already has a different specification")
                 return handle
-            if spec.phase not in {"solver", "submission", "scorer"} or not spec.key.strip():
+            if (
+                spec.phase not in {"solver", "submission", "scorer", "build"}
+                or not spec.key.strip()
+            ):
                 raise ValueError("invalid environment identity")
             if (
                 not math.isfinite(spec.cpu_cores)
@@ -122,8 +126,12 @@ class DockerEnvironment:
                     raise ValueError("overlapping readonly mounts")
                 seen.append(target)
                 content_digest(mount.source)
-            if spec.phase != "solver" and (spec.private_home is not None or spec.network):
+            if spec.phase not in {"solver", "build"} and (
+                spec.private_home is not None or spec.network
+            ):
                 raise ValueError("evaluation phases cannot inherit Agent credentials or network")
+            if spec.phase == "build" and (spec.private_home is not None or spec.gpu_device_ids):
+                raise ValueError("build containers cannot receive credentials or GPUs")
             if spec.private_home is not None:
                 if spec.private_home.is_symlink() or not spec.private_home.is_dir():
                     raise ValueError("private home must be a regular directory")
@@ -207,11 +215,12 @@ class DockerEnvironment:
                 item.name,
                 "--label",
                 f"agent-infra.owner={self._owner}",
-                "--read-only",
                 "--cap-drop=ALL",
                 "--security-opt=no-new-privileges",
                 "--user",
-                f"{os.getuid() or 65534}:{os.getgid() or 65534}",
+                "0:0"
+                if spec.phase == "build"
+                else f"{os.getuid() or 65534}:{os.getgid() or 65534}",
                 "--cpus",
                 str(spec.cpu_cores),
                 "--memory",
@@ -241,6 +250,8 @@ class DockerEnvironment:
                 "--mount",
                 f"type=bind,src={spec.workspace.resolve()},dst=/workspace",
             ]
+            if spec.phase != "build":
+                args.append("--read-only")
             for mount in spec.readonly_inputs:
                 args += [
                     "--mount",
@@ -393,6 +404,34 @@ class DockerEnvironment:
                 return CleanupResult(complete)
             except (RuntimeError, OSError, subprocess.SubprocessError):
                 return CleanupResult(False, "container stop could not be verified")
+
+    def publish_build(self, handle: EnvironmentHandle, cache_key: str) -> str:
+        """Publish only a stopped, successful, credential-free template build.
+
+        Installed packages live in the image layer; mounted workspace is excluded.
+        Image publication cannot restart build execution.
+        """
+        with self._lock:
+            item = self._get(handle)
+            if item.spec.phase != "build" or not re.fullmatch(r"[0-9a-f]{64}", cache_key):
+                raise ValueError("publishing requires a template build and canonical key")
+            info = self._inspect(item)
+            if info is None or info["State"]["Running"] or info["State"]["ExitCode"] != 0:
+                raise ValueError("only successful stopped builds can be published")
+            return self._docker(
+                [
+                    "commit",
+                    "--change",
+                    "USER 65534:65534",
+                    "--change",
+                    "ENTRYPOINT []",
+                    "--change",
+                    'CMD ["python3"]',
+                    "--change",
+                    "LABEL agent-infra.environment.key=" + cache_key,
+                    item.name,
+                ]
+            ).strip()
 
     def execute_control(self, handle: EnvironmentHandle, argv: tuple[str, ...], stdin: str) -> str:
         """Internal runtime control transport; never exposed as arbitrary host execution."""

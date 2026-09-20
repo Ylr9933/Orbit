@@ -120,12 +120,16 @@ def _validate_section_body(name: str, body: dict[str, Any]) -> None:
     allowed = {
         "tools": {"items"},
         "resource_intent": {"constraints", "provenance"},
-        "environment": {"native_ref", "image", "provenance"},
+        "environment": {"native_ref", "image", "provenance", "lock_id"},
         "outputs": {"items"},
         "evaluation": {"evaluator_ref", "audiences", "feedback"},
         "execution_policy": {"native_ref", "provenance"},
     }
     only_keys(body, allowed[name], name)
+    if name == "environment" and "lock_id" in body:
+        string(body["lock_id"], "environment.lock_id")
+        if not body.get("image") or body.get("native_ref"):
+            raise ValueError("environment lock requires an image, without native_ref")
     if name in {"tools", "outputs"}:
         items = body.get("items")
         if not isinstance(items, list) or not items:

@@ -13,6 +13,8 @@ class InputMount:
 
 @dataclass(frozen=True, slots=True)
 class SandboxSpec:
+    """Solver/evaluation are readonly; build is a credential-free template-only phase."""
+
     key: str
     phase: str
     image: str

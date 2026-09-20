@@ -68,3 +68,6 @@
 - [H 批实现导读](implementation/host-research-mcp.md)：监督进程、Controller 用例、幂等状态、采集和故障恢复。
 - [本机 Run 控制服务](reference/local-run-controller.md)：冻结 Task 的预检、提交、查询、取消、认证、结果下载与 CPU 示例。
 - [Controller 实现与恢复](implementation/local-run-controller.md)：命令持久化、单 worker、资源互斥、Docker 对账及扩展入口。
+
+- [环境准备与有限修复](reference/environment-preparation.md)：E 批 intent/proposal/lock、CPU 模板、预算、缓存及 H/D 接入。
+- [环境准备实现导读](implementation/environment-preparation.md)：模块职责、容器构建与独立 smoke、持久化和故障边界。

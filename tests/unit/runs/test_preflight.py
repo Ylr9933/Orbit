@@ -52,3 +52,57 @@ def test_explicit_provider_network_and_request_shape():
     ):
         with pytest.raises(ControlError):
             SubmissionRequest.from_dict(value)
+
+
+def test_compiled_environment_lock_is_bound_and_checked(tmp_path, monkeypatch):
+    import time
+
+    from agent_infra.environments.preparation_api import SMOKE_VERSION, TEMPLATE_VERSION, digest
+    from agent_infra.environments.preparation_store import EnvironmentCatalog
+
+    compiler, identifier, workspace = setup(tmp_path)
+    image = "sha256:" + "1" * 64
+    settings = workspace / "configs/experiments/pilot.yaml"
+    settings.write_text(
+        settings.read_text().replace(
+            "image: python:3.12-slim", f"image: {image}\n  lock_id: plan:attempt"
+        )
+    )
+    compiled = compile(compiler, identifier)
+    task = compiled["compiled"]["task"]
+    request = SubmissionRequest(task["task_id"], task["revision"], "explicit-model", network=True)
+    proposal = {"dependencies": [], "source": "user", "reason": "fixture"}
+    intent = {"goal": "fixture"}
+    lock = {
+        "image_id": image,
+        "proposal_revision": 1,
+        "expires_at": time.time() + 100,
+        "template_version": TEMPLATE_VERSION,
+        "smoke_version": SMOKE_VERSION,
+        "agent": "codex",
+        "intent_digest": digest(intent),
+        "proposal_digest": digest(proposal),
+    }
+    catalog = EnvironmentCatalog(tmp_path / "state/controller/preparation")
+    plan = {
+        "plan_id": "plan",
+        "project_id": identifier,
+        "intent": intent,
+        "proposals": [proposal],
+        "attempts": [
+            {"attempt_id": "attempt", "status": "ready", "cleanup_complete": True, "lock": lock}
+        ],
+    }
+    catalog.save(plan)
+    monkeypatch.setattr(run_preflight, "inspect_local_image", lambda *args, **kwargs: image)
+    monkeypatch.setattr(
+        run_preflight.CodexAdapter,
+        "probe",
+        lambda self: AgentProbe("codex", True, "/fake/codex", "0.154.0", True, True),
+    )
+    prepared = run_preflight.prepare_compiled_run(tmp_path / "state", request)
+    assert prepared.lineage["environment_lock"] == lock
+    lock["expires_at"] = time.time() - 1
+    catalog.save(plan)
+    with pytest.raises(ValueError, match="expired"):
+        run_preflight.prepare_compiled_run(tmp_path / "state", request)

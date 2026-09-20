@@ -5,6 +5,8 @@ from pathlib import Path
 
 from agent_infra.agents.api import AgentCapability
 from agent_infra.agents.codex import CODEX_REASONING_EFFORTS, CodexAdapter
+from agent_infra.environments.preparation_locks import resolve_environment_lock
+from agent_infra.environments.preparation_store import EnvironmentCatalog
 from agent_infra.environments.recovery import inspect_local_image
 from agent_infra.projects.compilation_api import CompiledExperiment
 from agent_infra.projects.compiler import CompilationService
@@ -58,6 +60,17 @@ def prepare_compiled_run(state: Path, request: SubmissionRequest) -> PreparedRun
             "image_required",
             "compile with an explicit existing image containing Codex and task dependencies",
         )
+    environment_lock = None
+    if environment.get("lock_id"):
+        environment_lock = resolve_environment_lock(
+            EnvironmentCatalog(state / "controller/preparation"),
+            compiled.project_id,
+            environment["lock_id"],
+            inspect_local_image,
+            agent="codex",
+        )
+        if image != environment_lock["image_id"]:
+            raise ControlError("environment_changed", "frozen image differs from validated lock")
     image_id = inspect_local_image(image, provider="codex")
     adapter = CodexAdapter(container_image=image_id)
     probe = adapter.probe()
@@ -72,6 +85,8 @@ def prepare_compiled_run(state: Path, request: SubmissionRequest) -> PreparedRun
     resource_file = manifest.parent / "control/resources.yaml"
     resources = validate_resource_plan(task, resource_file)
     lineage = compiled.to_dict()
+    if environment_lock:
+        lineage["environment_lock"] = environment_lock
     return PreparedRun(
         RunRequest(
             manifest,

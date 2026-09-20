@@ -194,6 +194,29 @@ def main() -> None:
             env=env,
             check=True,
         )
+        subprocess.run(
+            [cli, "environment", "--help"],
+            cwd=scratch,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                str(python),
+                "-c",
+                "from agent_infra.environments.preparation_api import EnvironmentIntent; "
+                "from agent_infra.environments.preparation_docker "
+                "import DockerEnvironmentPreparer; "
+                "from agent_infra.gateways.mcp.environment import add_environment_tools; "
+                "assert EnvironmentIntent.from_dict("
+                "{'goal':'smoke','base_image':'python'}).cpu == 1",
+            ],
+            cwd=scratch,
+            env=env,
+            check=True,
+        )
     print("Wheel installation and isolated package/CLI smoke checks passed.")
 
 

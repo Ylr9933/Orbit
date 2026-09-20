@@ -1,15 +1,15 @@
 # 项目当前状态
 
-Updated at: 2026-09-20T16:41:10+08:00
+Updated at: 2026-09-20T17:34:00+08:00
 
 Basis: 以本文在 `main` 中的版本为集成状态依据；涵盖原基线 `f8f47f3`、A 批初始化 `c9f3498`、B 批研究规划 `39e97f0`、
-C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本任务分支另提出 H 批合并后的概览；H 尚未合并 main。
+C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本任务分支基于 H（43c78f0），提出 H + E 批合并后的概览；H/E 尚未合并 main。
 实际集成以 Git 历史为准，本地实现不代表远端同步或常驻部署。
 
 当前结论：工程基础、核心模块首版、本机容器执行内核和简版 Web 已建立；现已补充本地科研项目初始化和研究规划的持久接口。
 已形成小型 CPU 科研闭环：创建工作区、保存并采用方案、编译冻结 Task、提交容器内真实 Codex、
 查询轨迹和下载指标。本分支新增宿主机 MCP → 长期环境 → 多轮 Job 路径，并通过真实 Codex CPU 实验；
-自动环境生成、GPU 准入与有预算的自动迭代仍待完成。
+E 批补充 Python CPU 环境生成、独立验证和有界依赖修复；GPU 准入与有预算的科研自动迭代仍待完成。
 
 ## 阶段概览
 
@@ -36,6 +36,9 @@ C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本任务分�
 - **宿主机科研（H 批，本分支）**：项目绑定的 CLI/stdio MCP 可创建长期 Docker 环境、启动/停止 Job、读写工作区、查询日志和归档结果。
   与 D 共用资源准入；关闭 MCP 不停止 Job，重启 Controller 按中断清理策略恢复。平台调用及显式导入的宿主机原始流可追溯，覆盖缺口标记 partial。
   真实 Codex 两轮 CPU 训练、MCP 断连重连与后台停止通过，见[H 记录](changes/20260920-host-research-mcp-a81f2c.md)。
+- **环境准备（E 批，本分支）**：项目关联的 intent/proposal/lock、Python CPU wheel 模板、独立 smoke、缓存、日志和预算内修复。
+  CLI/MCP 共用 Controller 准入和清理；H 与 D 支持精确锁引用。真实 gpt-5.6-sol 从缺少 six 修复到可用环境，
+  2 次 CLI、累计约 222 秒；模板/故障验证与范围见[E 记录](changes/20260920-environment-preparation-e92b6a.md)。
 - **Agent、Tasks、Resources**：Codex/Claude Code/DSH 适配、任务清单与可见性、benchmark 索引、资源 YAML、
   Linux/NVIDIA 监控和进程内 Lease；CLI 可诊断、准备任务和校验资源。
 - **Run / Environment / Records**：Python 可组装单 Attempt 的求解、冻结提交、隔离评测、取消、清理和资源释放；
@@ -53,7 +56,7 @@ C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本任务分�
 - **执行范围**：D 批 Run 提交入口只接收编译的无评测科研 Task，容器认证只验收 Codex；
   H 批另支持已初始化项目直接开启 CPU 研究环境；
   其他 provider、直接 benchmark 注册、自动重试/队列和公网多用户服务未完成。
-- **环境与资源**：缺少自动镜像生成、GPU 准入与分布式持久 Lease；
+- **环境与资源**：已有受限 Python CPU 环境生成；任意 Dockerfile、系统包/GPU 模板、GPU 准入与分布式持久 Lease 尚缺；
   当前通过单控制进程和启动前清理恢复 CPU 容量，不支持恢复中断的模型会话或训练进程。
 - **记录、任务与界面**：宿主机 Agent 仅支持平台操作记录和显式原始流导入，仍缺平台外全链路采集、跨进程 spool、ToolBinding 与原生 benchmark 评分等价证据；
   Web Task 关联仍依赖路径哈希，HTTP/TypeScript 契约手工维护。新控制 API 尚未接入 Web，实时聊天推流与新 Project 适配待实现。
@@ -61,9 +64,9 @@ C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本任务分�
 
 ## 下一步优先级
 
-1. 审查、集成 H 分支，按[宿主机科研指南](reference/host-research-mcp.md)试用并选择常驻 Controller 状态目录。
+1. 审查、集成 H/E 分支，按[宿主机科研指南](reference/host-research-mcp.md)试用并选择常驻 Controller 状态目录。
 2. 用实际科研任务补齐所需镜像和材料入口；有授权后推进单 GPU 准入及训练验收。
-3. 按[细分计划](development/research-workflow-implementation-plan.md)推进 E 环境准备与 I 结果分析/迭代；W01 统一新旧 Project。
+3. 按[细分计划](development/research-workflow-implementation-plan.md)推进 I 结果分析/迭代；按实际使用需求推进 W01 统一新旧 Project。
 
 ## 项目级阻塞与限制
 

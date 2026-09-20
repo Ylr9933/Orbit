@@ -134,6 +134,13 @@ License selection is pending; the empty LICENSE file grants no license.
 
 H 批提供项目绑定的长期 Docker 环境、后台 Job、日志、文件与产物操作。
 入口为 `agent-infra mcp`（stdio）和 `agent-infra research`（人工 CLI），连接独立 Controller。
-先准备包含 Python 3 的镜像；当前 CPU、单活跃 Run，关闭 MCP 不停止 Job。
+可使用已有 Python 3 镜像，或通过 E 批准备并验证依赖环境；当前 CPU、单活跃 Run，关闭 MCP 不停止 Job。
 具体启动和 Codex 配置见[宿主机科研指南](docs/reference/host-research-mcp.md)，
 代码维护见[实现导读](docs/implementation/host-research-mcp.md)。
+
+### 自动准备科研环境
+
+`agent-infra environment` 支持固定需求、依赖提案、Python CPU 模板构建、独立 smoke、日志和取消。
+Agent 可以通过同一 MCP 读取错误并在原预算内修订；验证通过的锁可用于 H 长期环境或 D 的冻结 Task。
+目前支持公开 PyPI wheel 和已有 Agent 基础镜像，不支持任意 Dockerfile、GPU 或系统包自动构建。
+见[环境准备使用说明](docs/reference/environment-preparation.md)和[维护导读](docs/implementation/environment-preparation.md)。

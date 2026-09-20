@@ -76,7 +76,11 @@ def add_research_runtime_arguments(commands: Any) -> None:
         if action not in {"open", "context"}:
             item.add_argument("run_id")
         if action == "open":
-            item.add_argument("--image", required=True, help="Existing local image with Python 3")
+            image = item.add_mutually_exclusive_group(required=True)
+            image.add_argument("--image", help="Existing Python 3 image (legacy path)")
+            image.add_argument(
+                "--environment-lock", help="Validated environment plan_id:attempt_id"
+            )
             item.add_argument("--cpu", type=float, default=1)
             item.add_argument("--memory-gib", type=float, default=2)
         if action == "start":

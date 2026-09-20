@@ -7,6 +7,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from agent_infra.gateways.cli.research_runtime import ResearchClient
+from agent_infra.gateways.mcp.environment import add_environment_tools
 
 
 def create_mcp(client: ResearchClient) -> FastMCP:
@@ -26,13 +27,18 @@ def create_mcp(client: ResearchClient) -> FastMCP:
 
     @server.tool()
     def environment_open(
-        image: str, operation_id: str, cpu: float = 1, memory_gib: float = 2
+        operation_id: str,
+        image: str | None = None,
+        cpu: float = 1,
+        memory_gib: float = 2,
+        environment_lock: str | None = None,
     ) -> dict[str, Any]:
         """Start a persistent Python 3 environment with CPU/memory limits and no network."""
         return client.call(
             "open",
             operation_id=operation_id,
             image=image,
+            environment_lock=environment_lock,
             cpu=cpu,
             memory_bytes=int(memory_gib * 1024**3),
         )
@@ -105,6 +111,7 @@ def create_mcp(client: ResearchClient) -> FastMCP:
         """List artifact members or read an exact member as base64 (max 16 MiB)."""
         return client.call("artifact", run_id=run_id, artifact_id=artifact_id, member=member)
 
+    add_environment_tools(server, client)
     return server
 
 

@@ -197,10 +197,10 @@ class LocalRunController:
     def cancel(self, run_id: str) -> dict[str, Any]:
         with self._lock:
             entry = self.store.get(run_id)
-            if entry["request"].get("kind") == "research":
+            if entry["request"].get("kind") in {"research", "environment"}:
                 raise ControlError(
                     "research_requires_close",
-                    "use research close with a project binding for research environments",
+                    "use the bound research close or environment cancel command",
                 )
             if entry["state"] == "finished":
                 return entry

@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from importlib.metadata import version
 from pathlib import Path
 
+from agent_infra.gateways.cli.environment import add_environment_arguments
 from agent_infra.gateways.cli.projects import (
     add_compilation_arguments,
     add_init_arguments,
@@ -34,6 +35,7 @@ def run(
     parser.add_argument("--version", action="version", version=version("agent-infra"))
     commands = parser.add_subparsers(dest="command", required=True)
     add_run_arguments(commands)
+    add_environment_arguments(commands)
     add_research_runtime_arguments(commands)
     add_init_arguments(
         commands.add_parser("init", help="Initialize a research project without a model")
@@ -106,7 +108,7 @@ def run(
     export.add_argument("--root", required=True)
     export.add_argument("--destination", required=True)
     args = parser.parse_args(argv)
-    if args.command in {"run", "controller", "research", "mcp"}:
+    if args.command in {"run", "controller", "research", "mcp", "environment"}:
         if run_action is None:
             parser.exit(2, "Run controller is not configured\n")
         try:
