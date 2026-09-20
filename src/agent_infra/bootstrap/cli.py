@@ -165,7 +165,7 @@ def main() -> int:
         records_action=_records_action,
         project_action=project_action,
         run_action=run_action,
-        web_action=lambda records, console, web, tasks, port: serve_console(
-            _AGENTS, records, console, web, tasks, port
+        web_action=lambda records, console, web, tasks, port, state: serve_console(
+            _AGENTS, records, console, web, tasks, port, state
         ),
     )

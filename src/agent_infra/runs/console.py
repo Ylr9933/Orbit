@@ -220,10 +220,11 @@ class ConsoleService:
                 or any(not isinstance(value, str) for value in items)
             ):
                 raise ValueError("无效关联列表")
-        for run_id in run_ids:
+        existing = next((p for p in self.catalog.list_projects() if p["id"] == body.get("id")), {})
+        for run_id in set(run_ids) - set(existing.get("run_ids", [])):
             self.reader.get_run(run_id)
         registered = {item["key"] for item in self.tasks()}
-        if set(task_keys) - registered:
+        if set(task_keys) - registered - set(existing.get("task_keys", [])):
             raise ValueError("任务未注册")
         identifier = body.get("id")
         revision = body.get("revision", 0)

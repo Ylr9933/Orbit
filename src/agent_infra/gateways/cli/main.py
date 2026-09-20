@@ -29,7 +29,8 @@ def run(
     task_action: Callable[[str, dict[str, str]], dict[str, object]] | None = None,
     records_action: Callable[[str, dict[str, str]], dict[str, object]] | None = None,
     project_action: Callable[[str, dict[str, str]], dict[str, object]] | None = None,
-    web_action: Callable[[Path, Path, Path, tuple[Path, ...], int], int] | None = None,
+    web_action: Callable[[Path | None, Path, Path, tuple[Path, ...], int, str | None], int]
+    | None = None,
     run_action: Callable[[argparse.Namespace], dict[str, object] | int] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(description="Agent Infra engineering utilities")
@@ -57,7 +58,8 @@ def run(
             entry.add_argument("identifier", help="Project UUID or original workspace path")
         entry.add_argument("--state-dir", help="Control state root")
     web = commands.add_parser("web", help="Start the local research console")
-    web.add_argument("--records-root", type=Path, default=Path("var/runs/_records"))
+    web.add_argument("--records-root", type=Path, help="Optional legacy Records directory")
+    web.add_argument("--state-dir", help="Same state root as init and controller serve")
     web.add_argument("--console-dir", type=Path, default=Path("var/console"))
     web.add_argument("--web-root", type=Path, default=Path("src/web/dist"))
     web.add_argument("--task", type=Path, action="append", default=[])
@@ -158,7 +160,12 @@ def run(
             parser.exit(2, "Web service is not configured\n")
         try:
             return web_action(
-                args.records_root, args.console_dir, args.web_root, tuple(args.task), args.port
+                args.records_root,
+                args.console_dir,
+                args.web_root,
+                tuple(args.task),
+                args.port,
+                args.state_dir,
             )
         except (OSError, ValueError):
             parser.exit(2, "Web startup failed; check build directory, port and state paths\n")

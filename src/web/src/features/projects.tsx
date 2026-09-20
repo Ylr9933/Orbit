@@ -6,7 +6,9 @@ import {
   type Task,
   useData,
 } from "../api/console";
+import type { Capabilities } from "../api/workflow";
 import { Badge, Empty, Notice, Panel } from "../components/common";
+import { ProjectCreate } from "./project-create";
 
 const blank = (): Project => ({
   revision: 0,
@@ -25,6 +27,8 @@ const statuses = {
   archived: "已归档",
 };
 export function ProjectsPage({ token }: { token: string }) {
+  const capabilities = useData<Capabilities>(token, "capabilities");
+  const [creating, setCreating] = useState(false);
   const projects = useData<{ items: Project[] }>(token, "projects");
   const tasks = useData<{ items: Task[] }>(token, "tasks");
   const runs = useData<{ items: Run[] }>(token, "runs");
@@ -64,11 +68,29 @@ export function ProjectsPage({ token }: { token: string }) {
     <>
       <div className="section-line">
         <p className="muted">研究目标、里程碑与执行证据归档。进度由你确认。</p>
-        <button type="button" className="primary" onClick={() => edit(blank())}>
+        <button
+          type="button"
+          className="primary"
+          disabled={!capabilities.data}
+          onClick={() =>
+            capabilities.data?.project_workspaces
+              ? setCreating(true)
+              : edit(blank())
+          }
+        >
           ＋ 新建项目
         </button>
       </div>
       <Notice error={projects.error} loading={!projects.data} />
+      {creating && (
+        <ProjectCreate
+          token={token}
+          close={() => {
+            setCreating(false);
+            projects.refresh();
+          }}
+        />
+      )}
       {draft && (
         <Panel title={draft.id ? "编辑项目" : "新建科研项目"}>
           <form
@@ -271,9 +293,26 @@ export function ProjectsPage({ token }: { token: string }) {
                   {id} ↗
                 </a>
               ))}
-              <button type="button" onClick={() => edit(project)}>
-                编辑项目
-              </button>
+              {project.source && (
+                <p className="muted">
+                  {project.source === "legacy" ? "旧项目" : "科研工作区"} ·{" "}
+                  {project.binding_status === "unbound"
+                    ? "未绑定"
+                    : project.binding_status}
+                </p>
+              )}
+              {project.source && (
+                <p>
+                  <a href={`#projects/${encodeURIComponent(project.id ?? "")}`}>
+                    查看方案、实验与结果 →
+                  </a>
+                </p>
+              )}
+              {project.source !== "workspace" && (
+                <button type="button" onClick={() => edit(project)}>
+                  编辑项目
+                </button>
+              )}
             </Panel>
           );
         })}

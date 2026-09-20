@@ -9,12 +9,20 @@ from time import monotonic
 from typing import Any
 
 from agent_infra.agents import AgentRegistry
+from agent_infra.bootstrap.controller import state_root
+from agent_infra.gateways.cli.runs import ControllerClient
 from agent_infra.gateways.http.server import create_server
+from agent_infra.gateways.http.workflow import WorkflowGateway
+from agent_infra.projects.console import ProjectConsole
+from agent_infra.projects.local import LocalProjectStore
 from agent_infra.records.catalog import LocalProjectCatalog
 from agent_infra.records.local import LocalRecordsStore
 from agent_infra.resources.monitor import LinuxHostResourceMonitor
 from agent_infra.resources.sampling import ResourceSampler
 from agent_infra.runs.console import ConsoleService
+from agent_infra.runs.control_store import RunControlStore
+from agent_infra.runs.query import RunQueries
+from agent_infra.runs.research_store import ResearchStore
 
 
 class AgentDiagnostics:
@@ -61,24 +69,42 @@ class AgentDiagnostics:
 
 def serve_console(
     registry: AgentRegistry,
-    records_root: Path,
+    records_root: Path | None,
     console_dir: Path,
     web_root: Path,
     task_paths: tuple[Path, ...],
     port: int,
+    state_dir: str | None = None,
 ) -> int:
     if not (web_root / "index.html").is_file():
         raise ValueError("Web 构建不存在，请先执行 pnpm build 并设置 --web-root")
+    state = state_root(state_dir)
+    control_root = state / "controller"
+    catalog = LocalProjectCatalog(console_dir / "projects.sqlite3")
+    controller_records = LocalRecordsStore(control_root / "records")
     sampler = ResourceSampler(LinuxHostResourceMonitor().sample)
     service = ConsoleService(
-        LocalRecordsStore(records_root),
-        LocalProjectCatalog(console_dir / "projects.sqlite3"),
+        LocalRecordsStore(records_root) if records_root else controller_records,
+        catalog,
         sampler.read,
         AgentDiagnostics(registry).read,
         task_paths,
     )
+    workflow_console = ConsoleService(
+        controller_records, catalog, sampler.read, service.agents, task_paths
+    )
+    catalog.remember_tasks(service.tasks())
+    workflow = WorkflowGateway(
+        ProjectConsole(LocalProjectStore(state / "projects"), catalog),
+        workflow_console,
+        RunQueries(RunControlStore(control_root), controller_records),
+        ResearchStore(control_root),
+        lambda path, body: ControllerClient(state).request(
+            path, body, timeout=3 if path == "health" else 120
+        ),
+    )
     token = secrets.token_urlsafe(32)
-    server = create_server(service, web_root, token, port)
+    server = create_server(service, web_root, token, port, workflow=workflow)
     sampler.start()
     print(f"Local console: http://127.0.0.1:{server.server_port}/#token={token}", flush=True)
     print("仅本机管理员访问；令牌随服务重启失效。Ctrl+C 退出。", flush=True)

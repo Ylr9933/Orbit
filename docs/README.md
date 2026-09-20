@@ -60,6 +60,7 @@
 - [初始化存储与恢复 ADR](adr/20260918-project-initialization.md)：权威存储、工作区所有权、并发和旧 Web catalog 的边界。
 
 - [Web 科研控制台方案](architecture/web-console-design.md)：完整页面规划、模块边界与分期验收。
+- [W 批科研工作流](architecture/web-research-workflow.md)：新旧项目兼容、研究方案、实验预检/提交/取消、产物和分析的实现边界。
 - [Web 控制台使用说明](operations/web-console.md)：已实现简版的启动、SSH 访问、页面范围、HTTP 接口与验证方式。
 
 - [Run / Environment 契约](architecture/run-environment-contract.md)：仅求解与隔离评测设计。

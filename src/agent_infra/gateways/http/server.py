@@ -8,12 +8,19 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from agent_infra.gateways.http.workflow import WorkflowGateway
+from agent_infra.projects.api import ProjectConflict, ProjectNotFound
 from agent_infra.records.catalog import CatalogConflict
 from agent_infra.runs.console import ConsoleService
 
 
 def create_server(
-    service: ConsoleService, web_root: Path, token: str, port: int = 8765
+    service: ConsoleService,
+    web_root: Path,
+    token: str,
+    port: int = 8765,
+    *,
+    workflow: WorkflowGateway | None = None,
 ) -> ThreadingHTTPServer:
     if len(token) < 32:
         raise ValueError("console token must have at least 32 characters")
@@ -40,7 +47,11 @@ def create_server(
             self.wfile.write(data)
 
         def respond(self, code: int, value: object) -> None:
-            self.send_body(code, json.dumps(value, ensure_ascii=False).encode(), "application/json")
+            self.send_body(
+                code,
+                json.dumps(value, ensure_ascii=False, default=str).encode(),
+                "application/json",
+            )
 
         def allowed_host(self) -> bool:
             port = cast(ThreadingHTTPServer, self.server).server_port
@@ -70,12 +81,12 @@ def create_server(
                     query = parse_qs(parsed.query)
                     result = self.api(method, path, query)
                     self.respond(200, result)
-                except CatalogConflict as error:
+                except (CatalogConflict, ProjectConflict) as error:
                     self.respond(409, {"error": str(error)})
-                except KeyError:
+                except (KeyError, ProjectNotFound):
                     self.respond(404, {"error": "未找到请求的记录"})
-                except (ValueError, TypeError):
-                    self.respond(400, {"error": "请求参数无效，请检查内容后重试"})
+                except (ValueError, TypeError) as error:
+                    self.respond(400, {"error": str(error)})
                 except Exception:
                     self.respond(503, {"error": "服务暂不可用；请检查本机状态目录"})
                 return
@@ -92,8 +103,9 @@ def create_server(
             )
 
         def api(self, method: str, path: str, query: dict[str, list[str]]) -> object:
+            body: dict[str, Any] = {}
             if method == "POST":
-                if path != "/api/v1/projects":
+                if workflow is None and path != "/api/v1/projects":
                     raise KeyError(path)
                 if self.headers.get_content_type() != "application/json":
                     raise ValueError("expected JSON")
@@ -103,6 +115,17 @@ def create_server(
                 body = json.loads(self.rfile.read(size))
                 if not isinstance(body, dict):
                     raise ValueError("expected object")
+            parts = path.removeprefix("/api/v1/").split("/")
+            if workflow is not None and (
+                parts[0] in {"execution", "capabilities"}
+                or (parts[0] == "projects" and (method == "GET" or len(parts) > 1))
+            ):
+                return workflow.route(method, parts, query, body)
+            if method == "POST":
+                if path != "/api/v1/projects":
+                    raise KeyError(path)
+                if workflow is not None and body.get("id") is None:
+                    raise ValueError("请使用项目初始化入口创建工作区")
                 return service.save_project(body)
             if path == "/api/v1/capabilities":
                 return {

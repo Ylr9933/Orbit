@@ -86,14 +86,16 @@ class ControllerClient:
         if not 1 <= self.port <= 65535 or len(self.token) < 32:
             raise ValueError("invalid controller endpoint")
 
-    def request(self, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    def request(
+        self, path: str, body: dict[str, Any] | None = None, *, timeout: float = 120
+    ) -> dict[str, Any]:
         request = Request(
             f"http://127.0.0.1:{self.port}/api/v1/" + path,
             data=json.dumps(body, ensure_ascii=False).encode() if body is not None else None,
             headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/json"},
         )
         try:
-            with build_opener(ProxyHandler({})).open(request, timeout=120) as response:
+            with build_opener(ProxyHandler({})).open(request, timeout=timeout) as response:
                 return dict(json.load(response))
         except HTTPError as error:
             detail = json.load(error)

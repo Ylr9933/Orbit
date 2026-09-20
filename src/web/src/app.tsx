@@ -9,6 +9,8 @@ import {
   useData,
 } from "./api/console";
 import { Badge, Empty, Notice, Panel } from "./components/common";
+import { ExecutionDetail } from "./features/execution";
+import { ProjectDetailPage } from "./features/project-detail";
 import { ProjectsPage } from "./features/projects";
 import { ResourcesPage } from "./features/resources";
 import { RunsPage } from "./features/runs";
@@ -168,12 +170,13 @@ function Settings({ token }: { token: string }) {
         SSH 本地端口转发。
       </p>
       <p>
-        项目元数据独立保存在 --console-dir；运行记录由 --records-root
-        指定；任务由 --task 注册。
+        工作区项目与 Controller 共用 --state-dir；旧项目保存在 --console-dir。
+        --records-root 可额外指定旧运行记录；--task 注册旧任务。
       </p>
       <p>
-        本版支持查看数据与整理项目。运行启动 /
-        取消、实时对话、原始日志下载、集群管理和多人权限留待后续实现。
+        可初始化项目、查看研究方案、提交已采用实验、取消运行并查看产物和分析。
+        执行需要启动同一状态目录下的
+        Controller；暂不提供聊天、集群管理或多人权限。
       </p>
       <Notice error={capabilities.error} />
       <details>
@@ -222,7 +225,9 @@ export function App() {
       </main>
     );
   const [page, id] = route.split("/");
-  const active = navigation.find(([key]) => key === page);
+  const active = navigation.find(
+    ([key]) => key === (page === "execution" ? "runs" : page),
+  );
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -270,7 +275,23 @@ export function App() {
         </header>
         <main key={page}>
           {page === "overview" && <Overview token={token} />}
-          {page === "projects" && <ProjectsPage token={token} />}
+          {page === "projects" &&
+            (id ? (
+              <ProjectDetailPage
+                key={id}
+                token={token}
+                id={decodeURIComponent(id)}
+              />
+            ) : (
+              <ProjectsPage token={token} />
+            ))}
+          {page === "execution" && id && (
+            <ExecutionDetail
+              key={id}
+              token={token}
+              id={decodeURIComponent(id)}
+            />
+          )}
           {page === "resources" && <ResourcesPage token={token} />}
           {page === "tasks" && <TasksPage token={token} />}
           {page === "agents" && <AgentsPage token={token} />}

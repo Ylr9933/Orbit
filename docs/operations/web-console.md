@@ -1,98 +1,122 @@
 # 本机 Web 控制台使用说明
 
-状态：简版已实现；对应 [Web 设计方案](../architecture/web-console-design.md) 的 W0/W1 部分。
-这是单管理员、单节点控制台，不是公网部署方案。它展示已有数据并管理项目，尚不能从页面发起或取消 Run。
+状态：W01/W02 已实现。单管理员、单节点控制台，支持项目初始化、方案查看、实验提交、取消、结果和分析。
+[W 设计与维护边界](../architecture/web-research-workflow.md)；[验证记录](../changes/20260920-web-workflow-w84d2a.md)。
 
-## 启动
+## 启动与访问
 
-前提：在仓库根目录完成 `make setup`。工具版本见 [贡献指南](../../CONTRIBUTING.md)。
-不需要 Docker 或 Agent 账号即可启动页面；显示运行数据需要已有的 Records 存储。
+前提：仓库根目录完成 `make setup`，随后构建前端。
 
 ```sh
 pnpm build
-uv run --locked agent-infra web \
-  --records-root var/runs/_records \
-  --console-dir var/console \
-  --web-root src/web/dist \
-  --task examples/task-packages/file-result/task.yaml \
-  --port 8765
+uv run --locked agent-infra web --state-dir /absolute/path/to/infra-state
 ```
 
-这些参数均可省略；除 `--task` 默认为空列表外，上例给出了当前默认值。
-`--task` 可以重复使用；只注册清单，不会执行任务。不存在的 Records 目录会初始化为空存储，
-因此页面为空时应首先确认 `--records-root`，而不是认为之前的运行丢失。
-当前 Run API 的默认共享记录目录为运行工作目录下的 `_records`；自定义过记录目录的用户应使用实际路径。
+`--state-dir` **必须与 init、project、research 和 controller 使用同一目录**。
+省略时采用 `AGENT_INFRA_STATE_DIR` 或用户状态目录，与 CLI 默认相同。
+仅查看或创建项目不需要 Docker、Agent 账号或 Controller。
 
-终端输出带有 `#token=...` 的访问地址，打开该完整地址。令牌由服务随机生成，重启后失效。
-前端读取后立即从地址栏移除，保存在当前标签页 `sessionStorage`，只通过 Authorization 请求头传输；退出连接会清除。
-不要公开该完整链接。Ctrl+C 停止服务，不会取消已有科研运行。
-
-服务器上的服务只绑定 `127.0.0.1`。从个人电脑访问时，在个人电脑执行：
+需要提交实验时，在另一终端保持 Controller 运行（以管理员批准的资源额度为准）：
 
 ```sh
-ssh -N -L 8765:127.0.0.1:8765 wangxuehai@prompt
+uv run --locked agent-infra controller serve \
+  --state-dir /absolute/path/to/infra-state --cpu 1 --memory-gib 2
 ```
 
-然后在个人电脑打开终端给出的地址。两端使用同一端口；Host 校验只允许服务端口上的 localhost / 127.0.0.1。
-多个工作区各自使用不同端口、`--console-dir` 和运行状态目录。首版没有反向代理、TLS、远程登录或多用户权限支持。
+Docker、Codex 认证和兼容镜像的准备见[本机执行指南](../reference/local-run-controller.md)。
+Web 不自动安装软件、登录账号、启动 Controller 或容器。页面预检会给出缺项。
+当前 D 执行入口支持 Codex 无评测 CPU 科研 Task；Agents 页面显示其他 provider 的安装状态，不意味着它们也能从这个入口执行。
 
-`make dev-web` 仍是独立的 Vite 源码开发入口；它没有默认 API 代理。完整体验使用上面的生产构建和 Python 服务。
-Python wheel 当前不包含 Web 构建，安装到仓库外需显式指定 `--web-root`。
+终端打印带 `#token=...` 的完整访问链接，默认端口 8765。浏览器读取后移除 URL 中的 token，
+保存在当前标签页 sessionStorage。令牌随 Web 重启失效；退出清除令牌。Ctrl+C 停止 Web，不取消 Controller 中的实验。
+不要公开该访问链接。服务器只绑定 `127.0.0.1`，从个人电脑连接远端服务器可运行：
 
-## 可以做什么
+```sh
+ssh -N -L 8765:127.0.0.1:8765 user@server
+```
 
-| 页面 | 已实现行为 |
+在电脑浏览器打开完整链接。这里没有公网反向代理、TLS 或多人权限支持。
+不同工作区使用不同端口、状态目录和 `--console-dir`。wheel 未包含 Web 资产，独立安装需传 `--web-root`。
+`make dev-web` 仍是无 API 代理的前端开发入口。
+
+## 常用工作流
+
+1. **新建项目**：输入名称、研究目标、服务器绝对工作区路径。父目录必须存在，目标目录不得是已有其他目录。
+   初始化与 CLI 共用服务，创建 docs、code、configs、data、runs、artifacts；不会调用模型。
+2. **查看研究方案**：通过 Agent / CLI 完善并采用方案后，项目页显示 Brief、Plan、未知项、最新与已采用版本。
+   [规划指南](../reference/research-planning.md)说明保存和采用方式；Web 本批不提供聊天或方案编辑器。
+3. **选择实验**：只选择已采用版本的实验。填入项目内执行 YAML，点击“编译材料快照”，或直接选择已有快照。
+   缺少数据、资源配置或未知项会列出问题。执行 YAML 示例见[CPU 示例](../../examples/research/cpu-statistics/README.md)。
+4. **预检与提交**：填写 Codex 模型、运行时限、联网选择。点击“检查环境与资源”，核对 CPU、内存、GPU 和阻塞原因，
+   然后“确认提交一次实验”。这一步会启动模型并产生账号费用。修改参数需重新预检，最终提交还会重新检查资源。
+5. **跟踪和取消**：页面进入持久 Run 地址，刷新后仍可恢复；从项目或运行页也能找到它。
+   点击取消是提出请求，等待实际清理完成后才算结束。项目进度、Run、Job、执行结果、评测和清理状态分别显示。
+6. **查看结果**：点击已归档产物展开文件；文本可预览，文件可下载。Agent / CLI 保存的 I 批分析显示在项目页，
+   包括观察、解释、不确定性、建议及实际数值证据。分析不是平台对科学结论的自动认证。
+
+Controller 不可用时，初始化与持久结果仍可读取，提交/取消按钮显示不可用原因。
+同一标签页中，网络失败后的同参数重试保留操作 ID；Controller 不会重复启动该请求。
+如果已收到成功回执后再主动提交一次，则属于新运行。关闭标签页前，遇到不确定结果先去运行列表核查。
+
+## 旧项目与其他页面
+
+旧项目仍来自 `--console-dir/projects.sqlite3`（默认 `var/console`），ID、目标、里程碑和关联不会丢失。
+未绑定项目不会因为浏览而创建目录。在详情页可明确关联到一个已有工作区，重复相同绑定幂等；不自动覆盖双方目标。
+旧条目与工作区条目均保留，所以列表数量是条目总数，可能包含同一研究的两个入口。
+
+旧任务继续用 `--task path/to/task.yaml` 注册，可重复传入；路径哈希会记录对应的 Task ID / revision。
+未注册或版本改变的旧关联标记待处理，编辑其他字段不会丢弃它。
+绑定不把旧里程碑、旧任务伪装成新的研究方案；已有 Run/Task 身份不改写。
+
+默认 Records 与 Controller 共用 `--state-dir/controller/records`。
+如果过去使用 `var/runs/_records` 等目录，必须显式传入：
+
+```sh
+uv run --locked agent-infra web \
+  --state-dir /absolute/path/to/infra-state \
+  --records-root var/runs/_records --console-dir var/console \
+  --web-root src/web/dist --task examples/task-packages/file-result/task.yaml --port 8765
+```
+
+`--records-root` 为额外的历史查询来源，不改变科研工作流的 Controller 状态或产物来源。
+运行页分“科研工作流运行”和原 Records 列表；旧 Run 继续用旧详情入口查看事件与产物索引。
+H/E/I 的 Run 与 Job 状态可查看；长期环境关闭、环境构建取消、Planner 停止仍用对应 CLI/MCP，页面不提供假按钮。
+
+资源页保留真实 CPU/内存/NVIDIA 监控、过期提示和短期趋势；它不是 Controller 的授权剩余额度。
+Agents 只探测已安装/认证状态，缓存 60 秒。任务页只显示 `--task` 注册的可见描述，编译任务在项目详情选取。
+
+## 读取与安全边界
+
+- Run / 项目详情每 5 秒刷新；轨迹是已持久化的分页事件，不是实时 token 流。事件正文采用既有展示摘要，最多 8,000 字符。
+- 产物沿 D 的 RunQueries 读取，先过滤 visibility / data_class，再按 manifest 精确匹配成员。拒绝私有评测、凭据、secret 及 evaluator/admin 内容。
+- 单文件下载最多 16 MiB；JSON/CSV/文本等预览最多 256 KiB。更大文件走现有本地 Records 工具；不暴露任意宿主机文件路径。
+- React 纯文本展示，下载作为文件处理，不把实验产生的 HTML 当页面运行。Controller 凭据留在服务端，浏览器仅持有 Web token。
+- 原始日志不做任意下载；公开归档产物可下载，未标记的普通 Agent 输出不具备自动秘密识别能力。
+- 项目详情最多最近 100 个编译快照、100 个 Run、20 份分析；运行列表每页 100 条。更完整历史仍通过 CLI 查询。
+- 目录、数据库和写入者均为可信本机输入。浏览器身份是本机管理员，不是面向外部用户的项目级授权。
+
+## HTTP 增量接口
+
+前缀 `/api/v1`，Bearer 鉴权。POST JSON 最大 64 KiB。旧 resources/agents/tasks/runs/attempts 接口保留。
+
+| 方法和路径 | 行为 |
 | --- | --- |
-| 总览 | 项目数、注册任务数、最近最多 100 条运行窗口、最近执行入口 |
-| 科研项目 | 新建/编辑名称、目标、状态、里程碑；关联注册 Task 与最近 100 条 Run；里程碑进度由用户确认 |
-| 任务 | Agent 可见材料索引、工具声明、公开输出约定、资源意图；不读取任意文件、不显示私有评测材料 |
-| 运行 | 每页最多 100 条 Run；Attempt 状态、评测状态、清理与租约释放状态 |
-| 资源 | 本机 CPU/内存/NVIDIA GPU 实测数据；共享采样循环、2 秒轮询、最多 450 个内存采样点及 CPU 趋势 |
-| Agents | Codex/Claude Code/DSH 的安装、认证、版本及能力声明；未知状态明确显示“未知” |
-| 记录 | 从 Run 进入事件时间线、按当前页筛选、翻页及手动刷新；产物元数据索引 |
-| 设置 | 当前能力和访问、存储边界说明 |
+| `GET /capabilities` | 实测 Controller 可用性、工作区/产物能力及不可用原因 |
+| `GET /projects`、`GET /projects/{id}` | 联合列表、方案、编译 Task、运行与分析 |
+| `POST /projects/init` | `goal/name/directory/operation_id`；与 CLI 同一初始化服务 |
+| `POST /projects` | 只编辑已有旧 catalog 项目；携带原 id/revision |
+| `POST /projects/{id}/bind` | 明确绑定已有 `project_id` |
+| `POST /projects/{id}/compile` | C 接口的 `experiment_id/research_revision/execution` |
+| `POST /projects/{id}/preflight`、`/submit` | D SubmissionRequest；提交另需 operation_id；校验当前采用版本 |
+| `GET /execution/runs?offset=0`、`GET /execution/runs/{id}` | Controller 持久状态与 Job 摘要 |
+| `POST /execution/runs/{id}/cancel` | D 实验取消，经已有 Controller |
+| `GET /execution/runs/{id}/events?cursor=...` | 过滤后的事件页 |
+| `GET /execution/runs/{id}/artifacts` | 可见产物索引 |
+| `GET /execution/runs/{id}/artifacts/{artifact_id}?member=...` | 无 member 返回文件索引；有 member 返回 base64 内容 |
 
-Agent 探测复用已有只读 probe，不执行安装、不调用模型，结果缓存 60 秒。
-资源数值是实际观测，不是调度器承诺的剩余额度。CPU 第一次采样、无法探测的 GPU 状态均不冒充零占用。
-采样失败会保留上次数据并展示提示，过期样本会明确标记；历史曲线只存在于服务内存中，重启后清空。
-
-Run 状态每 5 秒轮询；事件按页显式刷新。现有 Agent 正规化通常在阶段结束后完成，页面不是实时 token 流。
-事件正文是最多 8,000 字符的展示摘要，不代替原始轨迹。未知格式可能只有事件类型没有文本。
-原始日志、CAS Blob 和产物内容尚未开放下载；公共评测反馈和 reward 可在事件中查看。
-未开放任意命令执行、容器终端、任务上传、Agent 登录、启动/取消运行、集群管理及训练导出操作。
-
-## 数据和访问边界
-
-- Project 是独立 SQLite catalog：`--console-dir/projects.sqlite3`。修改项目不会改写 Run/Attempt 的执行证据。
-  项目更新携带 revision，冲突返回 409；请保留本地编辑内容，取消编辑后刷新再合并修改。
-- 同名里程碑不允许重复。任务/运行关联必须存在。已关联任务需继续在服务启动时注册，否则编辑项目时需先恢复注册。
-- Records 查询扩展 `list_runs(limit=100, offset=0)`，上限 200；不改已有数据库 schema。
-- HTTP 不暴露原始 Run 请求、凭据路径、完整 Attempt 结果、原始 Blob 引用或完整 scorer 日志。
-  事件/产物先按 `data_class` 和 `visibility` 过滤，再按允许的字段投影。私有评测、凭据、secret 和 evaluator/admin 可见材料不可展示。
-- 这仍然是可信本机管理员界面。Agent 自己输出的普通文本不具备自动秘密识别能力；不要把它当作可公开分享的脱敏报告。
-  任务目录、Records 写入者与 Web 构建目录属于可信输入，错误标记的数据不等同于经过内容审计。
-- React 以纯文本呈现内容；没有 HTML/Markdown 直接执行。静态服务限制在构建目录，不提供任意宿主机文件读取。
-- Bearer 鉴权、严格 Host、同源访问和 CSP 用于本机控制台边界；不能代替未来的用户/项目级授权。
-
-## 当前 HTTP 接口
-
-除静态页面外，所有请求带 `Authorization: Bearer <启动令牌>`，JSON 响应。
-
-| 方法和路径（前缀 `/api/v1`） | 用途 |
-| --- | --- |
-| `GET /capabilities` | 当前范围和未开放能力 |
-| `GET /resources` | 当前采样、短期历史、过期和错误标记 |
-| `GET /agents` | 只读 provider 探测 |
-| `GET /tasks` | 注册任务的安全投影 |
-| `GET /projects` | 项目列表 |
-| `POST /projects` | 创建或按 id + revision 更新；正文上限 64 KiB |
-| `GET /runs?offset=0` | Run 分页 |
-| `GET /runs/{id}` | Run 与 Attempt 摘要 |
-| `GET /attempts/{id}/events?cursor=...` | 可展示事件分页；cursor 为不透明字符串 |
-| `GET /attempts/{id}/artifacts` | 可展示产物元数据 |
-
-400 参数无效、401 缺少/错误令牌、403 Host 不符、404 记录/接口不存在、409 项目修改冲突、503 服务不可用。
-API 是当前本机 UI 的首版接口，尚未承诺第三方客户端的长期兼容性。
+参数问题 400，鉴权失败 401，Host 不符 403，记录不存在 404，项目冲突 409，内部不可用 503。
+Controller 拒绝信息通过 Web 的 400 返回具体原因；能力探测失败提供禁用提示。
+API 是当前本机 UI 接口，尚未承诺第三方长期兼容。
 
 ## 验证与排障
 
@@ -101,18 +125,19 @@ make verify
 uv run --locked pytest tests/unit/web -q
 ```
 
-另有可选浏览器回归脚本，使用独立安装的 Playwright 和 Chromium，不增加产品运行依赖：
+可选浏览器回归需要已有 Playwright / Chromium，未增加产品依赖：
 
 ```sh
 PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright \
 PLAYWRIGHT_CHROMIUM_EXECUTABLE=/absolute/path/to/chrome-headless-shell \
-node tests/web/console.smoke.cjs
+node tests/web/workflow.smoke.cjs
 ```
 
-该脚本启动随机端口、临时状态目录的明确测试服务，使用 fixture Run/Agent 事件验证页面，资源来自本机只读采样。
-覆盖项目创建/编辑/刷新恢复、关联跳转、轨迹和产物展示、私有材料过滤、导航、390px 窄屏和退出。
-测试截图写入 `/tmp/agent-infra-web-*.png`，不进入 Git；不会进行模型、Docker 或 GPU 工作负载验证。
+新流程测试使用真实 HTTP、SQLite、Projects、Records 和 Controller；Agent/Environment 为明确测试替身，不调用模型或 Docker。
+`tests/web/console.smoke.cjs` 继续验证旧页面及实际宿主机只读资源采样。截图仅写 `/tmp/agent-infra-w-*.png`。
 
-页面 401：服务可能已重启，退出页面连接后使用新的完整访问地址。页面为空：检查 Records 路径和 `--task` 注册。
-503：检查状态目录权限与数据库是否损坏；不要删除原始记录来消除错误。
-项目 catalog 可在停止 Web 后备份；执行 Records 的备份策略见其独立文档。
+401：Web 重启后重新连接新链接。Controller 未连接：检查同一 `--state-dir`，启动前台 controller serve。
+数据为空：确认状态目录、历史 `--records-root` 和 `--console-dir`，不要删除数据库来消除错误。
+预检未通过：按返回原因补齐镜像、账号、材料、环境锁或资源；不自动替换失败集成。
+项目 revision 冲突：保留编辑内容，重新读取后合并。初始化未完成：使用 `project recover`，不直接覆盖工作区。
+备份时同时考虑旧 catalog（含新增映射表）、Projects 和 Controller/Records；仅回滚代码不会删除它们。

@@ -9,6 +9,7 @@ import {
   useData,
 } from "../api/console";
 import { Badge, Empty, Notice, Panel } from "../components/common";
+import { ExecutionRecent } from "./execution";
 
 function AttemptView({ token, attempt }: { token: string; attempt: Attempt }) {
   const [cursor, setCursor] = useState<string | null>(null);
@@ -189,63 +190,66 @@ export function RunsPage({
   );
   if (id) return <RunDetail key={id} token={token} id={id} />;
   return (
-    <Panel title={records ? "按运行检索执行证据" : "运行列表"}>
-      <p className="muted">
-        {records
-          ? "进入一次运行，查看 Attempt、事件轨迹、采集范围与产物索引。"
-          : "每 5 秒刷新。执行、评测和清理分别记录；执行完成不代表评测通过。"}
-      </p>
-      <Notice error={runs.error} loading={!runs.data} />
-      {runs.data?.items.length ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Run</th>
-                <th>状态</th>
-                <th>创建时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.data.items.map((run) => (
-                <tr key={run.id}>
-                  <td>
-                    <a href={`#runs/${encodeURIComponent(run.id)}`}>
-                      {run.id} ↗
-                    </a>
-                  </td>
-                  <td>
-                    <Badge>{run.status}</Badge>
-                  </td>
-                  <td>{new Date(run.created_at).toLocaleString()}</td>
+    <>
+      <ExecutionRecent token={token} />
+      <Panel title={records ? "按运行检索执行证据" : "运行列表"}>
+        <p className="muted">
+          {records
+            ? "进入一次运行，查看 Attempt、事件轨迹、采集范围与产物索引。"
+            : "每 5 秒刷新。执行、评测和清理分别记录；执行完成不代表评测通过。"}
+        </p>
+        <Notice error={runs.error} loading={!runs.data} />
+        {runs.data?.items.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Run</th>
+                  <th>状态</th>
+                  <th>创建时间</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {runs.data.items.map((run) => (
+                  <tr key={run.id}>
+                    <td>
+                      <a href={`#runs/${encodeURIComponent(run.id)}`}>
+                        {run.id} ↗
+                      </a>
+                    </td>
+                    <td>
+                      <Badge>{run.status}</Badge>
+                    </td>
+                    <td>{new Date(run.created_at).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Empty>
+            当前 Records 目录尚无运行。请确认启动服务时的 --records-root
+            指向已有执行记录。
+          </Empty>
+        )}
+        <div className="actions">
+          <button
+            type="button"
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - 100))}
+          >
+            上一页
+          </button>
+          <button
+            type="button"
+            disabled={runs.data?.next_offset == null}
+            onClick={() => setOffset(runs.data?.next_offset ?? 0)}
+          >
+            下一页
+          </button>
+          <small>每页最多 100 条 · {runs.updated || "—"}</small>
         </div>
-      ) : (
-        <Empty>
-          当前 Records 目录尚无运行。请确认启动服务时的 --records-root
-          指向已有执行记录。
-        </Empty>
-      )}
-      <div className="actions">
-        <button
-          type="button"
-          disabled={offset === 0}
-          onClick={() => setOffset(Math.max(0, offset - 100))}
-        >
-          上一页
-        </button>
-        <button
-          type="button"
-          disabled={runs.data?.next_offset == null}
-          onClick={() => setOffset(runs.data?.next_offset ?? 0)}
-        >
-          下一页
-        </button>
-        <small>每页最多 100 条 · {runs.updated || "—"}</small>
-      </div>
-    </Panel>
+      </Panel>
+    </>
   );
 }

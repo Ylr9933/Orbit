@@ -7,7 +7,8 @@ The current prototype includes replaceable Codex, Claude Code and DeepSeek Harne
 Tasks and single-node Resources, a local Docker Run/Environment slice, durable Records, and
 a simple local research Web console. A local controller now connects compiled research Tasks to
 container Codex execution, persistent status, cancellation, trajectories and downloadable results.
-Distributed execution and automatic research iteration remain pending.
+The Web console shares project initialization, adopted experiments, preflight, submission, cancellation
+and result analysis with the CLI. Bounded iteration is available; distributed execution remains pending.
 See [project status](docs/project-status.md) for acceptance and integration state.
 
 Local project initialization is also available: preserve a research goal, create its workspace,
@@ -39,7 +40,10 @@ uv run --locked agent-infra web
 ```
 
 Open the token-bearing local URL printed by the Web command (port 8765). It provides host
-resource monitoring, project/milestone editing, Tasks, Agent diagnostics and recorded Run traces.
+resource monitoring, research workspaces, plans, experiments, results and analysis, plus legacy
+project/milestone editing. Use the same `--state-dir` as your project commands. To execute experiments,
+start `agent-infra controller serve --state-dir <same-directory>` in another terminal with your
+authorized CPU/memory budget; the Web does not start the controller automatically.
 See the [Web console guide](docs/operations/web-console.md) for task registration, existing Records,
 SSH forwarding and current limits. Ctrl-C stops the console. `make dev-web` remains the isolated
 Vite frontend development entrypoint without a default backend proxy.
@@ -73,7 +77,8 @@ Research drafts, experiment proposals, revisions and user decisions are durable.
 into frozen Tasks with `agent-infra project compile`; see the
 [compilation guide](docs/reference/experiment-compilation.md) and
 [code walkthrough](docs/implementation/project-workflow-code-guide.md).
-Task execution and linking these workspaces to the existing Web catalog remain subsequent work.
+The Web project page can compile adopted experiments and submit them to the local controller.
+Legacy catalog entries remain intact and can be explicitly linked to an initialized workspace.
 
 ## Code organization
 

@@ -2,6 +2,15 @@ import { useEffect, useState } from "react";
 
 export interface Project {
   id?: string;
+  source?: "legacy" | "workspace";
+  workspace?: string | null;
+  workspace_project_id?: string | null;
+  binding_status?: string;
+  task_mappings?: {
+    key: string;
+    identity: { task_id: string; revision: string } | null;
+    resolved: boolean;
+  }[];
   revision: number;
   name: string;
   goal: string;

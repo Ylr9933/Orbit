@@ -1,9 +1,9 @@
 # 项目当前状态
 
-Updated at: 2026-09-20T19:01:05+08:00
+Updated at: 2026-09-20T19:33:16+08:00
 
 Basis: 以本文在 `main` 中的版本为集成状态依据；涵盖原基线 `f8f47f3`、A 批初始化 `c9f3498`、B 批研究规划 `39e97f0`、
-C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本任务分支基于 E（70fee90），提出 H/E/I 合并后的概览；这三批尚未合并 main。
+C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本任务分支基于 I（3a03146），提出 H/E/I/W 合并后的概览；这四批尚未合并 main。
 实际集成以 Git 历史为准，本地实现不代表远端同步或常驻部署。
 
 当前结论：工程基础、核心模块首版、本机容器执行内核和简版 Web 已建立；现已补充本地科研项目初始化和研究规划的持久接口。
@@ -19,7 +19,7 @@ E 批补充 Python CPU 环境生成与验证；I 批补充结果分析、用户�
 | S1：模块契约与任务样例 | `in_progress` | 核心模块有首版契约；ToolBinding、稳定任务目录与原生 benchmark 等价性未完成。 |
 | S2：完整单节点工作流 | `in_progress` | 小型 CPU 真实 Codex 执行闭环已验收；本分支长期 Job/MCP CPU 验收通过；GPU 与原生 benchmark 等价性尚未验收。 |
 | S3：两节点执行与故障处理 | `not_started` | Ray backend、Worker 服务、节点加入、远程归档和故障恢复尚未实现。 |
-| S4：Web 与批量评测 | `in_progress` | 本机查询与项目整理可用；Web 尚未接入 Run 控制 API，批量评测未实现。 |
+| S4：Web 与批量评测 | `in_progress` | Web 接入工作区、已采用实验的提交/取消、产物与分析；批量评测未实现。 |
 
 ## 已有能力与验证范围
 
@@ -48,8 +48,9 @@ E 批补充 Python CPU 环境生成与验证；I 批补充结果分析、用户�
 - **Run / Environment / Records**：Python 可组装单 Attempt 的求解、冻结提交、隔离评测、取消、清理和资源释放；
   保存原始流、事件、产物与反馈，可查询轨迹及导出 JSONL。执行内核和 Controller 的真实 CPU Docker E2E 使用 fixture；
   D07 另做真实 Codex 验收，两类证据分开，不等于 GPU 或原生 benchmark 验收。
-- **Web**：本机 loopback 单管理员界面，可查看资源、维护轻量 Project/里程碑、关联已有 Task/Run、查询轨迹和 Agent 状态。
-  新初始化工作区暂不接入旧 Web catalog。
+- **Web（W 批，本分支）**：统一展示新工作区与旧 catalog，旧 ID/里程碑/关联保留并支持显式绑定；初始化与 CLI 共用服务。
+  项目页展示研究方案、未知项、已采用实验与 I 分析；编译、预检、显式提交、取消和受控产物下载接入 D。
+  真实浏览器验证包括丢失响应后的幂等重试、刷新恢复与私有过滤，执行后端为明确替身；未追加模型/Docker 验收。
 - **工程**：`make verify` 覆盖格式、类型、依赖边界、文档、非 E2E 测试和 Python/Web 构建。
   操作方式见 [README](../README.md) 与[贡献指南](../CONTRIBUTING.md)；各次验证版本以任务记录为准。
 
@@ -63,14 +64,14 @@ E 批补充 Python CPU 环境生成与验证；I 批补充结果分析、用户�
 - **环境与资源**：已有受限 Python CPU 环境生成；任意 Dockerfile、系统包/GPU 模板、GPU 准入与分布式持久 Lease 尚缺；
   当前通过单控制进程和启动前清理恢复 CPU 容量，不支持恢复中断的模型会话或训练进程。
 - **记录、任务与界面**：宿主机 Agent 仅支持平台操作记录和显式原始流导入，仍缺平台外全链路采集、跨进程 spool、ToolBinding 与原生 benchmark 评分等价证据；
-  Web Task 关联仍依赖路径哈希，HTTP/TypeScript 契约手工维护。新控制 API 尚未接入 Web，实时聊天推流与新 Project 适配待实现。
+  旧 Web Task 已有显式身份映射，无法解析的关联保留待处理；HTTP/TypeScript 契约仍手工维护。实时聊天、页面编辑研究方案和 H/E/I 生命周期控制暂未开放。
 - **分布式**：尚无 Worker/Ray 实现及两节点验收。GPU 仅有观测和 Docker 参数，没有实际负载证据。
 
 ## 下一步优先级
 
-1. 审查、集成 H/E/I 分支，按[宿主机科研指南](reference/host-research-mcp.md)试用并选择常驻 Controller 状态目录。
+1. 审查、集成 H/E/I/W 分支，按[宿主机科研指南](reference/host-research-mcp.md)试用并选择常驻 Controller 状态目录。
 2. 用实际科研任务补齐所需镜像和材料入口；有授权后推进单 GPU 准入及训练验收。
-3. 按[细分计划](development/research-workflow-implementation-plan.md)推进 W01 统一新旧 Project，再接入结果分析与运行控制界面。
+3. 用真实科研工作区试用 Web 闭环，再按需求补齐大数据与长期任务操作；避免提前扩展复杂界面。
 
 ## 项目级阻塞与限制
 
@@ -86,4 +87,5 @@ E 批补充 Python CPU 环境生成与验证；I 批补充结果分析、用户�
 - [Project 初始化记录](changes/20260918-project-init-72a94b.md)、[命令参考](reference/projects.md)、[存储与恢复 ADR](adr/20260918-project-initialization.md)
 - [初期检查和复盘](architecture/初期检查和复盘.md)、[0917 设计微调](architecture/0917设计微调.md)
 - [执行内核与验证](reference/run-environment.md)、[Records 实现](implementation/records-implementation-guide.md)
+- [W 任务记录](changes/20260920-web-workflow-w84d2a.md)、[科研界面设计与边界](architecture/web-research-workflow.md)
 - [Web 实现记录](changes/20260916-web-console-3c7e91.md)、[Web 使用说明](operations/web-console.md)
