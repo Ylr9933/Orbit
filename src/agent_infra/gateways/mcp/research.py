@@ -8,6 +8,7 @@ from mcp.types import ToolAnnotations
 
 from agent_infra.gateways.cli.research_runtime import ResearchClient
 from agent_infra.gateways.mcp.environment import add_environment_tools
+from agent_infra.gateways.mcp.study import add_study_tools
 
 
 def create_mcp(client: ResearchClient) -> FastMCP:
@@ -111,6 +112,7 @@ def create_mcp(client: ResearchClient) -> FastMCP:
         """List artifact members or read an exact member as base64 (max 16 MiB)."""
         return client.call("artifact", run_id=run_id, artifact_id=artifact_id, member=member)
 
+    add_study_tools(server, client)
     add_environment_tools(server, client)
     return server
 

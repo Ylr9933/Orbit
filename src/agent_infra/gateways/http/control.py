@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from agent_infra.runs.control_api import ControlError, SubmissionRequest
 from agent_infra.runs.controller import LocalRunController
+from agent_infra.runs.planner import PlannerSessions
 from agent_infra.runs.query import RunQueries
 from agent_infra.runs.research import ResearchController
 
@@ -19,6 +20,7 @@ def create_control_server(
     port: int = 8766,
     *,
     research: ResearchController | None = None,
+    planner: PlannerSessions | None = None,
 ) -> ThreadingHTTPServer:
     if len(token) < 32:
         raise ValueError("controller token must contain at least 32 characters")
@@ -87,6 +89,21 @@ def create_control_server(
             parts = [unquote(part) for part in parsed.path.strip("/").split("/")]
             query = parse_qs(parsed.query)
             if parts[:2] != ["api", "v1"]:
+                raise KeyError(self.path)
+            if method == "POST" and planner is not None and parts[2:3] == ["planner"]:
+                if parts[3:] == ["start"]:
+                    return planner.start(body["project_id"], body["options"], body["operation_id"])
+                run_id = body["options"]["run_id"]
+                run = controller.store.get(run_id)
+                if (
+                    run["lineage"].get("project_id") != body["project_id"]
+                    or run["request"].get("kind") != "planner"
+                ):
+                    raise KeyError(run_id)
+                if parts[3:] == ["stop"]:
+                    return planner.stop(run_id)
+                if parts[3:] == ["status"]:
+                    return queries.status(run_id)
                 raise KeyError(self.path)
             if method == "POST" and research is not None:
                 if parts[2:] == ["research", "bind"]:

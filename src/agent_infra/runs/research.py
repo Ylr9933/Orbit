@@ -54,7 +54,9 @@ class ResearchController:
         image: Callable[[str], str],
         import_trace: Callable[[RecordSink, dict[str, Any]], dict[str, Any]],
         preparation: EnvironmentPreparation | None = None,
+        study: Callable[[str, str, dict[str, Any], str | None], dict[str, Any]] | None = None,
     ) -> None:
+        self.study = study
         self.preparation = preparation
         self.control, self.store, self.env, self.records = controller, store, environment, records
         self.context, self.image, self.import_trace = context, image, import_trace
@@ -105,6 +107,10 @@ class ResearchController:
     ) -> dict[str, Any]:
         with self._lock:
             project, session = self.store.binding(token)
+            if action.startswith("study_"):
+                if self.study is None:
+                    raise ValueError("study service is not configured")
+                return self.study(project, action, options, operation_id)
             if action == "context":
                 return self.context(project) | {
                     "research_runs": [

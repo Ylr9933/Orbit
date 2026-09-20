@@ -1,7 +1,8 @@
 """Transport-neutral local run submission and resolved execution contracts."""
 
+import json
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from agent_infra.agents.api import InstallableCommandAgentAdapter
@@ -57,3 +58,19 @@ class PreparedRun:
     resources: ResourceRequest
     agent: InstallableCommandAgentAdapter
     lineage: dict[str, Any]
+
+
+def preparation_identity(prepared: PreparedRun) -> dict[str, Any]:
+    """JSON-stable execution identity used by bounded callers at final admission."""
+    return dict(
+        json.loads(
+            json.dumps(
+                {
+                    "lineage": prepared.lineage,
+                    "resources": asdict(prepared.resources),
+                    "image_id": prepared.request.resolved_image,
+                },
+                allow_nan=False,
+            )
+        )
+    )

@@ -1,6 +1,6 @@
 ---
 name: agent-infra-research
-description: Develop or revise a research question and experiment plan with the user in an Agent Infra project, preserve decisions and resume planning across sessions using the project CLI.
+description: Develop or revise a research question and experiment plan with the user in an Agent Infra project, analyze recorded results, preserve decisions and resume authorized experiments across sessions using the project CLI.
 ---
 
 # Research planning in Agent Infra
@@ -42,4 +42,9 @@ that permits the requested write. Do not bypass the Agent's restrictions.
 
 At handoff, summarize the chosen approach, remaining unknowns and next action. Use the saved context
 on the next session instead of assuming the chat history is available. Do not reinitialize the project.
-Task compilation, Docker, training, MCP jobs and automatic iteration are outside this planning skill.
+When results exist, read the analysis/iteration section of [commands](references/commands.md).
+Separate measured values from explanations and uncertainties. Cite actual Run/artifact members; do
+not rank incompatible data versions as improvements. Suggest the next informative experiment.
+Use existing workflow authorization to continue only the listed frozen tasks. If a proposed method,
+data or budget is outside it, save the recommendation for the user's decision. Unknown provider costs
+are not zero costs. Container/runtime administration remains outside this skill.

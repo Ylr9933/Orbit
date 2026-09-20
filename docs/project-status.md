@@ -1,15 +1,15 @@
 # 项目当前状态
 
-Updated at: 2026-09-20T17:34:00+08:00
+Updated at: 2026-09-20T19:01:05+08:00
 
 Basis: 以本文在 `main` 中的版本为集成状态依据；涵盖原基线 `f8f47f3`、A 批初始化 `c9f3498`、B 批研究规划 `39e97f0`、
-C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本任务分支基于 H（43c78f0），提出 H + E 批合并后的概览；H/E 尚未合并 main。
+C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本任务分支基于 E（70fee90），提出 H/E/I 合并后的概览；这三批尚未合并 main。
 实际集成以 Git 历史为准，本地实现不代表远端同步或常驻部署。
 
 当前结论：工程基础、核心模块首版、本机容器执行内核和简版 Web 已建立；现已补充本地科研项目初始化和研究规划的持久接口。
 已形成小型 CPU 科研闭环：创建工作区、保存并采用方案、编译冻结 Task、提交容器内真实 Codex、
 查询轨迹和下载指标。本分支新增宿主机 MCP → 长期环境 → 多轮 Job 路径，并通过真实 Codex CPU 实验；
-E 批补充 Python CPU 环境生成、独立验证和有界依赖修复；GPU 准入与有预算的科研自动迭代仍待完成。
+E 批补充 Python CPU 环境生成与验证；I 批补充结果分析、用户决策、有限任务授权与可替换容器 Planner。GPU 与原生 benchmark 验收仍待完成。
 
 ## 阶段概览
 
@@ -39,6 +39,10 @@ E 批补充 Python CPU 环境生成、独立验证和有界依赖修复；GPU �
 - **环境准备（E 批，本分支）**：项目关联的 intent/proposal/lock、Python CPU wheel 模板、独立 smoke、缓存、日志和预算内修复。
   CLI/MCP 共用 Controller 准入和清理；H 与 D 支持精确锁引用。真实 gpt-5.6-sol 从缺少 six 修复到可用环境，
   2 次 CLI、累计约 222 秒；模板/故障验证与范围见[E 记录](changes/20260920-environment-preparation-e92b6a.md)。
+- **分析与迭代（I 批，本分支）**：真实 Run/Artifact/指标引用、不可变 Analysis、用户决策生成并采用新计划；
+  冻结 Task 集合的持久次数/时间/资源授权，提交幂等与停止条件；容器 Planner 与实验共享总配额、状态外置。
+  两个真实 gpt-5.6-sol Planner 会话接续两轮 Docker 统计脚本，累计约 111 秒；脚本执行适配器为确定性 fixture，
+  非两次额外模型实验。能力边界与恢复验证见[I 记录](changes/20260920-research-iteration-i73c9a.md)。
 - **Agent、Tasks、Resources**：Codex/Claude Code/DSH 适配、任务清单与可见性、benchmark 索引、资源 YAML、
   Linux/NVIDIA 监控和进程内 Lease；CLI 可诊断、准备任务和校验资源。
 - **Run / Environment / Records**：Python 可组装单 Attempt 的求解、冻结提交、隔离评测、取消、清理和资源释放；
@@ -51,7 +55,7 @@ E 批补充 Python CPU 环境生成、独立验证和有界依赖修复；GPU �
 
 ## 主要缺口
 
-- **研究入口**：Run 已关联研究 context，但结果解释与自动迭代未实现；保存、确认和编译仍不会自行启动实验。
+- **研究入口**：已有证据分析和有限授权集合内迭代；自动生成新任务并判定其授权范围、科学真实性裁决仍缺。保存、确认和编译不会自行启动实验。
   大数据外部不可变存储适配尚缺。
 - **执行范围**：D 批 Run 提交入口只接收编译的无评测科研 Task，容器认证只验收 Codex；
   H 批另支持已初始化项目直接开启 CPU 研究环境；
@@ -64,9 +68,9 @@ E 批补充 Python CPU 环境生成、独立验证和有界依赖修复；GPU �
 
 ## 下一步优先级
 
-1. 审查、集成 H/E 分支，按[宿主机科研指南](reference/host-research-mcp.md)试用并选择常驻 Controller 状态目录。
+1. 审查、集成 H/E/I 分支，按[宿主机科研指南](reference/host-research-mcp.md)试用并选择常驻 Controller 状态目录。
 2. 用实际科研任务补齐所需镜像和材料入口；有授权后推进单 GPU 准入及训练验收。
-3. 按[细分计划](development/research-workflow-implementation-plan.md)推进 I 结果分析/迭代；按实际使用需求推进 W01 统一新旧 Project。
+3. 按[细分计划](development/research-workflow-implementation-plan.md)推进 W01 统一新旧 Project，再接入结果分析与运行控制界面。
 
 ## 项目级阻塞与限制
 

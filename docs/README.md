@@ -71,3 +71,6 @@
 
 - [环境准备与有限修复](reference/environment-preparation.md)：E 批 intent/proposal/lock、CPU 模板、预算、缓存及 H/D 接入。
 - [环境准备实现导读](implementation/environment-preparation.md)：模块职责、容器构建与独立 smoke、持久化和故障边界。
+
+- [结果分析与有界迭代](reference/research-iteration.md)：真实结果、用户决策、冻结 Task 授权和容器 Planner。
+- [I 批实现导读](implementation/research-iteration.md)：状态存储、提交恢复、资源共享与 Planner 隔离。

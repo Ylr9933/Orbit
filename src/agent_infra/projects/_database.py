@@ -52,7 +52,7 @@ class ProjectDatabase:
             db.row_factory = sqlite3.Row
             try:
                 version = db.execute("PRAGMA user_version").fetchone()[0]
-                if version not in {0, 1, 2, 3}:
+                if version not in {0, 1, 2, 3, 4}:
                     raise ProjectError("unsupported project store version")
                 if write:
                     db.execute("BEGIN IMMEDIATE")
@@ -87,7 +87,12 @@ class ProjectDatabase:
                         "task_id TEXT NOT NULL, revision TEXT NOT NULL, body TEXT NOT NULL, "
                         "PRIMARY KEY(task_id, revision))"
                     )
-                    db.execute("PRAGMA user_version=3")
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS iteration_documents ("
+                        "project_id TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, "
+                        "body TEXT NOT NULL, PRIMARY KEY(project_id,kind,id))"
+                    )
+                    db.execute("PRAGMA user_version=4")
                 elif version == 0:
                     if db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchone():
                         raise ProjectError("unrecognized project store schema")

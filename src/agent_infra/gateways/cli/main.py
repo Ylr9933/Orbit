@@ -14,6 +14,7 @@ from agent_infra.gateways.cli.projects import (
 )
 from agent_infra.gateways.cli.research_runtime import add_research_runtime_arguments
 from agent_infra.gateways.cli.runs import add_run_arguments
+from agent_infra.gateways.cli.study import add_planner_arguments, add_study_arguments
 from agent_infra.projects import ProjectError
 
 
@@ -34,6 +35,8 @@ def run(
     parser = argparse.ArgumentParser(description="Agent Infra engineering utilities")
     parser.add_argument("--version", action="version", version=version("agent-infra"))
     commands = parser.add_subparsers(dest="command", required=True)
+    add_planner_arguments(commands)
+    add_study_arguments(commands)
     add_run_arguments(commands)
     add_environment_arguments(commands)
     add_research_runtime_arguments(commands)
@@ -108,7 +111,7 @@ def run(
     export.add_argument("--root", required=True)
     export.add_argument("--destination", required=True)
     args = parser.parse_args(argv)
-    if args.command in {"run", "controller", "research", "mcp", "environment"}:
+    if args.command in {"run", "controller", "research", "mcp", "environment", "study", "planner"}:
         if run_action is None:
             parser.exit(2, "Run controller is not configured\n")
         try:

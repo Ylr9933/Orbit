@@ -103,3 +103,33 @@ agent-infra project research skill PROJECT --install
 This creates `.agents/skills/agent-infra-research/`; identical installation is repeatable, modified files
 are preserved with a conflict. Without `--install`, the command returns packaged instructions as JSON.
 Other Agent providers may consume the same instructions and CLI explicitly; their skill discovery is separate.
+
+## Analyze and iterate (I batch)
+
+A running local Controller is required. Use its state directory and project UUID:
+
+```bash
+agent-infra study analyses --project-id PROJECT --state-dir STATE
+agent-infra study analysis-save --project-id PROJECT --state-dir STATE --operation-id ANALYSIS --file analysis.json
+agent-infra study workflows --project-id PROJECT --state-dir STATE
+agent-infra study status --project-id PROJECT --state-dir STATE --workflow-id WORKFLOW
+agent-infra study step --project-id PROJECT --state-dir STATE --workflow-id WORKFLOW --task-key TASK_KEY --operation-id ROUND
+```
+
+An analysis JSON contains `results` (Run/artifact/member references with optional metric JSON pointers),
+`observations`, `interpretation`, `uncertainty`, `recommendation`, and optional `supersedes` analysis ID.
+Each metric has `name`, `pointer`, `unit`, `direction` (maximize/minimize/inspect); values are extracted
+from the stored file. Record `data_version` and `code_version` on each result when known; do not invent
+unknown versions. Failed Runs can be analyzed without an artifact. Corrections create a new analysis.
+
+Resume from `status.actions`; retry a lost reply with the original operation ID and task key.
+A task key identifies a frozen submission in `status.tasks`, not an arbitrary command. The workflow
+reserves the full task timeout, including failed/interrupted attempts; it does not refund unused time.
+Stop on exhausted budget or out-of-scope proposals. Describe the needed user decision instead of
+creating new authorizations. The operator uses `study decide` and `study authorize` to record the
+exact adopted plan and new permitted task set. Do not infer authorization from generated suggestions.
+
+For an adopted next plan, decision JSON has `analysis_id`, `choice` (accept/modify/reject), `reason`,
+`authorization` (actual user choice/source), `expected_revision`, `expected_digest`, and a full `draft`
+for accept/modify. Keep the Brief unchanged; use a new experiment ID for a new experiment.
+Compilation then uses the existing `project compile` command; a decision does not execute anything.

@@ -217,6 +217,24 @@ def main() -> None:
             env=env,
             check=True,
         )
+        for command in ("study", "planner"):
+            subprocess.run(
+                [cli, command, "--help"], cwd=scratch, env=env, check=True, capture_output=True
+            )
+        subprocess.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                "from pathlib import Path; "
+                "from agent_infra.environments import planner_client; "
+                "from agent_infra.projects.analysis import AnalysisService; "
+                "assert Path(planner_client.__file__).is_file()",
+            ],
+            cwd=scratch,
+            env=env,
+            check=True,
+        )
     print("Wheel installation and isolated package/CLI smoke checks passed.")
 
 

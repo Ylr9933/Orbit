@@ -144,3 +144,9 @@ H 批提供项目绑定的长期 Docker 环境、后台 Job、日志、文件与
 Agent 可以通过同一 MCP 读取错误并在原预算内修订；验证通过的锁可用于 H 长期环境或 D 的冻结 Task。
 目前支持公开 PyPI wheel 和已有 Agent 基础镜像，不支持任意 Dockerfile、GPU 或系统包自动构建。
 见[环境准备使用说明](docs/reference/environment-preparation.md)和[维护导读](docs/implementation/environment-preparation.md)。
+
+
+Research iteration supports evidence-backed analysis, explicit next-plan decisions and bounded
+execution of preauthorized frozen tasks. Use `agent-infra study --help` and
+`agent-infra planner --help`; a disposable container Planner shares the Controller resource quota.
+See [the usage guide](docs/reference/research-iteration.md) for prerequisites, budgets and recovery.

@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from agent_infra.bootstrap.host_research import import_host_trace, project_context
+from agent_infra.bootstrap.iteration import StudyActions
 from agent_infra.bootstrap.run_preflight import prepare_compiled_run
+from agent_infra.environments import planner_client as planner_helper
 from agent_infra.environments.docker import DockerEnvironment
 from agent_infra.environments.model_proxy import ModelProxyRelay, model_connection
 from agent_infra.environments.preparation_docker import DockerEnvironmentPreparer
@@ -20,6 +22,7 @@ from agent_infra.environments.research import DockerResearchEnvironment
 from agent_infra.gateways.cli.environment import environment_client
 from agent_infra.gateways.cli.research_runtime import research_client
 from agent_infra.gateways.cli.runs import run_client
+from agent_infra.gateways.cli.study import planner_client, study_client
 from agent_infra.gateways.http.control import create_control_server
 from agent_infra.gateways.mcp.research import serve_mcp
 from agent_infra.records.local import LocalRecordsStore
@@ -29,6 +32,7 @@ from agent_infra.runs.control_store import RunControlStore
 from agent_infra.runs.controller import LocalRunController
 from agent_infra.runs.environment_preparation import EnvironmentPreparation
 from agent_infra.runs.host_lock import HostControllerLock
+from agent_infra.runs.planner import PlannerSessions
 from agent_infra.runs.query import RunQueries
 from agent_infra.runs.research import ResearchController
 from agent_infra.runs.research_store import ResearchStore
@@ -47,6 +51,10 @@ def state_root(value: str | None) -> Path:
 
 def run_action(args: argparse.Namespace) -> dict[str, Any] | int:
     state = state_root(args.state_dir)
+    if args.command == "planner":
+        return planner_client(state, args)
+    if args.command == "study":
+        return study_client(state, args)
     if args.command == "run":
         return run_client(state, args)
     if args.command == "environment":
@@ -72,6 +80,7 @@ def serve_controller(
     controller: LocalRunController | None = None
     research: ResearchController | None = None
     preparation: EnvironmentPreparation | None = None
+    planner: PlannerSessions | None = None
     clean = False
     relay: ModelProxyRelay | None = None
     root = state / "controller"
@@ -113,6 +122,7 @@ def serve_controller(
             EnvironmentCatalog(root / "preparation"),
             DockerEnvironmentPreparer(environment),
         )
+        study = StudyActions(state, controller, RunQueries(controller.store, records))
         research = ResearchController(
             controller,
             ResearchStore(root),
@@ -122,10 +132,24 @@ def serve_controller(
             inspect_local_image,
             import_host_trace,
             preparation,
+            study.call,
+        )
+        planner = PlannerSessions(
+            controller,
+            environment,
+            study.planner_call,
+            Path(planner_helper.__file__),
+            lambda image: inspect_local_image(image, provider="codex"),
+            connection,
         )
         token = secrets.token_urlsafe(32)
         server = create_control_server(
-            controller, RunQueries(controller.store, records), token, port, research=research
+            controller,
+            RunQueries(controller.store, records),
+            token,
+            port,
+            research=research,
+            planner=planner,
         )
         with server:
             temporary = root / "endpoint.tmp"
@@ -159,10 +183,11 @@ def serve_controller(
         return 0
     finally:
         signal.signal(signal.SIGTERM, previous_handler)
+        planner_clean = planner.close() if planner is not None else True
         preparation_clean = preparation.close() if preparation is not None else True
         research_clean = research.close() if research is not None else True
         if controller is not None:
-            clean = controller.close() and research_clean and preparation_clean
+            clean = controller.close() and research_clean and preparation_clean and planner_clean
             endpoint.unlink(missing_ok=True)
         if relay is not None:
             relay.close()

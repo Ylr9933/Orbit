@@ -408,6 +408,11 @@ E04 已用真实 gpt-5.6-sol 完成缺依赖修复及锁定环境执行；具体
 
 ## 11. I 批：分析、决策和后续迭代
 
+实施进展：I01–I04 在 `feat/research-iteration` 实现，基于 H/E 未合并分支。
+首版自动迭代限定用户授权的已冻结 Task 集合，新生成的实验需先采用/编译/授权；不解释自然语言为无限执行权限。
+容器 Planner 使用绑定项目/工作流的窄 CLI 代理；具体能力及实测范围见
+[使用指南](../reference/research-iteration.md)和[任务记录](../changes/20260920-research-iteration-i73c9a.md)。
+
 ### I01 — 实验结果与 Analysis 证据引用
 
 - **依赖/范围**：D07；Projects analysis 用例、Records 公开查询、结果 schema。

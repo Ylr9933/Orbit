@@ -10,7 +10,13 @@ from typing import Any
 from agent_infra.records import EventDraft, ProducerKind, RecordContext
 from agent_infra.records.local import LocalRecordsStore
 from agent_infra.resources import LocalResourceManager
-from agent_infra.runs.control_api import ControlError, PreparedRun, SubmissionRequest
+from agent_infra.resources.api import ResourceLease, ResourceRequest
+from agent_infra.runs.control_api import (
+    ControlError,
+    PreparedRun,
+    SubmissionRequest,
+    preparation_identity,
+)
 from agent_infra.runs.control_store import RunControlStore
 from agent_infra.runs.service import LocalRunService
 
@@ -37,6 +43,8 @@ class LocalRunController:
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
         self._active: str | None = None
+        self._companions: set[str] = set()
+        self._companion_failed = False
         self.quarantined = False
         self.closed = False
         self.reconcile()
@@ -127,6 +135,8 @@ class LocalRunController:
             if attempts:
                 self.records.finish_run(run_id, status=str(result["status"]))
             self.store.update(run_id, state="finished", result=result)
+        self._companions.clear()
+        self._companion_failed = False
         self.quarantined = False
 
     def preflight(self, request: SubmissionRequest) -> dict[str, Any]:
@@ -148,7 +158,13 @@ class LocalRunController:
             except (ValueError, OSError, RuntimeError) as error:
                 return {"ready": False, "issues": [{"reason": str(error)}]}
 
-    def submit(self, operation_id: str, request: SubmissionRequest) -> dict[str, Any]:
+    def submit(
+        self,
+        operation_id: str,
+        request: SubmissionRequest,
+        *,
+        expected_identity: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 128:
             raise ControlError("invalid_request", "operation_id must contain 1–128 characters")
         payload = asdict(request)
@@ -165,6 +181,11 @@ class LocalRunController:
                     "busy", "one Run is already active; no queue, retry after it finishes"
                 )
             prepared = self.prepare(request)
+            if (
+                expected_identity is not None
+                and preparation_identity(prepared) != expected_identity
+            ):
+                raise ControlError("preparation_changed", "authorized execution identity changed")
             self.refresh()
             assessment = self.resources.assess(prepared.resources)
             if assessment.shortages:
@@ -197,7 +218,7 @@ class LocalRunController:
     def cancel(self, run_id: str) -> dict[str, Any]:
         with self._lock:
             entry = self.store.get(run_id)
-            if entry["request"].get("kind") in {"research", "environment"}:
+            if entry["request"].get("kind") in {"research", "environment", "planner"}:
                 raise ControlError(
                     "research_requires_close",
                     "use the bound research close or environment cancel command",
@@ -224,7 +245,34 @@ class LocalRunController:
         with self._lock:
             if self._active == run_id:
                 self._active = None
-            self.quarantined = not clean or bool(self.resources.active_leases)
+            self.quarantined = not clean or self._unmanaged_leases()
+
+    def _unmanaged_leases(self) -> bool:
+        return self._companion_failed or any(
+            lease.lease_id not in self._companions for lease in self.resources.active_leases
+        )
+
+    def allocate_companion(self, request: ResourceRequest) -> ResourceLease:
+        """Reserve a Planner alongside the single experiment, using the same total quota."""
+        with self._lock:
+            if self.closed or self.quarantined:
+                raise ControlError("unavailable", "controller is stopping or quarantined")
+            self.refresh()
+            lease = self.resources.try_allocate(request).lease
+            if lease is None:
+                raise ControlError("resource_unavailable", "insufficient resources for Planner")
+            self._companions.add(lease.lease_id)
+            return lease
+
+    def release_companion(self, lease_id: str, *, clean: bool) -> None:
+        with self._lock:
+            if clean:
+                self.resources.release(lease_id)
+                self._companions.discard(lease_id)
+            else:
+                self._companions.discard(lease_id)
+                self._companion_failed = True
+                self.quarantined = True
 
     def _clean_credentials(self, run_id: str) -> None:
         for path in (
@@ -278,8 +326,8 @@ class LocalRunController:
                     "error": "credential copy cleanup failed",
                 }
         with self._lock:
-            self.quarantined = not outcome.get("cleanup_complete", False) or bool(
-                self.resources.active_leases
+            self.quarantined = (
+                not outcome.get("cleanup_complete", False) or self._unmanaged_leases()
             )
             self.store.update(
                 run_id, state="quarantined" if self.quarantined else "finished", result=outcome
