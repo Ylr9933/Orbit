@@ -48,6 +48,10 @@
 
 `AGENTS.md` 与 `CLAUDE.md` 中的简表用于快速定位；具体归档示例与阅读导航在本文件维护。更新规则时同步两个根规则文件。
 
+## 当前代码检查
+
+- [模块衔接检查与下一步计划](development/20260920-integration-review.md)：实际调用链、已修复问题、维护入口、功能缺口与分步验收。
+
 ## 单节点执行
 
 - [科研工作流细分开发计划](development/research-workflow-implementation-plan.md)：A 批初始化、B 批研究规划及后续执行的实施顺序；实际验收与集成状态以任务记录为准。

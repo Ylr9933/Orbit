@@ -9,7 +9,8 @@ from time import monotonic
 from typing import Any
 
 from agent_infra.agents import AgentRegistry
-from agent_infra.bootstrap.controller import state_root
+from agent_infra.bootstrap.paths import prepare_controller_root, state_root
+from agent_infra.bootstrap.research import project_runs
 from agent_infra.gateways.cli.runs import ControllerClient
 from agent_infra.gateways.http.server import create_server
 from agent_infra.gateways.http.workflow import WorkflowGateway
@@ -79,7 +80,7 @@ def serve_console(
     if not (web_root / "index.html").is_file():
         raise ValueError("Web 构建不存在，请先执行 pnpm build 并设置 --web-root")
     state = state_root(state_dir)
-    control_root = state / "controller"
+    control_root = prepare_controller_root(state)
     catalog = LocalProjectCatalog(console_dir / "projects.sqlite3")
     controller_records = LocalRecordsStore(control_root / "records")
     sampler = ResourceSampler(LinuxHostResourceMonitor().sample)
@@ -95,7 +96,11 @@ def serve_console(
     )
     catalog.remember_tasks(service.tasks())
     workflow = WorkflowGateway(
-        ProjectConsole(LocalProjectStore(state / "projects"), catalog),
+        ProjectConsole(
+            LocalProjectStore(state / "projects"),
+            catalog,
+            run_references=lambda p: project_runs(state, p),
+        ),
         workflow_console,
         RunQueries(RunControlStore(control_root), controller_records),
         ResearchStore(control_root),

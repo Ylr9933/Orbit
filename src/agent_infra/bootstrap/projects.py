@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from agent_infra.bootstrap.compilation import compilation_action
+from agent_infra.bootstrap.paths import state_root
 from agent_infra.bootstrap.research import research_action
 from agent_infra.projects import InitRequest, ProjectError
 from agent_infra.projects.local import LocalProjectStore
@@ -13,17 +14,10 @@ from agent_infra.projects.service import ProjectService
 
 
 def project_action(action: str, options: dict[str, str]) -> dict[str, object]:
-    state_base = options.get("state_dir") or os.environ.get("AGENT_INFRA_STATE_DIR")
-    if state_base is None:
-        user_state = os.environ.get("XDG_STATE_HOME")
-        # User state is often relocated through ~/.local on research servers. Resolve only
-        # this trusted default; explicitly supplied state/workspace paths remain strict.
-        state_base = str(
-            ((Path(user_state) if user_state else Path.home() / ".local/state") / "agent-infra")
-            .expanduser()
-            .resolve()
-        )
-    store = LocalProjectStore(Path(state_base) / "projects")
+    try:
+        store = LocalProjectStore(state_root(options.get("state_dir")) / "projects")
+    except ValueError as error:
+        raise ProjectError(str(error)) from error
     service = ProjectService(store)
     try:
         result: dict[str, object]

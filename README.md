@@ -115,8 +115,13 @@ Runtime data belongs in ignored `var/` or an external state directory. See
 `AGENT_INFRA_STATE_DIR` / `AGENT_INFRA_LOG_LEVEL` environment overrides. It prints the resolved
 non-sensitive settings without creating state or starting services. `.env` is not auto-loaded.
 See [contributor configuration guidance](CONTRIBUTING.md#configuration-and-secrets).
-Project commands use `--state-dir` / `AGENT_INFRA_STATE_DIR`, falling back to
-`$XDG_STATE_HOME/agent-infra` or `~/.local/state/agent-infra`; they do not read the TOML file.
+Project, Controller and Web commands share `--state-dir` / `AGENT_INFRA_STATE_DIR`, falling back to
+`$XDG_STATE_HOME/agent-infra` or `~/.local/state/agent-infra`; `config-check` uses this default too.
+Runtime commands do not read the TOML file. `configs/defaults.toml` explicitly selects `./var`
+for its example; use `--state-dir` or the environment to select that directory at runtime.
+Explicit state paths must use real directories rather than symlinks. Web and Controller create
+their shared `controller/` directory privately; existing directories with broader permissions
+require an ownership check and mode `0700` before startup.
 
 ## Design and development
 

@@ -18,6 +18,9 @@ Records 当前提供：
 
 尚未实现远端对象存储、多节点 spool 上传、多用户权限服务、托管宿主机 Agent 和 Parquet/训练框架专用导出。
 本机单管理员 HTTP 查询见 [Web 控制台](../operations/web-console.md)。
+事件/轨迹排除 evaluator/admin 可见和私有评测、凭据、secret 数据；用户 Artifact 列表与下载只允许 user/agent 可见内容。
+规则集中在 `records/visibility.py`。修复 ADMIN 轨迹过滤后，builder 升为 `attempt-event-graph@2.0.1`，
+schema 仍为 `records.trajectory.v2`；重新派生的 trajectory ID 会变化，历史导出不自动重写。
 
 ## 2. 本地存储
 

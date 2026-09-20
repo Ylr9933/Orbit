@@ -18,9 +18,15 @@ def now() -> str:
 
 
 class RunControlStore:
-    def __init__(self, root: Path) -> None:
-        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    def __init__(self, root: Path, *, read_only: bool = False) -> None:
         self.path = root / "control.sqlite3"
+        self.read_only = read_only
+        if read_only:
+            with closing(self._connect()) as db:
+                if db.execute("PRAGMA user_version").fetchone()[0] != 1:
+                    raise ValueError("unsupported run control schema; use a compatible version")
+            return
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
         with closing(self._connect()) as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version not in (0, 1):
@@ -34,7 +40,11 @@ class RunControlStore:
         self.path.chmod(0o600)
 
     def _connect(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.path, timeout=15)
+        db = (
+            sqlite3.connect(self.path.absolute().as_uri() + "?mode=ro", uri=True, timeout=15)
+            if self.read_only
+            else sqlite3.connect(self.path, timeout=15)
+        )
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA synchronous=FULL")
         return db

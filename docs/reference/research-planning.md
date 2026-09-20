@@ -33,7 +33,10 @@ uv run --locked agent-infra project research context /path/to/project
 ```
 
 它会得到原始目标、最新 Brief/Plan、此前采用的版本、用户决定、未决问题、下一步和最近修改原因。
-当前没有真实实验关联，因此 run_references 为空，execution_links_supported 为 false。
+CLI、Web 与已组装的分析/Planner 上下文还会返回最近 20 个项目运行引用，
+`execution_links_supported=true`；尚无运行时列表为空。读取不会创建或升级 Controller 状态。
+单独使用 Python `ResearchService` 且未注入运行查询时，仍返回空列表与 false。
+Web 将运行引用投影为安全摘要，不发送原始执行请求。
 新建 revision 不会清除此前采用的版本，context 会明确标记还有未采用的新变化。
 
 ## 2. 开发者和 Agent 使用的最小接口
@@ -82,12 +85,14 @@ context 的 projection_pending 表示数据库中尚未完成的导出，不是�
 
 ## 4. 存储兼容与当前边界
 
-研究存储在 B 批引入 schema 2，C 批进一步增加编译关联并升级为 schema 3；仅查询不会触发升级。
+研究存储在 B 批引入 schema 2，C 批增加编译关联（schema 3），I 批增加分析与迭代（schema 4）；仅查询不会触发升级。
 旧 Project、研究摘要和原始目标不变。升级前备份状态与工作区，回退需恢复升级前备份，详见[当前编译 ADR](../adr/20260918-experiment-compilation.md)。
 
 当前只支持本机可信单管理员；方案确认不是独立的身份授权服务。
 Brief/Plan 版本、背景笔记和待办已可持续保存；采用方案可通过[C 批命令](experiment-compilation.md)编译成 Task。
-context 增加最近 5 个 compiled_tasks 引用，但真实训练、MCP、结果关联及 Web 接入属于后续批次。
+context 包含最近 5 个 compiled_tasks 和最近 20 个 run_references。
+容器执行、宿主机 MCP、结果分析与 Web 已分别接入，见[本机执行](local-run-controller.md)、
+[宿主机科研](host-research-mcp.md)、[分析迭代](research-iteration.md)和[Web 说明](../operations/web-console.md)。
 研究 Skill 不会让模型变得必然正确，也不替代实验验证。
 
 ## 5. 验证与真实交互重跑

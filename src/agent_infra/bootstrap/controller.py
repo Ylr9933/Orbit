@@ -11,6 +11,7 @@ from typing import Any
 
 from agent_infra.bootstrap.host_research import import_host_trace, project_context
 from agent_infra.bootstrap.iteration import StudyActions
+from agent_infra.bootstrap.paths import prepare_controller_root, state_root
 from agent_infra.bootstrap.run_preflight import prepare_compiled_run
 from agent_infra.environments import planner_client as planner_helper
 from agent_infra.environments.docker import DockerEnvironment
@@ -37,16 +38,6 @@ from agent_infra.runs.query import RunQueries
 from agent_infra.runs.research import ResearchController
 from agent_infra.runs.research_store import ResearchStore
 from agent_infra.runs.service import LocalRunService
-
-
-def state_root(value: str | None) -> Path:
-    configured = value or os.environ.get("AGENT_INFRA_STATE_DIR")
-    return (
-        Path(configured).expanduser()
-        if configured
-        else Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
-        / "agent-infra"
-    ).resolve()
 
 
 def run_action(args: argparse.Namespace) -> dict[str, Any] | int:
@@ -76,6 +67,7 @@ def run_action(args: argparse.Namespace) -> dict[str, Any] | int:
 def serve_controller(
     state: Path, *, port: int, cpu: float, memory_bytes: int, proxy: str = "auto"
 ) -> int:
+    root = prepare_controller_root(state)
     lock = HostControllerLock(state)
     controller: LocalRunController | None = None
     research: ResearchController | None = None
@@ -83,13 +75,9 @@ def serve_controller(
     planner: PlannerSessions | None = None
     clean = False
     relay: ModelProxyRelay | None = None
-    root = state / "controller"
     endpoint = root / "endpoint.json"
     previous_handler = signal.getsignal(signal.SIGTERM)
     try:
-        root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if root.is_symlink() or root.stat().st_uid != os.getuid() or root.stat().st_mode & 0o077:
-            raise ValueError("controller state must be a private directory owned by this user")
         monitor = LinuxHostResourceMonitor()
         snapshot = monitor.sample()
         # GPU admission is deliberately disabled until an explicit device allowlist is implemented.

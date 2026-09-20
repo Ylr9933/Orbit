@@ -1,5 +1,6 @@
 """Non-destructive Web project view over the same services used by the CLI."""
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -12,10 +13,16 @@ from agent_infra.records.catalog import ProjectCatalog
 
 
 class ProjectConsole:
-    def __init__(self, store: LocalProjectStore, catalog: ProjectCatalog) -> None:
+    def __init__(
+        self,
+        store: LocalProjectStore,
+        catalog: ProjectCatalog,
+        *,
+        run_references: Callable[[str], list[dict[str, Any]]] | None = None,
+    ) -> None:
         self.store, self.catalog = store, catalog
         self.projects = ProjectService(store)
-        self.research = ResearchService(store)
+        self.research = ResearchService(store, run_references=run_references)
         self.compiler = CompilationService(store)
 
     def list_projects(self, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -219,6 +219,7 @@ def test_actual_web_command_uses_shared_state_without_controller(tmp_path):
         assert capabilities["project_workspaces"] and not capabilities["run_control"]
         assert call(app, "execution/runs", token=address[2])[1]["items"] == []
         assert not (tmp_path / "state/controller/endpoint.json").exists()
+        assert (tmp_path / "state/controller").stat().st_mode & 0o777 == 0o700
     finally:
         process.terminate()
         process.communicate(timeout=10)

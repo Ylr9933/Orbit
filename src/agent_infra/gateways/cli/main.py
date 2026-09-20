@@ -167,8 +167,8 @@ def run(
                 args.port,
                 args.state_dir,
             )
-        except (OSError, ValueError):
-            parser.exit(2, "Web startup failed; check build directory, port and state paths\n")
+        except (OSError, ValueError) as error:
+            parser.exit(2, f"Web startup failed: {error}\n")
     if args.command == "records":
         if records_action is None:
             parser.exit(2, "Records service is not configured\n")

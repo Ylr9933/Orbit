@@ -23,12 +23,13 @@ def _validate_resource(path: Path) -> dict[str, object]:
 
 def test_installed_cli_from_another_directory(tmp_path: Path) -> None:
     env = {key: value for key, value in os.environ.items() if not key.startswith("AGENT_INFRA_")}
+    env["XDG_STATE_HOME"] = str(tmp_path / "user-state")
     result = subprocess.run(
         ["agent-infra", "config-check"], cwd=tmp_path, env=env, text=True, capture_output=True
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["state_dir"] == str(tmp_path / "var")
-    assert not (tmp_path / "var").exists()
+    assert json.loads(result.stdout)["state_dir"] == str(tmp_path / "user-state/agent-infra")
+    assert not (tmp_path / "user-state").exists()
 
 
 def test_cli_reports_configuration_error_without_traceback(tmp_path: Path) -> None:

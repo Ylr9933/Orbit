@@ -124,6 +124,10 @@ class WorkflowGateway:
             if method == "GET" and len(parts) == 2:
                 detail = self.projects.detail(identifier, self.console.tasks())
                 target = detail["project"]["workspace_project_id"]
+                if detail["research"] is not None:
+                    detail["research"]["run_references"] = [
+                        run_summary(r) for r in detail["research"]["run_references"]
+                    ]
                 detail["analyses"] = (
                     [analysis_summary(a) for a in self.analysis.list(target, "analysis")["items"]]
                     if target and detail["research"] is not None

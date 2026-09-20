@@ -142,3 +142,76 @@ def test_parallel_tool_results_follow_their_call_ids(tmp_path):
     assert trajectory.steps[0].next_observation_event_ids == (events.identifiers[2],)
     assert trajectory.steps[1].next_observation_event_ids == (events.identifiers[3],)
     assert trajectory.eligibility.features["tool_call_correlation"] == "complete"
+
+
+def test_admin_and_private_events_never_enter_queries_trajectory_or_export(tmp_path):
+    from dataclasses import asdict
+
+    from agent_infra.records.catalog import LocalProjectCatalog
+    from agent_infra.runs.console import ConsoleService
+    from agent_infra.runs.control_store import RunControlStore
+    from agent_infra.runs.query import RunQueries
+
+    records = LocalRecordsStore(tmp_path / "records")
+    control = RunControlStore(tmp_path / "control")
+    run = control.create("privacy", {}, {})
+    now = datetime.now(UTC)
+    records.begin_run(RunManifest(run["run_id"], now, {}))
+    records.begin_attempt(AttemptManifest(run["attempt_id"], run["run_id"], now))
+    sink = records.scoped_sink(
+        RecordContext(run["run_id"], run["attempt_id"], "agent", ProducerKind.AGENT)
+    )
+    sink.append_events(
+        (
+            EventDraft("agent.message", {"text": "public"}),
+            EventDraft("agent.message", {"text": "ADMIN_SENTINEL"}, visibility=Visibility.ADMIN),
+            EventDraft(
+                "tool.requested", {"tool_name": "PRIVATE_SENTINEL"}, data_class=DataClass.SECRET
+            ),
+            EventDraft(
+                "policy.snapshot",
+                {"provider": "ADMIN_POLICY_SENTINEL"},
+                visibility=Visibility.ADMIN,
+            ),
+        )
+    )
+    file = tmp_path / "data.txt"
+    file.write_text("public")
+    for visibility in (
+        Visibility.USER,
+        Visibility.CONTROLLER,
+        Visibility.ADMIN,
+        Visibility.EVALUATOR,
+    ):
+        sink.commit_artifact(file, name=visibility.value, visibility=visibility)
+    console = ConsoleService(
+        records, LocalProjectCatalog(tmp_path / "catalog.sqlite3"), lambda: {}, lambda: []
+    )
+    queries = RunQueries(control, records)
+    trajectory = AttemptTrajectoryBuilder(records).build(run["attempt_id"])
+    exported = export_jsonl((trajectory,), tmp_path / "export")
+    payload = json.dumps(
+        [
+            asdict(trajectory),
+            queries.events(run["run_id"]),
+            console.events(run["attempt_id"], None),
+        ],
+        default=str,
+    )
+    assert "SENTINEL" not in payload
+    assert "SENTINEL" not in (tmp_path / "export" / exported.records_file).read_text()
+    assert len(trajectory.steps) == 1 and len(trajectory.source_event_ids) == 1
+    assert [a["name"] for a in queries.artifacts(run["run_id"])] == ["user"]
+    assert [a["name"] for a in console.artifacts(run["attempt_id"])] == ["user"]
+
+
+def test_legacy_writer_import_remains_compatible(tmp_path):
+    from agent_infra.records.legacy import LocalRunJournal
+    from agent_infra.records.local import LocalRunJournal as ExistingImport
+
+    assert ExistingImport is LocalRunJournal
+    journal = ExistingImport(tmp_path / "legacy")
+    journal.event("checkpoint", value=1)
+    journal.finish({"status": "completed"})
+    assert json.loads((tmp_path / "legacy/events.jsonl").read_text())["value"] == 1
+    assert json.loads((tmp_path / "legacy/result.json").read_text())["status"] == "completed"

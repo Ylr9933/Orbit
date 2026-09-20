@@ -137,7 +137,16 @@ node tests/web/workflow.smoke.cjs
 `tests/web/console.smoke.cjs` 继续验证旧页面及实际宿主机只读资源采样。截图仅写 `/tmp/agent-infra-w-*.png`。
 
 401：Web 重启后重新连接新链接。Controller 未连接：检查同一 `--state-dir`，启动前台 controller serve。
+Web 与 Controller 支持任意启动顺序，共用的 `controller/` 目录首次创建为 `0700`。
+如果已有目录提示权限错误，先核实目录归属及其他服务的使用情况，再将该目录权限设为 `0700`；
+程序不会自动修改已有目录的权限。显式状态路径不允许符号链接，使用真实绝对路径。
+`config-check` 默认目录已与这些入口一致；显式 TOML 仅用于配置检查，不会改变运行命令的状态目录。
 数据为空：确认状态目录、历史 `--records-root` 和 `--console-dir`，不要删除数据库来消除错误。
 预检未通过：按返回原因补齐镜像、账号、材料、环境锁或资源；不自动替换失败集成。
 项目 revision 冲突：保留编辑内容，重新读取后合并。初始化未完成：使用 `project recover`，不直接覆盖工作区。
 备份时同时考虑旧 catalog（含新增映射表）、Projects 和 Controller/Records；仅回滚代码不会删除它们。
+
+无模型 Docker 衔接回归：`uv run --locked pytest -m e2e tests/e2e/test_web_research.py`。
+需要本机 Docker、已有 `python:3.12-slim` 镜像及空闲单用户 Controller 槽位；测试先开 Web，
+再启动真实 Controller、执行 CPU Job、归档指标并读取分析，最后验证服务离线后历史仍可读取。
+容器请求 0.5 CPU / 256 MiB，不调用模型；页面交互继续由上面的浏览器测试覆盖。

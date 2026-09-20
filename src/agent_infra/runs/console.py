@@ -12,12 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from agent_infra.agents.presentation import event_text
-from agent_infra.records.api import DataClass, EventQuery, RecordsReader, Visibility
+from agent_infra.records.api import EventQuery, RecordsReader
 from agent_infra.records.catalog import ProjectCatalog
+from agent_infra.records.visibility import artifact_visible, event_visible
 from agent_infra.tasks import build_agent_view, load_task
 
-_HIDDEN = {DataClass.PRIVATE_EVALUATION, DataClass.CREDENTIAL, DataClass.SECRET}
-_HIDDEN_VISIBILITY = {Visibility.EVALUATOR, Visibility.ADMIN}
 _EVENT_FIELDS = {
     "run.created": ("run_id",),
     "attempt.started": ("attempt_id",),
@@ -143,7 +142,7 @@ class ConsoleService:
         for _ in range(10):
             page = self.reader.read_events(EventQuery(attempt_id=attempt_id, limit=100), cursor)
             for event in page.items:
-                if event.data_class in _HIDDEN or event.visibility in _HIDDEN_VISIBILITY:
+                if not event_visible(event.data_class, event.visibility):
                     continue
                 is_agent = event.context.producer_kind.value == "agent"
                 fields = (
@@ -183,7 +182,7 @@ class ConsoleService:
                 "media_type": item.media_type,
             }
             for item in self.reader.list_artifacts(attempt_id)
-            if item.data_class not in _HIDDEN and item.visibility not in _HIDDEN_VISIBILITY
+            if artifact_visible(item.data_class, item.visibility)
         ]
 
     def save_project(self, body: dict[str, Any]) -> dict[str, Any]:

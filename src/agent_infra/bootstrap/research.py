@@ -12,7 +12,7 @@ from agent_infra.runs.control_store import RunControlStore
 def research_action(
     store: LocalProjectStore, action: str, options: dict[str, str]
 ) -> dict[str, Any]:
-    service = ResearchService(store)
+    service = ResearchService(store, run_references=lambda p: project_runs(store.root.parent, p))
     identifier = options["identifier"]
     revision = int(options["revision"]) if "revision" in options else None
     if action == "save":
@@ -45,15 +45,7 @@ def research_action(
             )
         }
     if action == "context":
-        result = service.context(identifier)
-        root = store.root.parent / "controller"
-        result["run_references"] = (
-            RunControlStore(root).list_runs(project_id=result["project"]["project_id"], limit=20)
-            if (root / "control.sqlite3").is_file()
-            else []
-        )
-        result["execution_links_supported"] = True
-        return result
+        return service.context(identifier)
     if action == "check":
         return service.check(identifier, revision)
     if action == "export":
@@ -69,3 +61,13 @@ def research_action(
     if action == "skill":
         return service.skill(identifier, install=options.get("install") == "True")
     raise ProjectError(f"unknown research action: {action}")
+
+
+def project_runs(state: Path, project: str) -> list[dict[str, Any]]:
+    """Read links without creating or upgrading controller state during planning."""
+    root = state / "controller"
+    return (
+        RunControlStore(root, read_only=True).list_runs(project_id=project, limit=20)
+        if (root / "control.sqlite3").is_file()
+        else []
+    )

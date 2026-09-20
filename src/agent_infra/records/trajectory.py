@@ -11,15 +11,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_infra.records.api import (
-    DataClass,
     EventEnvelope,
     RecordsReader,
-    Visibility,
 )
+from agent_infra.records.visibility import event_visible
 
 TRAJECTORY_SCHEMA_VERSION = "records.trajectory.v2"
 TRAJECTORY_BUILDER_NAME = "attempt-event-graph"
-TRAJECTORY_BUILDER_VERSION = "2.0.0"
+TRAJECTORY_BUILDER_VERSION = "2.0.1"
 
 _ACTION_TYPES = frozenset({"agent.message", "tool.requested"})
 _OBSERVATION_TYPES = frozenset(
@@ -99,7 +98,9 @@ class AttemptTrajectoryBuilder:
     def build(self, attempt_id: str) -> TrajectoryView:
         attempt = self._reader.get_attempt(attempt_id)
         trace = self._reader.read_trace(attempt_id)
-        visible = tuple(event for event in trace.events if _eligible_source_event(event))
+        visible = tuple(
+            event for event in trace.events if event_visible(event.data_class, event.visibility)
+        )
         rewards = tuple(event for event in visible if event.event_type in _REWARD_TYPES)
         actions = tuple(event for event in visible if event.event_type in _ACTION_TYPES)
         tool_actions = tuple(event for event in actions if event.event_type == "tool.requested")
@@ -298,14 +299,6 @@ def _matching_tool_results(
     if action.span_id is not None:
         return tuple(result for result in results if result.span_id == action.span_id)
     return ()
-
-
-def _eligible_source_event(event: EventEnvelope) -> bool:
-    return event.visibility is not Visibility.EVALUATOR and event.data_class not in {
-        DataClass.PRIVATE_EVALUATION,
-        DataClass.CREDENTIAL,
-        DataClass.SECRET,
-    }
 
 
 def _reward_targets(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,13 @@ def load_research_draft(path: Path) -> ResearchDraft:
 
 
 class ResearchService:
-    def __init__(self, store: LocalProjectStore) -> None:
+    def __init__(
+        self,
+        store: LocalProjectStore,
+        *,
+        run_references: Callable[[str], list[dict[str, Any]]] | None = None,
+    ) -> None:
+        self.run_references = run_references
         self.store = store
         self.projects = ProjectService(store)
 
@@ -143,8 +150,10 @@ class ResearchService:
             "projection_pending": state["pending"] is not None,
             "open_questions": document["brief"]["unknowns"],
             "next_step": document["next_step"],
-            "run_references": [],
-            "execution_links_supported": False,
+            "run_references": self.run_references(project.project_id)
+            if self.run_references
+            else [],
+            "execution_links_supported": self.run_references is not None,
             "compiled_tasks": [
                 item.to_dict()
                 for item in CompilationStore(self.store.database).list(project.project_id, limit=5)

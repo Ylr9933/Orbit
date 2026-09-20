@@ -1,13 +1,17 @@
 # Records 实现解读
 
-> 对应分支：`feat/records-foundation`。本文说明当前代码实际行为；目标设计见 [Records 模块详细设计](../architecture/records-design.md)。
+> 状态：首版本地实现，已同步模块整理。分支与验证见[整理记录](../changes/20260920-integration-audit-r61c4e.md)；目标设计见 [Records 模块详细设计](../architecture/records-design.md)。
 
 ## 1. 代码入口
 
 | 文件 | 当前职责 |
 | --- | --- |
 | `src/agent_infra/records/api.py` | 后端无关 DTO、枚举和 Writer/Reader/Sink 协议 |
-| `src/agent_infra/records/local.py` | SQLite schema、CAS、事件、stream、Artifact 和查询 |
+| `src/agent_infra/records/local.py` | SQLite schema、CAS、生命周期及读取；对外仍使用 LocalRecordsStore |
+| `src/agent_infra/records/_local_sink.py` | 私有 scoped sink：事件、stream 与 Artifact 写入 |
+| `src/agent_infra/records/_serialization.py` | 后端内部 JSON、时间与字段解码 |
+| `src/agent_infra/records/visibility.py` | 用户事件、轨迹和产物的共同可见性规则 |
+| `src/agent_infra/records/legacy.py` | 旧 LocalRunJournal；local.py 保留兼容导出 |
 | `src/agent_infra/records/trajectory.py` | Attempt 轨迹派生和 JSONL 数据集导出 |
 | `src/agent_infra/runs/service.py` | 创建记录上下文并把执行事实写入 Records |
 | `src/agent_infra/bootstrap/cli.py` | 组装本地查询、轨迹和导出命令 |
@@ -75,14 +79,17 @@ correlation 和 Span；载荷 schema 使用对应的 `agent.*.v1`，normalizer �
 
 ## 5. 评测隔离
 
-Solver、可选的 submission execution 和 scorer 使用不同 Phase。scorer stream、结果 Artifact 标记为 evaluator 可见和 `private_evaluation`。Trajectory builder 会过滤这些事件，因此隐藏答案不会成为 Agent observation。
+Solver、可选的 submission execution 和 scorer 使用不同 Phase。scorer stream、结果 Artifact 标记为 evaluator 可见和 `private_evaluation`。
+事件查询、Web 事件及 Trajectory builder 共用过滤规则：排除 evaluator/admin 可见事件，以及 private_evaluation/credential/secret 数据。
+用户侧 Artifact 列表与下载只允许 user/agent 可见内容；controller 内部产物不在旧 Web 列表中展示。
+这是单管理员产品入口的过滤，不是多租户授权；底层 RecordsReader 仍供可信调用方读取完整原始证据。
 
 Evaluator 返回的允许公开 feedback 记录在 `evaluation.finished`。只有 feedback 明确包含有限数值 `reward`/`score` 或布尔 `passed` 时，Run 才生成 `reward.assigned`；完整私有 evaluator payload 只保存在 scorer Artifact 中。
 
 ## 6. 轨迹派生
 
 `AttemptTrajectoryBuilder` 读取已完成 Attempt 的事件图，而不修改原始数据。当前 schema 为
-`records.trajectory.v2`，builder 为 `attempt-event-graph@2.0.0`。trajectory ID 由 Attempt、builder
+`records.trajectory.v2`，builder 为 `attempt-event-graph@2.0.1`。trajectory ID 由 Attempt、builder
 版本和源 event ID 计算，因此同一输入和 builder 版本具有稳定 ID。
 
 每个 step 保存 observation event、action event、后继 observation、reward、Span lineage、终止原因
@@ -97,9 +104,9 @@ Evaluator 返回的允许公开 feedback 记录在 `evaluation.finished`。只�
 
 - 本地 sink 可多线程写入，但没有跨进程 producer spool 协议。
 - `durable_local` 只表示本机落盘，不表示远端备份。
-- CLI 是本地管理员工具；HTTP/Web 接入前需要 AccessContext 和授权过滤。
+- CLI/HTTP/Web 当前限定本机单管理员，已有事件和产物过滤；多用户仍需要 AccessContext 与独立授权。
 - 当前 observation/action 切分是事件级规则，不是 token 级 credit assignment。
-- Host Agent 和外部 Agent 只能在相应执行/gateway 能力实现后接入同一个 scoped sink。
+- 宿主机科研已记录平台操作并支持显式导入原生流；平台之外的 Agent 操作不会自动完整采集。
 - Resource 高频采样尚未接入；当前记录请求、分配和释放事实。
 
 这些限制均通过现有公共协议扩展，不需要让业务模块直接访问 SQLite 或 CAS 路径。

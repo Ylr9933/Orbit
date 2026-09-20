@@ -5,11 +5,10 @@ import json
 from dataclasses import asdict
 from typing import Any
 
-from agent_infra.records import AttemptTrajectoryBuilder, BlobRef, DataClass, EventQuery, Visibility
+from agent_infra.records import AttemptTrajectoryBuilder, BlobRef, EventQuery
 from agent_infra.records.api import RecordsReader
+from agent_infra.records.visibility import artifact_visible, event_visible
 from agent_infra.runs.control_store import RunControlStore
-
-_PRIVATE = {DataClass.PRIVATE_EVALUATION, DataClass.CREDENTIAL, DataClass.SECRET}
 
 
 class RunQueries:
@@ -26,8 +25,7 @@ class RunQueries:
         return [
             asdict(item)
             for item in self.records.list_artifacts(entry["attempt_id"])
-            if item.data_class not in _PRIVATE
-            and item.visibility in {Visibility.USER, Visibility.AGENT}
+            if artifact_visible(item.data_class, item.visibility)
         ]
 
     def artifact(self, run_id: str, artifact_id: str, member: str | None = None) -> dict[str, Any]:
@@ -69,8 +67,7 @@ class RunQueries:
             "items": [
                 asdict(event)
                 for event in page.items
-                if event.data_class not in _PRIVATE
-                and event.visibility not in {Visibility.EVALUATOR, Visibility.ADMIN}
+                if event_visible(event.data_class, event.visibility)
             ],
             "next_cursor": page.next_cursor,
         }

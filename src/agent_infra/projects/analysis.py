@@ -18,7 +18,9 @@ from agent_infra.runs.query import RunQueries
 class AnalysisService:
     def __init__(self, store: LocalProjectStore, queries: RunQueries) -> None:
         self.store, self.queries = store, queries
-        self.research = ResearchService(store)
+        self.research = ResearchService(
+            store, run_references=lambda p: queries.commands.list_runs(project_id=p, limit=20)
+        )
         self.documents = IterationStore(store.database)
 
     def evidence(self, project: str, reference: dict[str, Any]) -> dict[str, Any]:

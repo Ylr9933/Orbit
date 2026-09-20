@@ -489,5 +489,5 @@ def test_default_user_state_can_live_behind_local_symlink(
     result = project_action("init", options)
     assert result["state_dir"] == preview["state_dir"] == str(data / "state/agent-infra")
     assert len(project_action("list", {})["projects"]) == 1
-    with pytest.raises(OSError):
+    with pytest.raises(ProjectError, match="symlink"):
         project_action("list", {"state_dir": str(home / ".local/state/agent-infra")})
