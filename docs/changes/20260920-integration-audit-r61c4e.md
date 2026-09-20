@@ -5,7 +5,7 @@ title: "模块衔接检查、代码整理与后续实用性计划"
 branch: "refactor/workflow-integration-audit"
 base_commit: "393757b250a165382c2d510cd0ea4922b61f2a3e"
 work_status: completed
-updated_at: "2026-09-20T20:00:00+08:00"
+updated_at: "2026-09-20T20:10:21+08:00"
 pull_request: null
 ---
 
@@ -14,7 +14,7 @@ pull_request: null
 - 检查 Projects → Tasks → Resources/Environment → Run/Agent → Records → Web/CLI/MCP 的实际衔接，修复可复现问题。
 - 收拢重复的状态配置、上下文与可见性，清理无用占位，保持公共接口、历史数据和模块边界。
 - 工程回归、浏览器、限定本机 CPU 的无模型 Docker 集成通过；交付不足与下一步细分计划。
-- 本轮不新增 GPU/分布式/模型验收、不修改治理规则、不自动合并或推送。
+- 实现阶段不新增 GPU/分布式/模型验收、不修改治理规则；用户随后明确授权合并到 main 并推送两个远端。
 
 ## Changes
 
@@ -28,7 +28,8 @@ pull_request: null
 
 ## Decisions
 
-- 从 W 创建独立整理分支，沿用 H/E/I/W 工作，不在 main 开发；main 仍为 `c15f9469aa10e40f76dc2b6155bdab5026336ee5`。
+- 实现验收后，用户授权集成并同步 origin（XuehaiWang/agent-infra）与 zjunlpgit（zjunlp/Orbit）。刷新后双方 main 均为 c15f946，支持快进，不重写历史。
+- 从 W 创建独立整理分支，沿用 H/E/I/W 工作，不在 main 开发；实现验收时 main 为 `c15f9469aa10e40f76dc2b6155bdab5026336ee5`。
 - 不以仓库内引用数量直接删除兼容 API；AST 比较确认拆出的两个 Records 类与原实现一致。
 - 可见性规则统一，但底层 RecordsReader 继续允许可信组件读取原始证据；这不是多用户授权系统。
 - 真实 Docker 仅本机串行，同时总请求最多 1 CPU/2 GiB，无 GPU/模型，目标 15 分钟内，使用已有镜像，清理只限测试资源。
@@ -44,6 +45,7 @@ pull_request: null
 
 | Check or command | Tested revision or snapshot | Result | Evidence or limitation |
 | --- | --- | --- | --- |
+| 集成前双远端刷新、祖先关系和代码/测试子树核对 | c22fd80 | passed | 两端 main 与本地同为 c15f946；源码和测试与上方已验证快照一致；未设置保护，无已知要求检查被绕过 |
 | Git、模块入口和近期验证核对 | 393757b | passed | 起始工作区干净，main 未修改 |
 | Web-first 临时目录复现 | 393757b | failed | 旧顺序将父目录创建成普通权限（本机 0775），不满足 Controller 启动检查；已修复 |
 | 第一轮局部回归 | 修复中的工作区 | failed | 旧默认路径/异常类型断言需同步，新增过滤测试的 JSON datetime 编码需修正；后续完整回归覆盖通过 |
@@ -77,11 +79,11 @@ uv run --locked pytest -q -m e2e \
 ## Open items and blockers
 
 - 本轮范围内 None。产品未实现项和小任务验收要求见[检查与计划](../development/20260920-integration-review.md)。
-- H/E/I/W 和本轮代码仍在分支；未发布、未合并、未配置常驻部署。
+- 未配置常驻部署；本次授权集成包含 H/E/I/W 与本轮代码，实际合并和远端同步结果由 Git 历史确认。
 
 ## Next steps
 
-- 本轮实现与检查已完成，准备审查；发布/合并等待用户授权。
+- 本轮实现与检查已完成；按用户授权快进 main 并普通推送两个远端，核对三个 main 的提交一致。
 - 后续优先做安装与状态诊断、长期启动/备份指南、一个实际科研项目；随后围绕 GPU/镜像/数据需求推进。
 
 ## Compatibility and rollback
