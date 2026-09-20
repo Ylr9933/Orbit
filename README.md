@@ -129,3 +129,11 @@ the agreed authorization and review workflow. CODEOWNERS requests review; it doe
 branch protection. Hosted CI and main rulesets must be verified on GitHub after publishing.
 
 License selection is pending; the empty LICENSE file grants no license.
+
+### 宿主机 Agent 通过 MCP 做科研
+
+H 批提供项目绑定的长期 Docker 环境、后台 Job、日志、文件与产物操作。
+入口为 `agent-infra mcp`（stdio）和 `agent-infra research`（人工 CLI），连接独立 Controller。
+先准备包含 Python 3 的镜像；当前 CPU、单活跃 Run，关闭 MCP 不停止 Job。
+具体启动和 Codex 配置见[宿主机科研指南](docs/reference/host-research-mcp.md)，
+代码维护见[实现导读](docs/implementation/host-research-mcp.md)。

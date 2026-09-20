@@ -394,6 +394,26 @@ class DockerEnvironment:
             except (RuntimeError, OSError, subprocess.SubprocessError):
                 return CleanupResult(False, "container stop could not be verified")
 
+    def execute_control(self, handle: EnvironmentHandle, argv: tuple[str, ...], stdin: str) -> str:
+        """Internal runtime control transport; never exposed as arbitrary host execution."""
+        with self._lock:
+            item = self._get(handle)
+            info = self._inspect(item)
+            if info is None or not info["State"]["Running"]:
+                raise RuntimeError("research container is not running")
+            result = subprocess.run(
+                ["docker", "exec", "-i", item.name, *argv],
+                input=stdin,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode:
+                raise RuntimeError(
+                    "research runtime unavailable; check Python 3 image and container"
+                )
+            return result.stdout
+
     def cleanup(self, handle: EnvironmentHandle) -> CleanupResult:
         with self._lock:
             item = self._get(handle)
@@ -418,6 +438,13 @@ class DockerEnvironment:
                 return CleanupResult(True)
             except (RuntimeError, OSError, subprocess.SubprocessError):
                 return CleanupResult(False, "container removal could not be verified")
+
+    def collect_workspace(self, handle: EnvironmentHandle, destination: Path) -> Submission:
+        with self._lock:
+            workspace = self._get(handle).spec.workspace
+            return self.collect(
+                handle, tuple(p.name for p in sorted(workspace.iterdir())), destination
+            )
 
     def collect(
         self, handle: EnvironmentHandle, paths: tuple[str, ...], destination: Path

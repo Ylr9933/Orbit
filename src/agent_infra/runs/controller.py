@@ -55,6 +55,8 @@ class LocalRunController:
                 for event in self.records.read_trace(attempt.manifest.attempt_id).events
                 if event.event_type == "lease.granted" and event.payload.get("lease_id")
             }
+            if entry.get("lease_id"):
+                lease_ids.add(str(entry["lease_id"]))
             result: dict[str, Any] = {
                 "run_id": run_id,
                 "attempt_id": entry["attempt_id"],
@@ -195,12 +197,34 @@ class LocalRunController:
     def cancel(self, run_id: str) -> dict[str, Any]:
         with self._lock:
             entry = self.store.get(run_id)
+            if entry["request"].get("kind") == "research":
+                raise ControlError(
+                    "research_requires_close",
+                    "use research close with a project binding for research environments",
+                )
             if entry["state"] == "finished":
                 return entry
             entry = self.store.update(run_id, cancel_requested=True)
             if self._active == run_id:
                 self._cancel.set()
             return entry
+
+    def reserve_research(
+        self, operation_id: str, payload: dict[str, Any], project_id: str
+    ) -> dict[str, Any]:
+        """Share the single execution slot with the long-lived research use case."""
+        with self._lock:
+            if self.closed or self.quarantined or self._active is not None:
+                raise ControlError("busy", "controller busy, stopping or quarantined")
+            entry = self.store.create(operation_id, payload, {"project_id": project_id})
+            self._active = entry["run_id"]
+            return entry
+
+    def release_research(self, run_id: str, *, clean: bool) -> None:
+        with self._lock:
+            if self._active == run_id:
+                self._active = None
+            self.quarantined = not clean or bool(self.resources.active_leases)
 
     def _clean_credentials(self, run_id: str) -> None:
         for path in (

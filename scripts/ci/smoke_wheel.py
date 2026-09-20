@@ -61,6 +61,27 @@ def main() -> None:
             env=env,
             check=True,
         )
+        subprocess.run(
+            [str(environment / "bin/agent-infra"), "mcp", "--help"],
+            cwd=scratch,
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                str(python),
+                "-I",
+                "-c",
+                "from pathlib import Path; "
+                "from agent_infra.environments import _research_runtime; "
+                "from agent_infra.gateways.mcp.research import create_mcp; "
+                "assert Path(_research_runtime.__file__).is_file()",
+            ],
+            cwd=scratch,
+            env=env,
+            check=True,
+        )
         assert not (scratch / "var").exists(), "CLI unexpectedly created runtime state"
         cli = str(environment / "bin/agent-infra")
         workspace = scratch / "research"

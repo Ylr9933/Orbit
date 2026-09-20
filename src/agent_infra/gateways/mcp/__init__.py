@@ -1,1 +1,1 @@
-"""MCP protocol boundary. No runtime implementation in S0."""
+"""Project-scoped stdio MCP protocol adapter; execution belongs to the Controller."""

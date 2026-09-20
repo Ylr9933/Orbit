@@ -64,5 +64,7 @@
 
 - [Run / Environment 契约](architecture/run-environment-contract.md)：仅求解与隔离评测设计。
 - [执行 API 与验证说明](reference/run-environment.md)：Python 组装、记录、安全边界及真实 Docker 测试。
+- [宿主机科研与 MCP](reference/host-research-mcp.md)：长期环境、后台 Job、MCP 接入、文件、日志、产物及宿主机原生流导入。
+- [H 批实现导读](implementation/host-research-mcp.md)：监督进程、Controller 用例、幂等状态、采集和故障恢复。
 - [本机 Run 控制服务](reference/local-run-controller.md)：冻结 Task 的预检、提交、查询、取消、认证、结果下载与 CPU 示例。
 - [Controller 实现与恢复](implementation/local-run-controller.md)：命令持久化、单 worker、资源互斥、Docker 对账及扩展入口。

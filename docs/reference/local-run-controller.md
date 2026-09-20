@@ -10,6 +10,7 @@
 
 当前公开入口接受本状态目录登记的编译 Task，支持 Codex 0.154.0。其他 Agent 适配仍可通过既有 Python API 使用；
 Controller 的容器凭据流程暂未泛化到 Claude Code / DSH。没有自动安装、自动生成镜像、队列、GPU、Ray 或 Web 运行按钮。
+宿主机 Agent 通过 MCP 控制长期科研 Job 的另一入口见[H 批参考](host-research-mcp.md)；两条路径共用 Controller 和资源准入。
 
 ## 准备镜像和账号
 

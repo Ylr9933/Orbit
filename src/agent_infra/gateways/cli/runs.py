@@ -89,7 +89,7 @@ class ControllerClient:
     def request(self, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         request = Request(
             f"http://127.0.0.1:{self.port}/api/v1/" + path,
-            data=json.dumps(body).encode() if body is not None else None,
+            data=json.dumps(body, ensure_ascii=False).encode() if body is not None else None,
             headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/json"},
         )
         try:

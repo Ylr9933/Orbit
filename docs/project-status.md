@@ -1,14 +1,15 @@
 # 项目当前状态
 
-Updated at: 2026-09-20T15:57:44+08:00
+Updated at: 2026-09-20T16:41:10+08:00
 
 Basis: 以本文在 `main` 中的版本为集成状态依据；涵盖原基线 `f8f47f3`、A 批初始化 `c9f3498`、B 批研究规划 `39e97f0`、
-C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本次概览随 C/D 集成，任务分支上的版本描述合并后的状态。
+C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本任务分支另提出 H 批合并后的概览；H 尚未合并 main。
 实际集成以 Git 历史为准，本地实现不代表远端同步或常驻部署。
 
 当前结论：工程基础、核心模块首版、本机容器执行内核和简版 Web 已建立；现已补充本地科研项目初始化和研究规划的持久接口。
 已形成小型 CPU 科研闭环：创建工作区、保存并采用方案、编译冻结 Task、提交容器内真实 Codex、
-查询轨迹和下载指标。后台控制、取消和中断清理已验证；长期科研作业、自动环境生成与自动迭代仍待完成。
+查询轨迹和下载指标。本分支新增宿主机 MCP → 长期环境 → 多轮 Job 路径，并通过真实 Codex CPU 实验；
+自动环境生成、GPU 准入与有预算的自动迭代仍待完成。
 
 ## 阶段概览
 
@@ -16,7 +17,7 @@ C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本次概览�
 | --- | --- | --- |
 | S0：工程基础 | `accepted` | 工程、锁文件、检查、依赖边界、CI 配置和协作规范已建立，有本机验收证据。 |
 | S1：模块契约与任务样例 | `in_progress` | 核心模块有首版契约；ToolBinding、稳定任务目录与原生 benchmark 等价性未完成。 |
-| S2：完整单节点工作流 | `in_progress` | 小型 CPU 真实 Codex 执行闭环已验收；长期 Job/MCP、GPU 与原生 benchmark 等价性尚未验收。 |
+| S2：完整单节点工作流 | `in_progress` | 小型 CPU 真实 Codex 执行闭环已验收；本分支长期 Job/MCP CPU 验收通过；GPU 与原生 benchmark 等价性尚未验收。 |
 | S3：两节点执行与故障处理 | `not_started` | Ray backend、Worker 服务、节点加入、远程归档和故障恢复尚未实现。 |
 | S4：Web 与批量评测 | `in_progress` | 本机查询与项目整理可用；Web 尚未接入 Run 控制 API，批量评测未实现。 |
 
@@ -32,6 +33,9 @@ C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本次概览�
 - **本机运行（D 批）**：Controller 与 CLI/HTTP 支持预检、幂等提交、查询、取消、事件/轨迹和受控 Artifact 下载；
   单活跃 Run、同账户主机互斥、持久意图与 Docker 重启对账。已有镜像固定 ID，账号副本独立清理。
   真实 Codex 生成并执行统计分析脚本、保存正确指标；取消和 CPU Docker SIGKILL 恢复均有证据，见[执行记录](changes/20260918-local-run-controller-d73a91.md)。
+- **宿主机科研（H 批，本分支）**：项目绑定的 CLI/stdio MCP 可创建长期 Docker 环境、启动/停止 Job、读写工作区、查询日志和归档结果。
+  与 D 共用资源准入；关闭 MCP 不停止 Job，重启 Controller 按中断清理策略恢复。平台调用及显式导入的宿主机原始流可追溯，覆盖缺口标记 partial。
+  真实 Codex 两轮 CPU 训练、MCP 断连重连与后台停止通过，见[H 记录](changes/20260920-host-research-mcp-a81f2c.md)。
 - **Agent、Tasks、Resources**：Codex/Claude Code/DSH 适配、任务清单与可见性、benchmark 索引、资源 YAML、
   Linux/NVIDIA 监控和进程内 Lease；CLI 可诊断、准备任务和校验资源。
 - **Run / Environment / Records**：Python 可组装单 Attempt 的求解、冻结提交、隔离评测、取消、清理和资源释放；
@@ -46,19 +50,20 @@ C 批实验编译 `92d5209` 与 D 批本机 Controller `9363ee1`。本次概览�
 
 - **研究入口**：Run 已关联研究 context，但结果解释与自动迭代未实现；保存、确认和编译仍不会自行启动实验。
   大数据外部不可变存储适配尚缺。
-- **执行范围**：Controller 目前只接收编译的无评测科研 Task，容器认证只验收 Codex；
+- **执行范围**：D 批 Run 提交入口只接收编译的无评测科研 Task，容器认证只验收 Codex；
+  H 批另支持已初始化项目直接开启 CPU 研究环境；
   其他 provider、直接 benchmark 注册、自动重试/队列和公网多用户服务未完成。
-- **环境与资源**：缺少长期 Job、Session、MCP、自动镜像生成、GPU 准入与分布式持久 Lease；
+- **环境与资源**：缺少自动镜像生成、GPU 准入与分布式持久 Lease；
   当前通过单控制进程和启动前清理恢复 CPU 容量，不支持恢复中断的模型会话或训练进程。
-- **记录、任务与界面**：缺少宿主机 Agent 全链路采集、跨进程 spool、ToolBinding 与原生 benchmark 评分等价证据；
+- **记录、任务与界面**：宿主机 Agent 仅支持平台操作记录和显式原始流导入，仍缺平台外全链路采集、跨进程 spool、ToolBinding 与原生 benchmark 评分等价证据；
   Web Task 关联仍依赖路径哈希，HTTP/TypeScript 契约手工维护。新控制 API 尚未接入 Web，实时聊天推流与新 Project 适配待实现。
 - **分布式**：尚无 Worker/Ray 实现及两节点验收。GPU 仅有观测和 Docker 参数，没有实际负载证据。
 
 ## 下一步优先级
 
-1. 按[CPU 样例](../examples/research/cpu-statistics/README.md)试用已集成的 C/D 能力，并选择常驻 Controller 的状态目录。
-2. 按[细分计划](development/research-workflow-implementation-plan.md)推进 H01–H02：长期 Environment / Job 与作业日志。
-3. 接通宿主机 MCP 科研路径，再推进环境自动构建与实验迭代；W01 统一适配新旧 Project。
+1. 审查、集成 H 分支，按[宿主机科研指南](reference/host-research-mcp.md)试用并选择常驻 Controller 状态目录。
+2. 用实际科研任务补齐所需镜像和材料入口；有授权后推进单 GPU 准入及训练验收。
+3. 按[细分计划](development/research-workflow-implementation-plan.md)推进 E 环境准备与 I 结果分析/迭代；W01 统一新旧 Project。
 
 ## 项目级阻塞与限制
 

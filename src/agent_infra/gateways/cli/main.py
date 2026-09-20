@@ -11,6 +11,7 @@ from agent_infra.gateways.cli.projects import (
     add_init_arguments,
     add_research_arguments,
 )
+from agent_infra.gateways.cli.research_runtime import add_research_runtime_arguments
 from agent_infra.gateways.cli.runs import add_run_arguments
 from agent_infra.projects import ProjectError
 
@@ -33,6 +34,7 @@ def run(
     parser.add_argument("--version", action="version", version=version("agent-infra"))
     commands = parser.add_subparsers(dest="command", required=True)
     add_run_arguments(commands)
+    add_research_runtime_arguments(commands)
     add_init_arguments(
         commands.add_parser("init", help="Initialize a research project without a model")
     )
@@ -104,7 +106,7 @@ def run(
     export.add_argument("--root", required=True)
     export.add_argument("--destination", required=True)
     args = parser.parse_args(argv)
-    if args.command in {"run", "controller"}:
+    if args.command in {"run", "controller", "research", "mcp"}:
         if run_action is None:
             parser.exit(2, "Run controller is not configured\n")
         try:

@@ -9,10 +9,16 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from agent_infra.runs.control_api import ControlError, SubmissionRequest
 from agent_infra.runs.controller import LocalRunController
 from agent_infra.runs.query import RunQueries
+from agent_infra.runs.research import ResearchController
 
 
 def create_control_server(
-    controller: LocalRunController, queries: RunQueries, token: str, port: int = 8766
+    controller: LocalRunController,
+    queries: RunQueries,
+    token: str,
+    port: int = 8766,
+    *,
+    research: ResearchController | None = None,
 ) -> ThreadingHTTPServer:
     if len(token) < 32:
         raise ValueError("controller token must contain at least 32 characters")
@@ -82,6 +88,16 @@ def create_control_server(
             query = parse_qs(parsed.query)
             if parts[:2] != ["api", "v1"]:
                 raise KeyError(self.path)
+            if method == "POST" and research is not None:
+                if parts[2:] == ["research", "bind"]:
+                    return research.bind(body["project_id"], body["session_id"])
+                if parts[2:] == ["research", "call"]:
+                    return research.call(
+                        body["binding"],
+                        body["action"],
+                        body.get("options", {}),
+                        body.get("operation_id"),
+                    )
             if parts[2:] == ["health"] and method == "GET":
                 return {
                     "ready": not controller.quarantined and not controller.closed,

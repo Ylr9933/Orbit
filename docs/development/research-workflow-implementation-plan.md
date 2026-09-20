@@ -9,11 +9,13 @@ B01–B04 在 `feat/research-planning` 实现，B05 已通过限定范围的真�
 C01–C03 在 `feat/experiment-compilation` 实现，证据见[编译记录](../changes/20260918-experiment-compilation-c42d8e.md)，
 使用见[编译命令](../reference/experiment-compilation.md)。D01–D07 在 `feat/local-run-controller` 实现，
 验收见[Controller 记录](../changes/20260918-local-run-controller-d73a91.md)，
-使用见[本机执行命令](../reference/local-run-controller.md)。下文保留原任务拆分；实际集成以 Git 为准。
+使用见[本机执行命令](../reference/local-run-controller.md)。H01–H05 在 `feat/host-research-mcp` 实现，
+CPU 范围验收见[H 记录](../changes/20260920-host-research-mcp-a81f2c.md)，使用见[宿主机 MCP](../reference/host-research-mcp.md)。
+下文保留原任务拆分；实际集成以 Git 为准。
 
 ## 1. 从哪里开始
 
-**A/B 批提供初始化和规划，C 批编译冻结 Task，D 批形成小型 CPU 容器科研闭环；下一步进入 H01 长期环境与 Job 契约。**
+**A/B 批提供初始化和规划，C 批编译冻结 Task，D 批形成小型 CPU 容器科研闭环；H 批补齐宿主机 MCP 与长期 Job 的 CPU 路径；后续推进实际科研试用、环境准备和结果分析。**
 
 第一个可验收结果是：用户提供一句研究目标和目标目录，系统创建项目框架，完整保存原始目标，
 退出后重新打开仍能找到同一个项目；重复初始化不会覆盖文件。此时不需要模型、Docker、GPU 或 MCP。
