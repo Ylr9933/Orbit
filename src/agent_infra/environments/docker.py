@@ -51,7 +51,10 @@ class DockerEnvironment:
         *,
         artifact_limit_bytes: int = 1024**3,
         log_limit_bytes: int = 8 * 1024**2,
+        gpu_mode: str = "legacy",
     ) -> None:
+        if gpu_mode not in {"legacy", "cdi"}:
+            raise ValueError("GPU mode must be legacy or cdi")
         self.state_dir = state_dir.resolve()
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._owner = uuid.uuid4().hex
@@ -60,6 +63,7 @@ class DockerEnvironment:
         self._lock = threading.RLock()
         self._artifact_limit = artifact_limit_bytes
         self._log_limit = log_limit_bytes
+        self._gpu_mode = gpu_mode
 
     def _docker(self, args: list[str]) -> str:
         result = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=20)
@@ -263,7 +267,11 @@ class DockerEnvironment:
                     f"type=bind,src={spec.private_home.resolve()},dst={spec.home_target}",
                 ]
             if spec.gpu_device_ids:
-                args += ["--gpus", '"device=' + ",".join(spec.gpu_device_ids) + '"']
+                if self._gpu_mode == "cdi":
+                    for device_id in spec.gpu_device_ids:
+                        args += ["--device", f"nvidia.com/gpu={device_id}"]
+                else:
+                    args += ["--gpus", '"device=' + ",".join(spec.gpu_device_ids) + '"']
             for key, value in command.environment:
                 if not key or "=" in key or "\0" in key + value:
                     raise ValueError("invalid environment variable")
@@ -288,7 +296,12 @@ class DockerEnvironment:
                     for req in (limits.get("DeviceRequests") or [])
                     for device in (req.get("DeviceIDs") or [])
                 )
-                if set(allocated) != set(spec.gpu_device_ids):
+                expected = (
+                    {f"nvidia.com/gpu={device_id}" for device_id in spec.gpu_device_ids}
+                    if self._gpu_mode == "cdi"
+                    else set(spec.gpu_device_ids)
+                )
+                if set(allocated) != expected:
                     raise RuntimeError("container GPU mapping does not match lease")
                 item.started_at = time.monotonic()
                 item.process = subprocess.Popen(

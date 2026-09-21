@@ -44,8 +44,11 @@ def test_doctor_reports_missing_runtime_without_mutation() -> None:
     result = gpu_doctor(snapshot(), locate=lambda name: "/bin/" + name, command=command)
     assert result["ready"] is False
     assert result["gpu_devices"][0]["device_id"] == "GPU-one"
-    assert any("no nvidia runtime" in issue for issue in result["issues"])
-    assert calls == [["docker", "info", "--format", "{{json .Runtimes}}"]]
+    assert any("neither NVIDIA runtime" in issue for issue in result["issues"])
+    assert calls == [
+        ["docker", "info", "--format", "{{json .Runtimes}}"],
+        ["nvidia-ctk", "cdi", "list"],
+    ]
 
 
 def test_smoke_uses_one_uuid_local_image_and_own_cleanup() -> None:
@@ -53,12 +56,14 @@ def test_smoke_uses_one_uuid_local_image_and_own_cleanup() -> None:
 
     def command(argv, **kwargs):
         calls.append(argv)
+        if argv[0] == "nvidia-ctk":
+            return subprocess.CompletedProcess(argv, 0, "nvidia.com/gpu=GPU-one\n", "")
         if argv[1] == "info":
-            return subprocess.CompletedProcess(argv, 0, '{"nvidia":{}}', "")
+            return subprocess.CompletedProcess(argv, 0, '{"runc":{}}', "")
         if argv[1] == "image":
             return subprocess.CompletedProcess(argv, 0, "sha256:abc\n", "")
         if argv[1] == "run":
-            return subprocess.CompletedProcess(argv, 0, "cuda_ok Test GPU True\n", "")
+            return subprocess.CompletedProcess(argv, 0, "CUDA computation passed: 3.75\n", "")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     result = gpu_smoke(
@@ -69,11 +74,12 @@ def test_smoke_uses_one_uuid_local_image_and_own_cleanup() -> None:
         command=command,
     )
     assert result["smoke"] == "passed"
-    run = calls[2]
-    assert run[run.index("--gpus") + 1] == '"device=GPU-one"'
+    run = calls[3]
+    assert run[run.index("--device") + 1] == "nvidia.com/gpu=GPU-one"
     assert run[run.index("--pull=never") + 1] == "--network=none"
     assert run[run.index("--entrypoint") + 2] == "sha256:abc"
-    assert calls[3] == ["docker", "rm", "-f", run[run.index("--name") + 1]]
+    assert "cuLaunchKernel" in run[-1]
+    assert calls[4] == ["docker", "rm", "-f", run[run.index("--name") + 1]]
 
 
 def test_smoke_rejects_busy_gpu_before_container_and_reports_failed_cuda() -> None:
@@ -81,6 +87,8 @@ def test_smoke_rejects_busy_gpu_before_container_and_reports_failed_cuda() -> No
 
     def command(argv, **kwargs):
         calls.append(argv)
+        if argv[0] == "nvidia-ctk":
+            return subprocess.CompletedProcess(argv, 0, "nvidia.com/gpu=GPU-one\n", "")
         if argv[1] == "info":
             return subprocess.CompletedProcess(argv, 0, '{"nvidia":{}}', "")
         if argv[1] == "image":
@@ -97,7 +105,7 @@ def test_smoke_rejects_busy_gpu_before_container_and_reports_failed_cuda() -> No
             locate=lambda _: "/bin/tool",
             command=command,
         )
-    assert len(calls) == 1
+    assert len(calls) == 2
     result = gpu_smoke(
         snapshot(),
         device_id="GPU-one",

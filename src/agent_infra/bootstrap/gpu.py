@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 
 from agent_infra.resources.api import HostResourceSnapshot
 
@@ -28,6 +29,7 @@ def gpu_doctor(
     if not toolkit:
         issues.append("nvidia-ctk is unavailable; install NVIDIA Container Toolkit")
     runtimes: list[str] = []
+    cdi_devices: list[str] = []
     if locate("docker") is None:
         issues.append("Docker CLI is unavailable")
     else:
@@ -46,10 +48,28 @@ def gpu_doctor(
                 if not isinstance(parsed, dict):
                     raise ValueError("invalid Docker runtime list")
                 runtimes = sorted(str(name) for name in parsed)
-                if "nvidia" not in runtimes:
-                    issues.append("Docker has no nvidia runtime; configure Toolkit for Docker")
         except (OSError, subprocess.SubprocessError, ValueError) as error:
             issues.append(f"Docker runtime check failed: {type(error).__name__}")
+    if toolkit:
+        try:
+            listed = command(
+                ["nvidia-ctk", "cdi", "list"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                check=False,
+            )
+            if listed.returncode == 0:
+                cdi_devices = sorted(
+                    line.strip()
+                    for line in listed.stdout.splitlines()
+                    if line.strip().startswith("nvidia.com/gpu=")
+                )
+        except (OSError, subprocess.SubprocessError):
+            pass
+    observed_cdi = any(f"nvidia.com/gpu={gpu.device_id}" in cdi_devices for gpu in snapshot.gpus)
+    if "nvidia" not in runtimes and not observed_cdi:
+        issues.append("Docker has neither NVIDIA runtime nor usable NVIDIA CDI devices")
     return {
         "ready": not issues,
         "gpu_devices": [
@@ -65,6 +85,7 @@ def gpu_doctor(
         ],
         "nvidia_toolkit": toolkit,
         "docker_runtimes": runtimes,
+        "cdi_devices": cdi_devices,
         "issues": issues,
     }
 
@@ -89,7 +110,7 @@ def gpu_smoke(
     if observed[device_id].memory_free_bytes < 1024**3:
         raise ValueError("smoke GPU has less than 1 GiB free memory")
     if not image or image.startswith("-"):
-        raise ValueError("supply an existing local CUDA/PyTorch image")
+        raise ValueError("supply an existing local Python image")
     try:
         inspected = command(
             ["docker", "image", "inspect", "--format", "{{.Id}}", image],
@@ -99,18 +120,14 @@ def gpu_smoke(
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as error:
-        raise ValueError(f"CUDA image inspection failed: {type(error).__name__}") from error
+        raise ValueError(f"Python image inspection failed: {type(error).__name__}") from error
     image_id = inspected.stdout.strip()
     if inspected.returncode != 0 or not image_id.startswith("sha256:"):
-        raise ValueError("CUDA/PyTorch image is not available locally; no image was pulled")
+        raise ValueError("Python image is not available locally; no image was pulled")
     name = "agent-infra-gpu-smoke-" + uuid.uuid4().hex[:12]
-    script = (
-        "import torch; "
-        "assert torch.cuda.is_available(), 'CUDA unavailable'; "
-        "x=torch.randn((64,64),device='cuda',requires_grad=True); "
-        "(x@x).square().mean().backward(); torch.cuda.synchronize(); "
-        "print('cuda_ok',torch.cuda.get_device_name(0),x.grad is not None)"
-    )
+    script = Path(__file__).with_name("cuda_probe.py").read_text(encoding="utf-8")
+    cdi_devices = diagnosis["cdi_devices"]
+    cdi = isinstance(cdi_devices, list) and f"nvidia.com/gpu={device_id}" in cdi_devices
     try:
         result = command(
             [
@@ -127,8 +144,8 @@ def gpu_smoke(
                 "--read-only",
                 "--tmpfs",
                 "/tmp:rw,nosuid,size=128m",
-                "--gpus",
-                f'"device={device_id}"',
+                "--device" if cdi else "--gpus",
+                f"nvidia.com/gpu={device_id}" if cdi else f'"device={device_id}"',
                 "--entrypoint",
                 "python",
                 image_id,
@@ -140,7 +157,7 @@ def gpu_smoke(
             timeout=90,
             check=False,
         )
-        passed = result.returncode == 0 and "cuda_ok" in result.stdout
+        passed = result.returncode == 0 and "CUDA computation passed" in result.stdout
         return {
             "ready": passed,
             "smoke": "passed" if passed else "failed",

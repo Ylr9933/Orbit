@@ -100,12 +100,19 @@ def serve_controller(
                     else str(issues)
                 )
                 raise ValueError("GPU runtime unavailable: " + detail)
+        cdi_devices = diagnosis["cdi_devices"] if allowed_gpus else []
+        gpu_mode = (
+            "cdi"
+            if isinstance(cdi_devices, list)
+            and all(f"nvidia.com/gpu={gpu.device_id}" in cdi_devices for gpu in allowed_gpus)
+            else "legacy"
+        )
         resources = LocalResourceManager(
             NodeCapacity(snapshot.node_id, cpu, memory_bytes, gpus=allowed_gpus)
         )
         resources.update_snapshot(snapshot)
         records = LocalRecordsStore(root / "records")
-        environment = DockerEnvironment(root / "environments")
+        environment = DockerEnvironment(root / "environments", gpu_mode=gpu_mode)
         service = LocalRunService(
             environment, resources, root / "work", node_id=snapshot.node_id, records=records
         )
@@ -177,6 +184,7 @@ def serve_controller(
                         "cpu": cpu,
                         "memory_bytes": memory_bytes,
                         "authorized_gpu_uuids": [gpu.device_id for gpu in allowed_gpus],
+                        "gpu_mode": gpu_mode if allowed_gpus else "disabled",
                     }
                 ),
                 flush=True,

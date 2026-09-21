@@ -291,12 +291,12 @@ Codex 作为使用远程模型的 Agent，通常不需要自己占用本机 GPU�
 | [resources/monitor.py](../../src/agent_infra/resources/monitor.py) | 通过 nvidia-smi 观测 UUID、显存、利用率和计算进程数量 |
 | [resources/api.py](../../src/agent_infra/resources/api.py)、[local.py](../../src/agent_infra/resources/local.py) | GPU 请求/授权容量/Lease；从授权设备中筛选、排除已有 Lease 与观测到的外部占用 |
 | [environments/api.py](../../src/agent_infra/environments/api.py) | SandboxSpec 的 gpu_device_ids |
-| [environments/docker.py](../../src/agent_infra/environments/docker.py) | 将设备传给 Docker --gpus，并检查 DeviceRequests 与 Lease 设备一致 |
+| [environments/docker.py](../../src/agent_infra/environments/docker.py) | 将设备传给 Docker CDI 或旧版 --gpus，并检查 DeviceRequests 与 Lease 设备一致 |
 | [runs/service.py](../../src/agent_infra/runs/service.py) | 编译任务执行内核将 lease.gpu_device_ids 传给求解/评测环境 |
 
 缺口主要在接入与真实验收：
 
-- G1/G2 任务分支已加入 `resource gpu-doctor`、`resource gpu-smoke` 和 Controller `--gpu-uuid` 授权入口；未授权时 GPU 容量仍为空。当前服务器缺 NVIDIA Container Toolkit/Docker runtime，真实容器 GPU 链路未通过。具体操作见[单机 GPU 说明](gpu-local.md)。
+- G1/G2 叠加任务分支已加入 `resource gpu-doctor`、`resource gpu-smoke` 和 Controller `--gpu-uuid` 授权入口；未授权时 GPU 容量仍为空。当前服务器已安装 NVIDIA Container Toolkit，指定 GPU 的容器 CUDA 计算及 DockerEnvironment 清理通过，冻结 Task + Codex 的完整 GPU Run 尚未验收。具体操作见[单机 GPU 说明](gpu-local.md)。
 - [runs/research.py](../../src/agent_infra/runs/research.py) 的 `_open` 只创建 CPU/内存请求，SandboxSpec 未传 GPU；[MCP environment_open](../../src/agent_infra/gateways/mcp/research.py) 也没有 GPU 参数。
 - E 环境准备针对 CPU wheel，尚无 CUDA 训练环境验证；不存在本项目真实 GPU 训练与清理验收证据。
 
@@ -305,18 +305,18 @@ Codex 作为使用远程模型的 Agent，通常不需要自己占用本机 GPU�
 
 ### 4.2 Docker 原理与平台入口
 
-NVIDIA 官方支持以 `--gpus device=GPU-UUID` 指定容器设备，前提是驱动和容器运行时配置正确。
+NVIDIA 官方支持以 `--gpus device=GPU-UUID` 指定容器设备，前提是驱动和容器运行时配置正确；本机 Docker 29 使用已验证的 CDI 形式。
 下面仅展示 Docker 层的原理；平台已实现的诊断与授权命令见[单机 GPU 说明](gpu-local.md)。设备 UUID 与镜像必须替换为经授权的实际值：
 
 ```bash
 docker run --rm \
-  --gpus device=GPU-REPLACE_WITH_APPROVED_UUID \
+  --device nvidia.com/gpu=GPU-REPLACE_WITH_APPROVED_UUID \
   --cpus 2 --memory 8g \
   YOUR_EXISTING_CUDA_PYTORCH_IMAGE \
   python -c 'import torch; assert torch.cuda.is_available(); x=torch.randn(64,64,device="cuda"); y=x@x; torch.cuda.synchronize(); print(y.device)'
 ```
 
-这里直接运行 Docker 不会自动纳入本平台的 Project、Lease 和 Records。G2 冻结 Task 已接通平台入口，但真实 CUDA 容器验收仍待宿主机运行时配置。
+这里直接运行 Docker 不会自动纳入本平台的 Project、Lease 和 Records。当前 Docker 29 的 `--gpus` 形式在本机报 `AMD CDI spec not found`；本项目在可用时使用 CDI `--device nvidia.com/gpu=UUID`。G2 冻结 Task 已接通平台入口，但包含 Codex 的真实 GPU Run 仍待验收。
 资料：[NVIDIA Toolkit 安装](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)、
 [设备选择](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html)。
 
@@ -346,10 +346,10 @@ print(next(model.parameters()).device, loss.item())
 
 只做单机、指定设备、已有 CUDA/PyTorch 镜像即可开始，不必同时开发 Ray、MIG 或多卡分布式训练：
 
-1. G1/G2 任务分支已实现 Controller UUID 允许列表、诊断命令和冻结 Task 准入；仍需在配置好 Toolkit 的主机验证真实 CUDA 容器及任务。
+1. G1/G2 叠加任务分支已实现 Controller UUID 允许列表、诊断命令和冻结 Task 准入；指定 UUID 的真实 CUDA 容器及 DockerEnvironment 已验证，完整冻结任务仍需验收。
 2. G3 待实现 CLI/MCP 长期环境 GPU 请求，将 Lease 中的设备传入 SandboxSpec。
 3. 先复用已准备的训练镜像，做可见设备检查、CUDA 张量运算与一次短训练，记录 GPU UUID、镜像、框架/运行库版本和实际指标。
 4. 验证取消、异常及 Controller 重启后的容器清理和资源释放；清理未确认时不重新分配设备。
 5. 再补环境模板自动构建和 Web 参数输入。
 
-本次未修改 Docker/驱动配置，也未在这台主机运行真实 GPU 容器。
+本次仅新增宿主机 Container Toolkit 与 Docker runtime 配置，没有修改 GPU 驱动；Docker 配置重载保留了原有容器。验证范围见[单机 GPU 说明](gpu-local.md)。

@@ -85,7 +85,7 @@ def run(
         "gpu-smoke", help="Run a bounded CUDA calculation in an existing local image"
     )
     smoke.add_argument("--gpu-uuid", required=True)
-    smoke.add_argument("--image", required=True, help="Existing local CUDA/PyTorch image")
+    smoke.add_argument("--image", required=True, help="Existing local Python image")
     task = commands.add_parser("task", help="Prepare and inspect task manifests")
     task_commands = task.add_subparsers(dest="task_command", required=True)
     for name in ("validate", "view", "freeze"):
