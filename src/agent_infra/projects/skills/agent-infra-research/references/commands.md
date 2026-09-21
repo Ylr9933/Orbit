@@ -104,6 +104,56 @@ This creates `.agents/skills/agent-infra-research/`; identical installation is r
 are preserved with a conflict. Without `--install`, the command returns packaged instructions as JSON.
 Other Agent providers may consume the same instructions and CLI explicitly; their skill discovery is separate.
 
+## Execute an authorized experiment through the Controller
+
+Record the user's host/Docker choice in existing `brief.constraints`, for example
+"Execution mode: host, explicitly selected by the user; results are external to Controller/Records."
+This is persisted planning text, not a runtime backend selector or a machine-enforced policy.
+Host mode may use the authorized local environment; do not install packages or expand resource scope
+merely because the user chose host. Use the Controller workflow below only for Docker mode.
+`study analysis-save` requires actual platform Run references and cannot register host-only results.
+
+Planning save/confirm does not execute an experiment. For a platform trial, a project-local script
+and report are not execution evidence: obtain actual platform Run/Job IDs and Records artifacts.
+Preserve external results as external; never register a host run as if it had executed in Docker.
+
+For a host Agent controlling a research environment, first read the bound MCP `project_context`.
+Then use `environment_open` (existing Python image or validated environment_lock, approved CPU/memory),
+`workspace_write` for the script and required small inputs, and `job_start` with an explicit timeout.
+Read `job_logs` and `environment_status`, collect results, and call `environment_close` when finished.
+Check `cleanup_complete`, `lease_released` and `archive_complete`; read durable artifacts and save an
+analysis with their real IDs. A Job can fail even when the tool call succeeds. Closing MCP is not
+closing the environment. If interrupted, inspect existing Runs/Jobs before starting another one.
+
+The host project is not automatically mounted. Preserve relative paths required by the script when
+copying inputs; container workdir is /workspace. Do not test the training script on the host as an
+implicit substitute. Workspace writes accept UTF-8 up to 32 KiB; report larger/material transfer
+requirements instead of assuming a host file is present. Do not overwrite earlier experiment results.
+
+The same operations are available through the CLI when MCP is unavailable. Replace all uppercase
+IDs/paths with actual values, use the same state directory and stable session, and capture returned IDs:
+
+```bash
+agent-infra research context --project-id PROJECT --state-dir STATE --session-id SESSION
+agent-infra research open --project-id PROJECT --state-dir STATE --session-id SESSION --operation-id OPEN --image IMAGE --cpu 1 --memory-gib 2
+agent-infra research write RUN code/train.py --project-id PROJECT --state-dir STATE --session-id SESSION --operation-id WRITE --file LOCAL_SCRIPT
+agent-infra research start RUN --project-id PROJECT --state-dir STATE --session-id SESSION --operation-id START --timeout 120 --argv python3 code/train.py
+agent-infra research logs RUN JOB --project-id PROJECT --state-dir STATE --session-id SESSION --cursor 0
+agent-infra research status RUN --project-id PROJECT --state-dir STATE --session-id SESSION
+agent-infra research close RUN --project-id PROJECT --state-dir STATE --session-id SESSION --operation-id CLOSE
+agent-infra research artifacts RUN --project-id PROJECT --state-dir STATE --session-id SESSION
+```
+
+CPU/memory/time here are examples, not authorization. `--argv` must be last. Mutations need an
+operation ID: retry the same intent with the same ID and parameters; use new IDs for new experiments.
+If Controller, Docker, dependencies or access are unavailable, report that failure. Do not silently
+switch to a host calculation or bypass platform admission by issuing Docker commands yourself.
+
+For a container Agent run, use `project compile` on the adopted experiment and its execution YAML,
+then `run preflight` and `run submit` with the resulting Task ID/revision and explicitly authorized
+model/network/time choices. Inspect each command's `--help`; the two execution paths are alternatives,
+not steps to run twice. The current entrypoints support CPU; do not infer GPU support from monitoring.
+
 ## Analyze and iterate (I batch)
 
 A running local Controller is required. Use its state directory and project UUID:

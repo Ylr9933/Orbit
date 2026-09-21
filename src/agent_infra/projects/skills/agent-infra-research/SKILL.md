@@ -1,9 +1,9 @@
 ---
 name: agent-infra-research
-description: Develop or revise a research question and experiment plan with the user in an Agent Infra project, analyze recorded results, preserve decisions and resume authorized experiments across sessions using the project CLI.
+description: Plan research in an Agent Infra project, preserve the user's host or Docker execution choice, run authorized platform experiments through MCP or CLI and analyze recorded results across sessions.
 ---
 
-# Research planning in Agent Infra
+# Research workflow in Agent Infra
 
 Use the existing Agent conversation, including its planning mode when useful. The platform stores
 research state; it does not supply a separate reasoning loop. Read [commands](references/commands.md)
@@ -40,6 +40,34 @@ Do not reconfirm ordinary draft saves. Confirmation selects a plan; it does not 
 If the current Agent mode forbids writes, discuss the proposal there and save after entering a mode
 that permits the requested write. Do not bypass the Agent's restrictions.
 
+## Agree on execution mode and preserve it
+
+Before the first experiment, use the user's explicit choice or the adopted plan's execution mode.
+If neither establishes it, recommend host for a lightweight calculation using existing dependencies,
+or Docker for environment isolation, dependency changes, managed jobs or a platform execution trial,
+and ask the user to choose. Task simplicity is a recommendation, not permission to switch modes.
+Save the choice and its source in the existing brief.constraints prose and confirm it with the plan;
+do not invent a new schema field. Reuse the choice on later rounds unless the user changes it.
+
+For host mode, execute only within the user's scope and label results as external host execution.
+Current host scripts do not automatically get a platform Run, container isolation or full Records
+capture. Preserve code, parameters and outputs in the project, but do not invent Run/artifact IDs or
+pass local files off as platform evidence. A locally written run_manifest.json is not a Run.
+
+For Docker mode, or an explicitly requested Docker/resource-isolation/Records trial, execute through
+the Controller; do not substitute host Python, a notebook, subprocess, or manually created Docker.
+Host-side planning, authoring files and calling the platform CLI remain appropriate in either mode.
+
+Before executing, read the execution section in [commands](references/commands.md). Use the bound MCP
+tools for an interactive research environment, or compile and submit a frozen Task for a container
+Agent run. Preserve the adopted method, actual user authorization and resource/time limits. If the
+platform cannot execute, report the concrete error; use the equivalent platform CLI if available,
+but do not silently fall back to running the experiment on the host or raise its budget.
+
+Obtain the platform run_id and job_id (for research Jobs) before claiming execution started. On
+completion, read the actual outcome and archive, verify cleanup/release, and cite Run/artifact/member
+references in the analysis. If records are missing, report the execution as unverified or external.
+
 At handoff, summarize the chosen approach, remaining unknowns and next action. Use the saved context
 on the next session instead of assuming the chat history is available. Do not reinitialize the project.
 When results exist, read the analysis/iteration section of [commands](references/commands.md).
@@ -47,4 +75,5 @@ Separate measured values from explanations and uncertainties. Cite actual Run/ar
 not rank incompatible data versions as improvements. Suggest the next informative experiment.
 Use existing workflow authorization to continue only the listed frozen tasks. If a proposed method,
 data or budget is outside it, save the recommendation for the user's decision. Unknown provider costs
-are not zero costs. Container/runtime administration remains outside this skill.
+are not zero costs. Host driver/daemon administration remains outside this skill; creating and
+controlling an authorized research environment through platform tools is part of this workflow.

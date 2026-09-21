@@ -41,6 +41,19 @@ docker image ls
 
 ## 2. 首次建议走宿主机 Agent + MCP + Docker
 
+用户可以选择实验在**宿主机**还是 **Docker** 中运行。轻量计算、已有依赖和快速查看结果可选宿主机；
+需要隔离依赖、后台任务管理或验证平台执行链路时选 Docker。Agent 可以建议，但不能仅因任务简单就自行换模式。
+首次执行前确认一次即可；已有明确指令或已采用方案时沿用，不反复询问。
+选择写入研究方案现有 `brief.constraints` 文本并随版本保存；目前这是协作约定，不是新增的运行后端参数。
+
+| 用户选择 | 当前怎么执行 | 结果边界 |
+| --- | --- | --- |
+| 宿主机 | Agent 在用户允许的本机环境运行脚本 | 可保存项目文件；尚无自动平台 Run、容器隔离或完整 Records 采集 |
+| Docker | Agent 通过 MCP/CLI 调用 Controller | 平台保存 Run/Job、日志、归档和资源释放事实 |
+
+这份首次试用流程要验证 Docker 与 Records，所以以下步骤选择 Docker。用户若只做本地计算，可跳过 Controller/MCP/Web 执行步骤，
+按其选定范围运行并标明外部本机结果；不能将它报告为平台容器验收。
+
 这条路径接近日常科研交互，方便中途修订实验：
 
 ```text
@@ -116,6 +129,7 @@ codex --model gpt-5.6-sol
 
 > 使用 `$agent-infra-research`，读取当前项目上下文。我的目标是比较两个学习率对线性回归收敛速度和最终误差的影响。
 > 使用固定随机种子的合成数据，只比较两个学习率，最多 1 CPU、2 GiB，不使用 GPU。
+> 这次选择 Docker 执行，目的是同时验证平台链路；请把这个选择写入研究方案。
 > 先完善研究背景、问题、方法、指标和输出约定，通过项目 CLI 保存方案。
 > 遇到影响实验的重要未知项向我询问。现在只做规划，等我确认后再执行。
 
@@ -123,11 +137,18 @@ codex --model gpt-5.6-sol
 满意后再发送：
 
 > 我采用你刚保存的这一版方案，请记录对应版本的确认。
+> 这次同时验收 Agent Infra 执行链路。先读取绑定项目的 project_context，确认项目正确。
 > 使用 `infra-first-study` MCP，在 `python:3.12-slim` 环境中执行两个实验；仅使用 Python 标准库，容器不联网。
 > 申请最多 1 CPU、2 GiB，每个 Job 最多运行 120 秒；实验程序在 Docker 内执行。
+> 通过 environment_open 取得 run_id，通过 workspace_write 放入代码和必要输入，再调用 job_start 取得 job_id。
+> 平台操作失败时报告实际错误；可以用等价 agent-infra CLI，但不要直接在宿主机运行训练脚本，也不要绕过平台手动 docker run。
 > 两组实验分别保存参数、随机种子、损失曲线 CSV、指标 JSON 和分析报告，避免相互覆盖。
 > 读取实际结果并归档，结束环境后检查清理、归档和资源释放状态；再用 `analysis_save` 保存引用实际产物的分析。
 > 完成后停止，后续实验先向我提出建议。
+
+规划 Skill 是协作说明，不是宿主机执行沙箱；即使安装 Skill，Agent 仍可能选错执行方式。
+看到代码和本地结果文件，并不证明平台运行成功。执行开始应有平台返回的 run_id/job_id，结束应有 Records 产物。
+仅自行写出 `run_manifest.json` 不能代替这些证据。
 
 120 秒是实验 Job 的时限，不是 Codex 会话的费用/模型调用硬上限。模型会话按自己批准的预算使用。
 若需要 NumPy 等依赖，先让 Agent 通过环境准备工具生成并验证 Python CPU 环境，再使用环境锁；基础 Python 镜像没有这些包。
@@ -168,8 +189,88 @@ ssh -N -L 8765:127.0.0.1:8765 wangxuehai@服务器地址
 宿主机 Agent 的平台外操作不会自动完整采集；需显式导入选定的原生轨迹文件。
 详细限额、取消和恢复见[宿主机科研指南](../reference/host-research-mcp.md)。
 
+### 如果 Agent 已经在宿主机执行了实验
+
+先保留已有代码和结果，明确标记为外部本机执行。查看平台：
+
+```bash
+/disk/disk_20T/wangxuehai/infra/.venv/bin/agent-infra run list \
+  --project-id PROJECT_ID \
+  --state-dir /disk/disk_20T/wangxuehai/infra-state-personal
+```
+
+若没有该次 Run，不能把这次实验算作 Docker/Records 验收。服务和 MCP 都在线只证明可连接，不能证明 Agent 使用过执行工具。
+让 Agent 重新读取本项目 Skill，并明确要求复用已确认的方法，通过上述 platform tools 重跑；使用新 Run，保留原本机结果，
+取得真实归档后再创建 Analysis。重跑需要用户实际认可的资源和时间范围。
+
+Skill 安装是文件副本，更新仓库不会自动更新已有项目。安装命令遇到不同内容会保护性报冲突，不能为了升级覆盖用户修改。
+应先对比旧副本，备份后仅更新确认未自定义的文件；已打开的 Agent 会话需要显式重新读取它们。
+
+### 不用 Docker，能否完整记录？
+
+Records 不依赖 Docker。执行隔离和证据采集是两件事；决定记录完整性的关键是平台是否参与了执行和采集。
+
+| 模式 | 当前状态 | 可以依赖的记录 |
+| --- | --- | --- |
+| Agent 直接运行宿主机脚本 | 可由用户选择；属于平台外执行 | 用户/Agent 实际保存的代码、数据、指标和报告；不自动产生平台 Run/Job |
+| 平台管理的宿主机执行 | **尚未实现，后续建议** | 目标是共用 Records，管理 Run/Job、进程、日志、输入版本和产物；没有容器级隔离 |
+| Controller 管理 Docker 执行 | 已实现 | 平台操作、Run/Job、进程日志及所归档产物；原生 Agent 轨迹依执行路径与提供方采集能力而定 |
+
+平台管理的宿主机模式应在启动前创建 Run，记录参数、工作目录、环境/代码/数据版本；执行中采集 stdout/stderr、
+状态和资源观测；结束时收集指标、指定产物与进程清理结果。它应复用现有 Records，而不是另建一套本机日志格式。
+文件采集范围必须明确，不能声称自动记录宿主机上的所有文件变化或所有外部操作。
+
+Agent 轨迹是另外一层：平台操作可直接记录，Agent 的消息和工具事件需从原生会话流采集、保留原文并规范化。
+当前宿主机原始流导入绑定已有研究 Run，不是给任意本机脚本自动补建 Run 的入口。
+只有本地报告时，应保留为外部证据，不能为了通过 analysis-save 的校验伪造 Run/Artifact。
+
+即使平台管理执行，也要标记截断、崩溃窗口、平台外调用和提供方未输出的字段。
+CLI 通常没有 token/logprob；这些缺失不能补造。Docker 的使用本身也不保证宿主机 Agent 的全部活动被采集。
+后续可以先实现不带 Docker 的受控命令执行与 Records 接入，再增强原生会话采集；这不需要 Ray。
+
 若要先测试“容器内 Codex 自主执行”的另一条路径，按[CPU 统计实验](../../examples/research/cpu-statistics/README.md)
 执行保存/确认方案、编译 Task、预检、提交和读取产物的流程；本机已有示例镜像时可复用，无需重复构建。
+
+### 使用 Docker，实验数据保存在哪里？
+
+当前 H 路径（宿主机 Agent 控制长期科研环境）把宿主机的 Run 工作区绑定到容器 `/workspace`。
+容器写入此目录就是写入宿主机；删除容器不会删除绑定的工作区。项目源码目录不会自动挂载进去，
+两者也没有自动双向同步。下面是以本指南 state-dir 为根的实际存储布局；目录按需创建：
+
+```text
+infra-state-personal/controller/
+├── workspaces/<run_id>/       # H 路径：容器 /workspace 对应的宿主机目录
+├── job-logs/<job_id>          # H 路径：采集到的 Job 合并输出
+├── archives/<archive_id>/     # H 路径：关闭环境时复制的工作区快照
+└── records/
+    ├── records.sqlite3       # Run、Attempt、事件、流和产物索引
+    ├── blobs/sha256/          # 按内容摘要保存的文件、日志、原始数据
+    └── spool/                # 尚在采集的流数据
+```
+
+训练脚本应明确把需要保留的结果写到 `/workspace` 下，例如 `outputs/metrics.json`、
+`outputs/figures/`、`outputs/checkpoints/`；这些是建议约定，不是自动创建的目录。
+程序必须主动写出指标和 checkpoint，平台不能从内存里自动恢复它们。`/tmp` 和其他未挂载路径
+不属于工作区归档范围。Job 会采集标准输出/错误（H 路径合并为一条流），但不会自动把每个
+子进程的内部操作还原成独立工具事件；宿主机 Agent 原生会话仍需单独导入。
+
+正常关闭时，平台停止 Job、确认容器清理，再复制宿主机工作区并写入 Records。
+检查 `cleanup_complete`、`lease_released` 和 `archive_complete`，不能只看进程退出码。
+归档失败时返回 `archive_failed`，工作区保留在 state-dir 中；保留文件不等于已完成 Records 归档。
+冻结 Task 的 D 路径采用另一套工作目录，只收集 Task 输出约定指定的提交路径，同样持久保存到 Records。
+
+当前实现适合小实验：工作区/提交收集默认限制为 **1 GiB**，H 单 Job 日志捕获上限为 **8 MiB**，
+在线文件读取/HTTP 产物下载还有 **16 MiB** 限制。大输入也会计入 H 的整工作区归档，
+并产生工作区、快照和 Records 的存储开销。因此大型数据集与模型权重还需要补充独立数据存储、
+只读挂载、流式上传/下载与 checkpoint 管理，不能把现有归档当成已完成的大规模训练存储方案。
+
+宿主机持久化不等于备份。应保留并备份项目目录与整个 state-dir（包括数据库和 blob 文件）；
+运行中备份需要一致性方案，不能只复制 SQLite 主文件或只备份项目的 `docs/`。
+当前没有自动异地备份。不要把实验数据、认证材料或 state-dir 提交到 Git。
+
+实现入口：[H 执行和归档](../../src/agent_infra/runs/research.py)、
+[容器挂载和提交收集](../../src/agent_infra/environments/docker.py)、
+[本地 Records](../../src/agent_infra/records/local.py)。本节来自源码核对，未新增 Docker 实验。
 
 ## 4. GPU：代码可用与平台接通是两回事
 
