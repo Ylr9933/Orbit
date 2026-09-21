@@ -4,10 +4,14 @@ import type { Capabilities, ControlRun } from "../api/workflow";
 import { Badge, Empty, Notice, Panel } from "../components/common";
 import { ArtifactFiles } from "./execution-artifacts";
 import {
+  filterTimeline,
   groupTimeline,
+  type TimelineFilter,
   timelineDetails,
   timelineStatus,
+  timelineSummary,
   timelineTitle,
+  timelineTone,
 } from "./execution-trace";
 
 function coverageLabel(value: string | undefined): string {
@@ -15,6 +19,27 @@ function coverageLabel(value: string | undefined): string {
   if (value === "partial") return "部分";
   if (value === "unavailable") return "未采集";
   return "未说明";
+}
+
+function statusLabel(value: string | null | undefined): string {
+  if (!value) return "未记录";
+  const labels: Record<string, string> = {
+    accepted: "已接收",
+    running: "运行中",
+    finished: "已结束",
+    quarantined: "隔离待处理",
+    completed: "已完成",
+    complete: "完整",
+    rejected: "被拒绝",
+    failed: "失败",
+    cleanup_failed: "清理失败",
+    cancelled: "已取消",
+    timed_out: "超时",
+    pending: "待执行",
+    not_requested: "未请求",
+    not_run: "未执行",
+  };
+  return labels[value] ?? value;
 }
 
 export function ExecutionList({ runs }: { runs: ControlRun[] }) {
@@ -38,7 +63,7 @@ export function ExecutionList({ runs }: { runs: ControlRun[] }) {
                 </a>
               </td>
               <td>
-                {run.state}
+                {statusLabel(run.state)}
                 {run.cancel_requested
                   ? run.state === "finished"
                     ? " · 已处理取消请求"
@@ -46,7 +71,9 @@ export function ExecutionList({ runs }: { runs: ControlRun[] }) {
                   : ""}
               </td>
               <td>
-                {run.result?.execution_status ?? run.result?.status ?? "—"}
+                {statusLabel(
+                  run.result?.execution_status ?? run.result?.status,
+                )}
               </td>
               <td>{new Date(run.created_at).toLocaleString()}</td>
             </tr>
@@ -95,7 +122,9 @@ export function ExecutionRecent({ token }: { token: string }) {
   );
 }
 function Events({ token, path }: { token: string; path: string }) {
-  const [cursor, setCursor] = useState<string | null>(null);
+  const [pages, setPages] = useState<(string | null)[]>([null]);
+  const [filter, setFilter] = useState<TimelineFilter>("highlights");
+  const cursor = pages[pages.length - 1];
   const events = useData<{
     items: TraceEvent[];
     next_cursor: string | null;
@@ -106,12 +135,13 @@ function Events({ token, path }: { token: string; path: string }) {
     5000,
   );
   const timeline = groupTimeline(events.data?.items ?? []);
+  const visible = filterTimeline(timeline, filter);
   const coverage = events.data?.coverage;
   return (
     <Panel title="平台执行记录">
       <p className="muted">
-        展示平台已记录的资源、容器、工具调用和任务状态。Codex
-        的完整对话需另外采集；这里的事件不等于模型原生轨迹。
+        查看资源、容器、工具调用和任务状态。默认突出实验节点；切换“全部”可看本页所有公开事件。
+        这里不是 Codex 原生会话轨迹。
       </p>
       {coverage && Object.keys(coverage).length > 0 && (
         <p className="muted">
@@ -122,41 +152,82 @@ function Events({ token, path }: { token: string; path: string }) {
       )}
       {events.data && (
         <p className="muted">
-          本页 {events.data.items.length} 条事件，合并为 {timeline.length}{" "}
-          项；每 5 秒刷新。仅展示允许用户查看的摘要。
+          第 {pages.length} 页：{events.data.items.length} 条事件合并为{" "}
+          {timeline.length} 项；当前显示 {visible.length} 项。每 5
+          秒刷新公开摘要
+          {events.updated ? ` · 最近更新 ${events.updated}` : ""}。
         </p>
       )}
       <Notice error={events.error} />
-      {timeline.map((item) => (
-        <article className="event" key={item.event.id}>
-          <strong>{timelineTitle(item)}</strong>
-          <small>
-            {" "}
-            · {new Date(item.event.at).toLocaleString()} ·{" "}
-            {timelineStatus(item)}
-          </small>
-          {item.event.text && <pre>{item.event.text}</pre>}
-          <details>
-            <summary>查看事件字段</summary>
-            <pre>{timelineDetails(item)}</pre>
-          </details>
-        </article>
-      ))}
-      {events.data?.items.length === 0 && <Empty>本页尚无可见事件。</Empty>}
+      <fieldset className="trace-filters">
+        <legend>显示记录</legend>
+        {(
+          [
+            ["highlights", "重点"],
+            ["all", "全部"],
+            ["tools", "工具调用"],
+            ["agent", "Agent"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={filter === value}
+            onClick={() => setFilter(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </fieldset>
+      {visible.map((item) => {
+        const tone = timelineTone(item);
+        const summary = timelineSummary(item);
+        return (
+          <article className={`event event-${tone}`} key={item.event.id}>
+            <div className="event-heading">
+              <strong>{timelineTitle(item)}</strong>
+              <span className={`event-status event-status-${tone}`}>
+                {timelineStatus(item)}
+              </span>
+            </div>
+            <small title={item.event.at}>
+              {new Date(item.event.at).toLocaleString()}
+              {summary ? ` · ${summary}` : ""}
+            </small>
+            {item.event.text && <pre>{item.event.text}</pre>}
+            <details>
+              <summary>查看事件字段</summary>
+              <pre>{timelineDetails(item)}</pre>
+            </details>
+          </article>
+        );
+      })}
+      {events.data && visible.length === 0 && (
+        <Empty>
+          {filter === "agent"
+            ? "本页没有采集到 Agent 事件；平台操作不等于 Agent 原生轨迹。"
+            : filter === "highlights" && timeline.length
+              ? "本页只有常规查询事件，可切换“全部”查看。"
+              : "本页没有符合条件的公开事件。"}
+        </Empty>
+      )}
       <div className="actions">
         <button
           type="button"
-          disabled={!cursor}
-          onClick={() => setCursor(null)}
+          disabled={pages.length === 1}
+          onClick={() => setPages((current) => current.slice(0, -1))}
         >
-          回到开始
+          上一页
         </button>
         <button
           type="button"
           disabled={!events.data?.next_cursor}
-          onClick={() => setCursor(events.data?.next_cursor ?? null)}
+          onClick={() => {
+            const next = events.data?.next_cursor;
+            if (next) setPages((current) => [...current, next]);
+          }}
         >
-          下一页事件
+          下一页
         </button>
       </div>
     </Panel>
@@ -179,16 +250,18 @@ export function ExecutionDetail({ token, id }: { token: string; id: string }) {
       {value && (
         <>
           <Panel title="运行状态">
-            <Badge>Run：{value.state}</Badge>
+            <Badge>运行阶段：{statusLabel(value.state)}</Badge>
             <p>
               执行结果：
-              {value.result?.execution_status ??
-                value.result?.status ??
-                "进行中 / 待执行"}
+              {value.result
+                ? statusLabel(
+                    value.result.execution_status ?? value.result.status,
+                  )
+                : "进行中 / 待执行"}
             </p>
             <p>
-              评测：{value.result?.evaluation_status ?? "未记录"} · 归档：
-              {value.result?.archive_status ?? "未记录"}
+              评测：{statusLabel(value.result?.evaluation_status)} · 归档：
+              {statusLabel(value.result?.archive_status)}
             </p>
             <p>
               清理完成：{known(value.result?.cleanup_complete)} · 租约释放：
@@ -242,14 +315,14 @@ export function ExecutionDetail({ token, id }: { token: string; id: string }) {
             <Panel title="容器内 Job">
               {value.jobs?.map((job) => (
                 <p key={job.job_id}>
-                  {job.job_id} · Job：{job.state} · exit code：
+                  {job.job_id} · Job：{statusLabel(job.state)} · exit code：
                   {job.exit_code ?? "—"}
                 </p>
               ))}
             </Panel>
           )}
           <ArtifactFiles token={token} path={path} />
-          <Events token={token} path={path} />
+          <Events key={path} token={token} path={path} />
         </>
       )}
     </>

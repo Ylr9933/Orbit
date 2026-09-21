@@ -395,8 +395,64 @@ summary {
 }
 .event {
   border-left: 2px solid #9cccc0;
-  padding: 3px 0 3px 17px;
-  margin-top: 20px;
+  padding: 9px 0 9px 17px;
+  margin-top: 10px;
+  min-width: 0;
+}
+.event-warning {
+  border-left-color: #c76e49;
+}
+.event-success {
+  border-left-color: #3d9b77;
+}
+.event-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.event-status {
+  color: #647e77;
+  background: #f0f5f3;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+.event-status-warning {
+  color: #9a4b2c;
+  background: #fff1e9;
+}
+.event-status-success {
+  color: #267154;
+  background: #eaf6ef;
+}
+.event > small {
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+.trace-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0 18px;
+  padding: 0;
+  max-height: none;
+  overflow: visible;
+  border: 0;
+}
+.trace-filters legend {
+  margin-bottom: 5px;
+  color: #647e77;
+}
+.trace-filters button {
+  padding: 6px 11px;
+  font-size: 12px;
+}
+.trace-filters button[aria-pressed="true"] {
+  background: #e4f3ee;
+  border-color: #8bc3ad;
+  color: #1b6652;
+  font-weight: 600;
 }
 .event strong {
   font-size: 13px;

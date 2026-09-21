@@ -5,6 +5,19 @@ export interface TimelineItem {
   response?: TraceEvent;
 }
 
+export type TimelineFilter = "highlights" | "all" | "tools" | "agent";
+
+const routineTools = new Set([
+  "read",
+  "list",
+  "logs",
+  "status",
+  "artifact",
+  "artifacts",
+  "events",
+  "trajectory",
+]);
+
 const toolLabels: Record<string, string> = {
   open: "启动实验环境",
   close: "关闭环境并归档",
@@ -32,6 +45,16 @@ function field(event: TraceEvent, key: string): string | null {
     : null;
 }
 
+function isToolError(event: TraceEvent): boolean {
+  const payload = event.payload;
+  return (
+    event.type === "tool.failed" ||
+    (payload !== null &&
+      typeof payload === "object" &&
+      (payload as Record<string, unknown>).is_error === true)
+  );
+}
+
 export function groupTimeline(events: TraceEvent[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   const requests = new Map<string, number>();
@@ -52,6 +75,73 @@ export function groupTimeline(events: TraceEvent[]): TimelineItem[] {
   return items;
 }
 
+export function filterTimeline(
+  items: TimelineItem[],
+  filter: TimelineFilter,
+): TimelineItem[] {
+  if (filter === "all") return items;
+  if (filter === "tools")
+    return items.filter((item) => item.event.type.startsWith("tool."));
+  if (filter === "agent")
+    return items.filter((item) => item.event.producer === "agent");
+  return items.filter((item) => {
+    if (timelineTone(item) === "warning") return true;
+    if (item.event.producer === "agent") return true;
+    if (item.event.type === "tool.requested") {
+      const tool = field(item.event, "tool_name");
+      return !tool || !routineTools.has(tool);
+    }
+    if (item.event.type === "tool.completed") {
+      const tool = field(item.event, "tool_name");
+      return !tool || !routineTools.has(tool);
+    }
+    return true;
+  });
+}
+
+export function timelineDuration(item: TimelineItem): string | null {
+  if (!item.response) return null;
+  const elapsed = Date.parse(item.response.at) - Date.parse(item.event.at);
+  if (!Number.isFinite(elapsed) || elapsed < 0) return null;
+  if (elapsed < 1000) return `${elapsed} 毫秒`;
+  if (elapsed < 60_000) return `${(elapsed / 1000).toFixed(1)} 秒`;
+  return `${(elapsed / 60_000).toFixed(1)} 分钟`;
+}
+
+export function timelineSummary(item: TimelineItem): string | null {
+  const duration = timelineDuration(item);
+  if (duration) return `耗时 ${duration}`;
+  const node = field(item.event, "node_id");
+  if (node) return `节点 ${node}`;
+  const job = field(item.event, "job_id");
+  if (job) {
+    const code = field(item.event, "exit_code");
+    return `Job ${job.slice(0, 8)}${job.length > 8 ? "…" : ""}${code ? ` · exit code ${code}` : ""}`;
+  }
+  const name = field(item.event, "name");
+  if (name && item.event.type === "artifact.committed") return `产物 ${name}`;
+  return null;
+}
+
+export function timelineTone(
+  item: TimelineItem,
+): "normal" | "warning" | "success" {
+  const status = field(item.event, "status");
+  if (
+    isToolError(item.event) ||
+    (item.response && isToolError(item.response)) ||
+    item.event.type.endsWith(".failed") ||
+    item.event.type.startsWith("capture.") ||
+    status === "rejected" ||
+    status === "failed" ||
+    item.event.capture_status !== "complete"
+  )
+    return "warning";
+  if (item.event.type === "process.exited" && status === "completed")
+    return "success";
+  return "normal";
+}
+
 export function timelineTitle(item: TimelineItem): string {
   const { event } = item;
   const tool = field(event, "tool_name");
@@ -61,6 +151,12 @@ export function timelineTitle(item: TimelineItem): string {
   }
   if (event.type === "lease.granted") return "已分配计算资源";
   if (event.type === "environment.ready") return "容器环境已就绪";
+  if (event.type === "agent.message") return "Agent 消息";
+  if (event.type === "job.submitted") return "已提交容器任务";
+  if (event.type === "process.started") return "容器任务已启动";
+  if (event.type === "artifact.committed") return "已归档产物";
+  if (event.type === "capture.gap") return "记录存在缺口";
+  if (event.type === "capture.truncated") return "记录被截断";
   if (event.type === "process.exited") {
     const status = field(event, "status");
     return status === "completed"
@@ -73,13 +169,20 @@ export function timelineTitle(item: TimelineItem): string {
 }
 
 export function timelineStatus(item: TimelineItem): string {
+  if (item.event.type === "process.exited") {
+    const status = field(item.event, "status");
+    if (status === "completed") return "已完成";
+    if (status === "rejected") return "被拒绝";
+    if (status === "failed") return "执行失败";
+  }
   if (item.event.type === "tool.requested")
-    return item.response?.type === "tool.failed"
+    return item.response && isToolError(item.response)
       ? "调用失败"
       : item.response
         ? "已返回响应"
         : "本页未见响应";
-  if (item.event.type === "tool.completed") return "已返回响应";
+  if (item.event.type === "tool.completed")
+    return isToolError(item.event) ? "调用失败" : "已返回响应";
   if (item.event.type === "tool.failed") return "调用失败";
   return item.event.capture_status === "complete" ? "记录完整" : "记录不完整";
 }
