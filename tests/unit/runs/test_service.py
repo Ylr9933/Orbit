@@ -33,7 +33,8 @@ from agent_infra.records import (
     Visibility,
 )
 from agent_infra.records.local import LocalRecordsStore
-from agent_infra.resources.api import HostResourceSnapshot, NodeCapacity
+from agent_infra.resources.api import GpuObservation, HostResourceSnapshot, NodeCapacity
+from agent_infra.resources.gpu import authorized_gpus
 from agent_infra.resources.local import LocalResourceManager
 from agent_infra.runs.api import RunRequest
 from agent_infra.runs.service import LocalRunService
@@ -203,6 +204,36 @@ def test_optional_evaluation(tmp_path, evaluation):
     records = LocalRecordsStore(tmp_path / "runs" / "_records")
     assert records.get_run(result.run_id).status == "completed"
     assert records.get_attempt(result.attempt_id).status == "completed"
+
+
+def test_frozen_task_gpu_lease_reaches_solver_environment(tmp_path):
+    request = setup_task(tmp_path, evaluation=False)
+    request.resource_file.write_text(
+        "version: 1\nrequest_id: gpu-task\nresources:\n"
+        "  cpu: 1\n  memory: 256MiB\n"
+        "  gpu: {count: 1, min_memory: 1GiB, device_ids: [GPU-one]}\n"
+    )
+    observed = HostResourceSnapshot(
+        "local",
+        datetime.now(UTC),
+        2,
+        0,
+        0,
+        512 * 1024**2,
+        512 * 1024**2,
+        (GpuObservation("GPU-one", 0, "Test GPU", 24 * 1024**3, 20 * 1024**3, 0, 0),),
+    )
+    resources = LocalResourceManager(
+        NodeCapacity("local", 1, 256 * 1024**2, gpus=authorized_gpus(observed, ("GPU-one",)))
+    )
+    resources.update_snapshot(observed)
+    env = FakeEnvironment()
+    result = LocalRunService(env, resources, tmp_path / "runs", node_id="local").run(
+        request, FixtureAgent()
+    )
+    assert result.status == "completed"
+    assert env.specs["solver"].gpu_device_ids == ("GPU-one",)
+    assert result.cleanup_complete and result.lease_released
 
 
 def test_declared_evaluator_cannot_be_silently_skipped(tmp_path):

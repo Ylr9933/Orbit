@@ -123,6 +123,49 @@ def test_resource_validate_routes_the_yaml_path(
     assert json.loads(capsys.readouterr().out) == {"path": str(request)}
 
 
+def test_gpu_cli_routes_doctor_smoke_and_controller_allowlist(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen = []
+
+    def gpu_action(action, args):
+        seen.append((action, getattr(args, "gpu_uuid", None), getattr(args, "image", None)))
+        return {"ready": action == "gpu-smoke"}
+
+    callbacks = (
+        lambda path: {},
+        lambda provider: {},
+        lambda provider: {},
+        _no_resources,
+        _validate_resource,
+    )
+    assert run(*callbacks, ["resource", "gpu-doctor"], gpu_action=gpu_action) == 1
+    assert json.loads(capsys.readouterr().out)["ready"] is False
+    assert (
+        run(
+            *callbacks,
+            ["resource", "gpu-smoke", "--gpu-uuid", "GPU-one", "--image", "local:cuda"],
+            gpu_action=gpu_action,
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert seen == [("gpu-doctor", None, None), ("gpu-smoke", "GPU-one", "local:cuda")]
+
+    def controller_action(args):
+        assert args.gpu_uuid == ["GPU-one", "GPU-two"]
+        return {"authorized_gpu_uuids": args.gpu_uuid}
+
+    assert (
+        run(
+            *callbacks,
+            ["controller", "serve", "--gpu-uuid", "GPU-one", "--gpu-uuid", "GPU-two"],
+            run_action=controller_action,
+        )
+        == 0
+    )
+
+
 def test_task_cli_view_hides_private_materials() -> None:
     result = subprocess.run(
         ["agent-infra", "task", "view", "examples/task-packages/file-result/task.yaml"],

@@ -25,6 +25,12 @@ def add_run_arguments(commands: Any) -> None:
     )
     serve.add_argument("--cpu", type=float, default=1, help="Authorized total CPU cores")
     serve.add_argument("--memory-gib", type=float, default=2, help="Authorized total memory")
+    serve.add_argument(
+        "--gpu-uuid",
+        action="append",
+        default=[],
+        help="Authorize one observed NVIDIA GPU UUID; repeat for multiple devices",
+    )
     run = commands.add_parser("run", help="Preflight, submit and inspect persistent runs")
     actions = run.add_subparsers(dest="action", required=True)
     for name in (

@@ -32,6 +32,7 @@ def run(
     web_action: Callable[[Path | None, Path, Path, tuple[Path, ...], int, str | None], int]
     | None = None,
     run_action: Callable[[argparse.Namespace], dict[str, object] | int] | None = None,
+    gpu_action: Callable[[str, argparse.Namespace], dict[str, object]] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(description="Agent Infra engineering utilities")
     parser.add_argument("--version", action="version", version=version("agent-infra"))
@@ -79,6 +80,12 @@ def run(
     resource_commands.add_parser("inspect", help="Read a host CPU, memory and GPU snapshot")
     validate = resource_commands.add_parser("validate", help="Validate a resource request YAML")
     validate.add_argument("request", type=Path)
+    resource_commands.add_parser("gpu-doctor", help="Check NVIDIA and Docker GPU readiness")
+    smoke = resource_commands.add_parser(
+        "gpu-smoke", help="Run a bounded CUDA calculation in an existing local image"
+    )
+    smoke.add_argument("--gpu-uuid", required=True)
+    smoke.add_argument("--image", required=True, help="Existing local CUDA/PyTorch image")
     task = commands.add_parser("task", help="Prepare and inspect task manifests")
     task_commands = task.add_subparsers(dest="task_command", required=True)
     for name in ("validate", "view", "freeze"):
@@ -214,15 +221,18 @@ def run(
 
     if args.command == "resource":
         try:
-            resource_result = (
-                inspect_resources()
-                if args.resource_command == "inspect"
-                else validate_resource_request(args.request)
-            )
+            if args.resource_command == "inspect":
+                resource_result = inspect_resources()
+            elif args.resource_command == "validate":
+                resource_result = validate_resource_request(args.request)
+            else:
+                if gpu_action is None:
+                    parser.exit(2, "GPU diagnostics are not configured\n")
+                resource_result = gpu_action(args.resource_command, args)
         except (OSError, RuntimeError, ValueError) as error:
             parser.exit(2, f"Resource error: {error}\n")
         print(json.dumps(resource_result, sort_keys=True))
-        return 0
+        return 1 if resource_result.get("ready") is False else 0
 
     try:
         callback = setup_agent if args.agent_command == "setup" else probe_agent

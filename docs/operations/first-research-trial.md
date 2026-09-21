@@ -296,17 +296,17 @@ Codex 作为使用远程模型的 Agent，通常不需要自己占用本机 GPU�
 
 缺口主要在接入与真实验收：
 
-- [bootstrap/controller.py](../../src/agent_infra/bootstrap/controller.py) 明确注释在设备允许列表实现前关闭 GPU 准入；创建 NodeCapacity 时未提供 GPU，默认授权 GPU 清单为空。即使监控发现 GPU，GPU Task 也不能在当前 Controller 获准。
+- G1/G2 任务分支已加入 `resource gpu-doctor`、`resource gpu-smoke` 和 Controller `--gpu-uuid` 授权入口；未授权时 GPU 容量仍为空。当前服务器缺 NVIDIA Container Toolkit/Docker runtime，真实容器 GPU 链路未通过。具体操作见[单机 GPU 说明](gpu-local.md)。
 - [runs/research.py](../../src/agent_infra/runs/research.py) 的 `_open` 只创建 CPU/内存请求，SandboxSpec 未传 GPU；[MCP environment_open](../../src/agent_infra/gateways/mcp/research.py) 也没有 GPU 参数。
 - E 环境准备针对 CPU wheel，尚无 CUDA 训练环境验证；不存在本项目真实 GPU 训练与清理验收证据。
 
 之前的实现先验证 CPU 工作流、认证、隔离、记录和故障恢复，并非 Docker 不能使用 GPU，也不需要等 Ray。
 资源模块已有初步设备选择逻辑，接下来应复用它，补产品入口与真实测试，而不是另建一套 GPU 调度器。
 
-### 4.2 Docker 原理上可以，当前平台入口还不能直接用
+### 4.2 Docker 原理与平台入口
 
 NVIDIA 官方支持以 `--gpus device=GPU-UUID` 指定容器设备，前提是驱动和容器运行时配置正确。
-下面仅展示 Docker 层的原理，不是已实现的 agent-infra 命令，也没有在本轮执行。设备 UUID 与镜像必须替换为经授权的实际值：
+下面仅展示 Docker 层的原理；平台已实现的诊断与授权命令见[单机 GPU 说明](gpu-local.md)。设备 UUID 与镜像必须替换为经授权的实际值：
 
 ```bash
 docker run --rm \
@@ -316,8 +316,7 @@ docker run --rm \
   python -c 'import torch; assert torch.cuda.is_available(); x=torch.randn(64,64,device="cuda"); y=x@x; torch.cuda.synchronize(); print(y.device)'
 ```
 
-这里直接运行 Docker 不会自动纳入本平台的 Project、Lease 和 Records。当前若要通过平台使用，应先补接线；
-用 Python API 自行组装授权 GPU 容量和 SandboxSpec 也属于开发者集成路径，尚非已验收的一条产品命令。
+这里直接运行 Docker 不会自动纳入本平台的 Project、Lease 和 Records。G2 冻结 Task 已接通平台入口，但真实 CUDA 容器验收仍待宿主机运行时配置。
 资料：[NVIDIA Toolkit 安装](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)、
 [设备选择](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html)。
 
@@ -347,10 +346,10 @@ print(next(model.parameters()).device, loss.item())
 
 只做单机、指定设备、已有 CUDA/PyTorch 镜像即可开始，不必同时开发 Ray、MIG 或多卡分布式训练：
 
-1. Controller 接收明确的 GPU 允许列表并解析为 UUID，复用现有观测与准入；缺卡或占用时明确拒绝。
-2. CLI/MCP 长期环境支持 GPU 请求，将 Lease 中的设备一路传入 SandboxSpec；冻结 Task 路径共用同一容量配置。
+1. G1/G2 任务分支已实现 Controller UUID 允许列表、诊断命令和冻结 Task 准入；仍需在配置好 Toolkit 的主机验证真实 CUDA 容器及任务。
+2. G3 待实现 CLI/MCP 长期环境 GPU 请求，将 Lease 中的设备传入 SandboxSpec。
 3. 先复用已准备的训练镜像，做可见设备检查、CUDA 张量运算与一次短训练，记录 GPU UUID、镜像、框架/运行库版本和实际指标。
 4. 验证取消、异常及 Controller 重启后的容器清理和资源释放；清理未确认时不重新分配设备。
 5. 再补环境模板自动构建和 Web 参数输入。
 
-这些是后续实施建议，本次仅文档说明，未启用任何 GPU、未修改 Docker/驱动配置。
+本次未修改 Docker/驱动配置，也未在这台主机运行真实 GPU 容器。

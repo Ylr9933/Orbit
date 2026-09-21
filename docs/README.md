@@ -55,6 +55,7 @@
 ## 单节点执行
 
 - [当前功能与首次科研任务试用](operations/first-research-trial.md)：从初始化、Codex MCP、Docker 实验到 Web 查看结果，并说明 GPU 已有基础与待接通边界。
+- [单机 GPU 诊断与准入](operations/gpu-local.md)：G1/G2 的诊断、自检、Controller UUID 授权、冻结 Task 请求及真实环境限制。
 
 - [科研工作流细分开发计划](development/research-workflow-implementation-plan.md)：A 批初始化、B 批研究规划及后续执行的实施顺序；实际验收与集成状态以任务记录为准。
 - [Project 初始化命令](reference/projects.md)：一句目标创建研究工作区，支持指定目录、自动命名、预览、查询和恢复。
