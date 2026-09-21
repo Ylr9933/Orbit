@@ -19,7 +19,7 @@ Records 当前提供：
 尚未实现远端对象存储、多节点 spool 上传、多用户权限服务、托管宿主机 Agent 和 Parquet/训练框架专用导出。
 本机单管理员 HTTP 查询见 [Web 控制台](../operations/web-console.md)。
 事件/轨迹排除 evaluator/admin 可见和私有评测、凭据、secret 数据；用户 Artifact 列表与下载只允许 user/agent 可见内容。
-规则集中在 `records/visibility.py`。修复 ADMIN 轨迹过滤后，builder 升为 `attempt-event-graph@2.0.1`，
+规则集中在 `records/visibility.py`。当前 builder 为 `attempt-event-graph@2.0.2`，
 schema 仍为 `records.trajectory.v2`；重新派生的 trajectory ID 会变化，历史导出不自动重写。
 
 ## 2. 本地存储
@@ -109,7 +109,7 @@ agent-infra records export <attempt-id> [<attempt-id> ...] \
 
 ## 5. 轨迹语义
 
-当前 `attempt-event-graph@2.0.0` 产生 `records.trajectory.v2`：
+当前 `attempt-event-graph@2.0.2` 产生 `records.trajectory.v2`：
 
 - 以 Attempt 为 rollout 边界；
 - 把 `agent.message` 和 `tool.requested` 视为候选 action；
@@ -127,7 +127,9 @@ Agent 规范事件载荷使用 `agent.session.v1`、`agent.message.v1`、
 `agent.turn_completed.v1`、`agent.error.v1` 或 `agent.native_event.v1`。公共字段位于 payload 顶层，
 来源行和拆分序号位于 `source`，完整原生对象位于 `native`，原始 stream 由 `raw_refs` 引用。
 
-该视图是可重建的分析/训练候选数据，不声称 CLI Agent 天然满足所有 RL 算法要求。
+`records trajectory` 是从平台可见事件派生的 Attempt 事件图，不等同 Codex/Claude Code 的原生会话轨迹。平台自身的 `tool.requested` 可形成排障分析 step，但不能冒充 Agent 决策：没有 Agent 来源的 action 时只标 `analysis`，并给出 `no_agent_actions`。已知 `host_agent` 采集不完整或存在采集缺口时，即使有 Agent action，也不标 SFT/RL 候选。`sft_candidate` 和 `result_reward_rl_candidate` 只是筛选提示，不是训练就绪证明。
+
+例如宿主机 Agent 通过 MCP 控制容器的科研 Run，可以完整记录平台工具调用和实验产物，同时只有部分宿主机 Agent 轨迹。它能回答“何时启动了哪个 Job、返回什么状态、结果存在哪里”，无法仅凭这些事件重建模型看到的全部上下文、内部推理、决策、token 或训练所需的奖励。要做 Agentic RL，还需按具体算法补齐 Agent 原生观测与动作、明确的结果奖励/评分和必要的模型/策略元数据；需要行为 logprob 的算法还需额外采集。公开的运行摘要不能替代这些源数据。
 
 ## 6. 数据边界
 

@@ -101,6 +101,30 @@ def test_no_private_materials_events_artifacts_or_raw_references(service, tmp_pa
             ),
         )
     )
+    platform = service.reader.scoped_sink(
+        RecordContext("run-fixture", "attempt-fixture", "environment", ProducerKind.ENVIRONMENT)
+    )
+    platform.append_events(
+        (
+            EventDraft(
+                "tool.requested",
+                {
+                    "tool_call_id": "platform-call-1",
+                    "tool_name": "start",
+                    "arguments": {"command": "HIDDEN-COMMAND"},
+                    "payload_blob": "HIDDEN-BLOB-REF",
+                },
+            ),
+            EventDraft(
+                "tool.completed",
+                {
+                    "tool_call_id": "platform-call-1",
+                    "tool_name": "start",
+                    "result": "HIDDEN-RESULT",
+                },
+            ),
+        )
+    )
     artifact = tmp_path / "result.txt"
     artifact.write_text("private body")
     sink.commit_artifact(artifact, name="public-result")
@@ -116,6 +140,7 @@ def test_no_private_materials_events_artifacts_or_raw_references(service, tmp_pa
     assert "HIDDEN" not in payload
     assert "private/expected.txt" not in payload and "Private fixture answer" not in payload
     assert "hello" in payload and "read_pdf" in payload and "public-result" in payload
+    assert "platform-call-1" in payload and '"coverage": {}' in payload
     assert "raw_refs" not in payload and "blob" not in payload
     with pytest.raises(KeyError):
         service.events("absent", None)

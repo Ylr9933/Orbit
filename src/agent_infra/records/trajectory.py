@@ -12,13 +12,14 @@ from pathlib import Path
 
 from agent_infra.records.api import (
     EventEnvelope,
+    ProducerKind,
     RecordsReader,
 )
 from agent_infra.records.visibility import event_visible
 
 TRAJECTORY_SCHEMA_VERSION = "records.trajectory.v2"
 TRAJECTORY_BUILDER_NAME = "attempt-event-graph"
-TRAJECTORY_BUILDER_VERSION = "2.0.1"
+TRAJECTORY_BUILDER_VERSION = "2.0.2"
 
 _ACTION_TYPES = frozenset({"agent.message", "tool.requested"})
 _OBSERVATION_TYPES = frozenset(
@@ -103,6 +104,13 @@ class AttemptTrajectoryBuilder:
         )
         rewards = tuple(event for event in visible if event.event_type in _REWARD_TYPES)
         actions = tuple(event for event in visible if event.event_type in _ACTION_TYPES)
+        agent_actions = tuple(
+            event for event in actions if event.context.producer_kind is ProducerKind.AGENT
+        )
+        host_agent_coverage = attempt.manifest.coverage.get("host_agent")
+        host_agent_incomplete = (
+            host_agent_coverage is not None and host_agent_coverage != "complete"
+        )
         tool_actions = tuple(event for event in actions if event.event_type == "tool.requested")
         tool_results = tuple(
             event for event in visible if event.event_type in {"tool.completed", "tool.failed"}
@@ -195,15 +203,17 @@ class AttemptTrajectoryBuilder:
         )
         uses = ["analysis"]
         limitations = ["behavior_logprobs_unavailable"]
-        if actions:
+        if agent_actions and not host_agent_incomplete and not gaps:
             uses.append("sft_candidate")
         else:
-            limitations.append("no_agent_actions")
-        if rewards and actions:
+            limitations.append("agent_capture_incomplete" if agent_actions else "no_agent_actions")
+        if not rewards:
+            limitations.append("terminal_reward_unavailable")
+        elif agent_actions and not host_agent_incomplete and not gaps:
             uses.append("result_reward_rl_candidate")
         else:
-            limitations.append("terminal_reward_unavailable")
-        if gaps:
+            limitations.append("reward_not_training_ready")
+        if gaps or host_agent_incomplete:
             limitations.append("capture_incomplete")
         if not tool_actions:
             tool_correlation = "unavailable"
@@ -217,12 +227,18 @@ class AttemptTrajectoryBuilder:
             limitations.append("tool_call_correlation_partial")
         features = {
             "observation": "partial" if actions else "unavailable",
-            "action": "complete" if actions else "unavailable",
+            "action": (
+                "complete"
+                if agent_actions and not host_agent_incomplete and not gaps
+                else "partial"
+                if agent_actions
+                else "unavailable"
+            ),
             "token_ids": "unavailable",
             "behavior_logprobs": "unavailable",
             "terminal_reward": "present" if rewards else "absent",
             "private_evaluation_filtered": "true",
-            "capture": "partial" if gaps else "complete",
+            "capture": "partial" if gaps or host_agent_incomplete else "complete",
             "tool_call_correlation": tool_correlation,
         }
         source_ids = tuple(event.event_id for event in visible)

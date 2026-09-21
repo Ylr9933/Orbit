@@ -144,6 +144,55 @@ def test_parallel_tool_results_follow_their_call_ids(tmp_path):
     assert trajectory.eligibility.features["tool_call_correlation"] == "complete"
 
 
+def test_platform_actions_are_not_agent_training_candidates(tmp_path):
+    store = LocalRecordsStore(tmp_path / "records")
+    now = datetime.now(UTC)
+    store.begin_run(RunManifest("run", now, {}))
+    store.begin_attempt(
+        AttemptManifest(
+            "attempt", "run", now, coverage={"host_agent": "partial", "platform_tools": "complete"}
+        )
+    )
+    platform = store.scoped_sink(
+        RecordContext("run", "attempt", "environment", ProducerKind.ENVIRONMENT)
+    )
+    platform.append_events(
+        (
+            EventDraft("tool.requested", {"tool_call_id": "call-1", "tool_name": "start"}),
+            EventDraft("tool.completed", {"tool_call_id": "call-1", "tool_name": "start"}),
+            EventDraft("reward.assigned", {"target_id": "attempt", "value": 1.0}),
+        )
+    )
+    store.finish_attempt("attempt", status="completed", result={})
+    store.finish_run("run", status="completed")
+
+    trajectory = AttemptTrajectoryBuilder(store).build("attempt")
+
+    assert len(trajectory.steps) == 1
+    assert trajectory.eligibility.eligible_for == ("analysis",)
+    assert "no_agent_actions" in trajectory.eligibility.limitations
+    assert "reward_not_training_ready" in trajectory.eligibility.limitations
+    assert trajectory.eligibility.features["action"] == "unavailable"
+    assert trajectory.eligibility.features["capture"] == "partial"
+
+
+def test_partial_host_agent_capture_is_not_training_candidate(tmp_path):
+    store = LocalRecordsStore(tmp_path / "records")
+    now = datetime.now(UTC)
+    store.begin_run(RunManifest("run", now, {}))
+    store.begin_attempt(AttemptManifest("attempt", "run", now, coverage={"host_agent": "partial"}))
+    agent = store.scoped_sink(RecordContext("run", "attempt", "agent", ProducerKind.AGENT))
+    agent.append_events((EventDraft("agent.message", {"role": "assistant", "text": "partial"}),))
+    store.finish_attempt("attempt", status="completed", result={})
+    store.finish_run("run", status="completed")
+
+    trajectory = AttemptTrajectoryBuilder(store).build("attempt")
+
+    assert trajectory.eligibility.eligible_for == ("analysis",)
+    assert "agent_capture_incomplete" in trajectory.eligibility.limitations
+    assert trajectory.eligibility.features["action"] == "partial"
+
+
 def test_admin_and_private_events_never_enter_queries_trajectory_or_export(tmp_path):
     from dataclasses import asdict
 

@@ -1,14 +1,21 @@
 import { useState } from "react";
-import {
-  known,
-  pretty,
-  request,
-  type TraceEvent,
-  useData,
-} from "../api/console";
+import { known, request, type TraceEvent, useData } from "../api/console";
 import type { Capabilities, ControlRun } from "../api/workflow";
 import { Badge, Empty, Notice, Panel } from "../components/common";
 import { ArtifactFiles } from "./execution-artifacts";
+import {
+  groupTimeline,
+  timelineDetails,
+  timelineStatus,
+  timelineTitle,
+} from "./execution-trace";
+
+function coverageLabel(value: string | undefined): string {
+  if (value === "complete") return "完整";
+  if (value === "partial") return "部分";
+  if (value === "unavailable") return "未采集";
+  return "未说明";
+}
 
 export function ExecutionList({ runs }: { runs: ControlRun[] }) {
   return runs.length ? (
@@ -89,28 +96,49 @@ export function ExecutionRecent({ token }: { token: string }) {
 }
 function Events({ token, path }: { token: string; path: string }) {
   const [cursor, setCursor] = useState<string | null>(null);
-  const events = useData<{ items: TraceEvent[]; next_cursor: string | null }>(
+  const events = useData<{
+    items: TraceEvent[];
+    next_cursor: string | null;
+    coverage: Record<string, string>;
+  }>(
     token,
     `${path}/events${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
     5000,
   );
+  const timeline = groupTimeline(events.data?.items ?? []);
+  const coverage = events.data?.coverage;
   return (
-    <Panel title="执行轨迹">
+    <Panel title="平台执行记录">
       <p className="muted">
-        每 5 秒读取已持久化事件；不代表实时模型流，私有事件不展示。
+        展示平台已记录的资源、容器、工具调用和任务状态。Codex
+        的完整对话需另外采集；这里的事件不等于模型原生轨迹。
       </p>
+      {coverage && Object.keys(coverage).length > 0 && (
+        <p className="muted">
+          采集范围：平台工具
+          {coverageLabel(coverage.platform_tools)} · 宿主机 Agent
+          {coverageLabel(coverage.host_agent)}
+        </p>
+      )}
+      {events.data && (
+        <p className="muted">
+          本页 {events.data.items.length} 条事件，合并为 {timeline.length}{" "}
+          项；每 5 秒刷新。仅展示允许用户查看的摘要。
+        </p>
+      )}
       <Notice error={events.error} />
-      {events.data?.items.map((e) => (
-        <article className="event" key={e.id}>
-          <strong>{e.type}</strong>
+      {timeline.map((item) => (
+        <article className="event" key={item.event.id}>
+          <strong>{timelineTitle(item)}</strong>
           <small>
             {" "}
-            · {e.at} · {e.capture_status}
+            · {new Date(item.event.at).toLocaleString()} ·{" "}
+            {timelineStatus(item)}
           </small>
-          {e.text && <pre>{e.text}</pre>}
+          {item.event.text && <pre>{item.event.text}</pre>}
           <details>
-            <summary>事件字段</summary>
-            <pre>{pretty(e.payload)}</pre>
+            <summary>查看事件字段</summary>
+            <pre>{timelineDetails(item)}</pre>
           </details>
         </article>
       ))}
