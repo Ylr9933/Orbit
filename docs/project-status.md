@@ -1,11 +1,10 @@
 # 项目当前状态
 
-Updated at: 2026-09-21T21:41:27+08:00
+Updated at: 2026-09-21T21:55:41+08:00
 
-Basis: 以本文在 `main` 中的版本为集成依据；涵盖 A/B/C/D、H/E/I/W，以及 `c22fd80` 的模块整理与回归。
-本文随用户授权的本次集成更新；具体合并与双远端同步事实以 Git 历史为准，不表示已配置常驻部署。
-G1/G2 叠加任务分支提出的更新仅在合并后成为集成事实；本机 GPU 诊断与容器计算已验收，完整 GPU Run 尚未验收。
-本任务分支另提出本机 Codex 交互会话绑定与增量采集；仅在合并后成为集成事实。
+Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
+GPU 诊断与容器基础链，以及宿主机 Codex 会话采集。具体合并与双远端同步事实以 Git 历史为准，
+不表示已配置常驻部署。本机 GPU 诊断与容器计算已验收，完整 GPU Run 尚未验收。
 
 当前定位：本机、单管理员、小型 CPU 科研工作流已可试用。
 初始化、版本化规划、冻结 Task、容器执行、记录、分析和 Web 已有连接；GPU 基础容器链已局部验收，完整 GPU 科研任务、原生 benchmark 和多节点尚未验收。
@@ -28,8 +27,8 @@ G1/G2 叠加任务分支提出的更新仅在合并后成为集成事实；本�
   基于真实产物的分析、用户决定、有限 Task 授权和可替换 Planner。各批已有真实模型证据，适用范围见任务记录。
 - **Agent/Tasks/Resources/Records**：三种 CLI Agent adapter、Task 可见视图、资源 YAML 与宿主机观测；本地原始流、事件、产物、轨迹与 JSONL 导出。
   Python 执行内核支持求解与隔离评测；正式 Controller 提交仍限 Codex 和无评测科研 Task。
-- **G1/G2（合并后）**：GPU 只读诊断、限定单卡的 CUDA smoke 命令与 Controller UUID 白名单；冻结 Task 的 GPU 请求复用既有资源租约和 Docker 设备映射。本机 Toolkit 1.20.1、CDI 指定卡 CUDA 计算和 DockerEnvironment 清理已验证；完整冻结 Task + Codex GPU Run 尚未验证。
-- **宿主机 Codex 采集（合并后）**：项目目录发现候选会话、显式绑定真实 thread ID、原始 JSONL 与规范事件写入独立 Records Run，并支持轮次通知触发的断点续采；不启动模型或 Docker。
+- **G1/G2**：GPU 只读诊断、限定单卡的 CUDA smoke 命令与 Controller UUID 白名单；冻结 Task 的 GPU 请求复用既有资源租约和 Docker 设备映射。本机 Toolkit 1.20.1、CDI 指定卡 CUDA 计算和 DockerEnvironment 清理已验证；完整冻结 Task + Codex GPU Run 尚未验证。
+- **宿主机 Codex 采集**：项目目录发现候选会话、显式绑定真实 thread ID、原始 JSONL 与规范事件写入独立 Records Run，并支持轮次通知触发的断点续采；不启动模型或 Docker。
 - **W**：Web 兼容旧 catalog 和新工作区，支持初始化、研究方案查看、实验编译/预检/提交/取消、产物下载和分析展示。
 - **模块整理**：修复 Web-first 启动权限、统一状态目录/研究运行上下文，以及事件/产物/轨迹可见性；拆分 Records 内部实现并保留兼容 API。
   `make verify` 通过（272 项非 E2E）；18 项无模型真实 Docker 集成、两套浏览器流程和独立 wheel 安装通过。
