@@ -136,6 +136,73 @@ agent-infra research import-trace RUN_ID --project-id PROJECT_ID --session-id SE
 内容，按来源摘要与行号去重。输入上限 16 MiB、单行上限 32 KiB；未知原生事件保留而不猜测。
 导入仍标记 partial：没有证明该文件覆盖全部宿主机行为；provider 不同格式的覆盖程度不同。
 
+## 归档文件的可读视图
+
+状态：随 [artifact-readable-views 修复](../changes/20260921-artifact-readable-views-a7c9e2.md)
+交付；需要 Controller 和 MCP 同时更新，任务分支不代表已部署。底层 Records 内容与索引格式不变。
+
+`artifact_read(run_id, artifact_id, member=None, format="auto", offset=0, limit=16384)`
+用于读取已归档产物；不传 member 仍列出成员。路径必须精确匹配归档清单，不接受宿主机路径。
+以下格式也适用于 `research artifact --format ... --offset ... --limit ...`：
+
+| format | 行为 |
+| --- | --- |
+| `auto`（默认） | UTF-8 文本返回 `text`；图片/二进制先返回类型、大小、摘要和引用；MCP 将小图片转为原生图片内容 |
+| `text` | 显式要求 UTF-8 文本；遇到非法编码、二进制控制字符或字符中间的 offset 时明确报错，不替换原文 |
+| `base64` | 返回这一页原始字节的 `content_base64`，用于兼容或按需读取二进制；不自动返回整份大文件 |
+| `metadata` | 只返回元信息和引用，不内联文本或图片 |
+
+文本范围以**字节**计数：默认 16 KiB，每页 4–65536 字节。返回 `offset`、`bytes_read`、
+`next_offset`、`eof`、`truncated`。UTF-8 页尾不拆开字符；下一次必须使用返回的 `next_offset`，
+不要自己加 limit。`next_offset=null` 表示末尾；`truncated=true` 表示本页后还有内容，
+不是原始文件丢失。空文件返回空 text 与 eof=true。
+
+例如默认读取指标：
+
+```json
+{"run_id":"RUN_ID","artifact_id":"ARTIFACT_ID","member":"outputs/metrics.json"}
+```
+
+结果包含 `text: "{\"loss\":0.1}"`，不会再为普通 JSON 返回 Base64。保留 JSON 原文作为文本，
+不同时复制一份解析后的大对象。CSV、Markdown、代码、日志采用同样规则。
+自动判断基于有界内容采样与类型：不可信/非 UTF-8 页回退为元信息并给出原因，
+用户可显式读取 Base64；已知权重/压缩格式不会因为部分字节恰好是文本就被自动展开。
+
+```bash
+agent-infra research artifact RUN_ID ARTIFACT_ID --project-id PROJECT_ID \
+  --member outputs/metrics.json
+
+# 分页：下一页把 offset 替换为上一次返回的 next_offset。
+agent-infra research artifact RUN_ID ARTIFACT_ID --project-id PROJECT_ID \
+  --member outputs/loss.csv --format text --offset 0 --limit 8192
+
+# 明确需要原始字节时读取一页。
+agent-infra research artifact RUN_ID ARTIFACT_ID --project-id PROJECT_ID \
+  --member outputs/model.bin --format base64 --limit 65536
+```
+
+MCP 的 PNG/JPEG/WebP 在不超过 1 MiB 且从头读取时返回标准 `ImageContent`；图片二进制仍按
+MCP 协议编码，但不会放在普通 JSON 文本里让模型自行解码。较大图片、GIF 和其他二进制返回
+`ResourceLink`。资源 URI 的形式为 `agent-infra://artifacts/<type>/<run>/<artifact>/<member>`，
+各路径字段按 URI 编码；直接使用工具给出的 URI，通过同一 MCP 的 `resources/read` 获取原始字节。
+每次资源读取仍校验项目、Run、可见性和清单成员，资源链接不授予额外权限。
+
+元信息中的 `download.controller_path` 是当前 Controller 上的相对 HTTP API 路径，
+需要已有管理员认证，并返回兼容的 Base64 JSON；它不是公网 URL、宿主机路径或带凭据的分享链接。
+整文件下载与 MCP resource 读取仍限 16 MiB，超限时 `download.available=false`，可通过显式
+Base64 分页读取。`resource_uri` 用于定位，不表示大文件能一次加载到模型上下文。
+既有 `run artifact --member ... --output ...` 和 Web 下载行为不变，不会误把第一页当作完整文件。
+
+这是归档产物接口的更新；运行中 `workspace_read` 和 `job_logs` 的现有传输字段未在本轮修改。
+MCP 客户端的图片显示、资源交互取决于其实现；CLI 图片默认只显示元信息，不输出大段图片 Base64。
+采用标准 [MCP 工具内容类型](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
+和 [资源读取](https://modelcontextprotocol.io/specification/2025-11-25/server/resources)，
+已用锁定的 Python SDK 检验协议响应，不等于已做真实模型视觉验收。
+
+升级时先结束并归档活动实验，再按原参数重启 Controller、重新连接 MCP，以加载新代码和工具 schema。
+不要为了更新读取接口中断尚未结束的训练。新客户端遇到仍运行旧代码的 Controller 会明确要求重启，
+不静默恢复为向 Agent 展示 Base64。只更新源码不会替换已运行 Python 进程里的代码。
+
 ## 重启与范围
 
 沿用 D04：Controller 重启先按所有权日志清理自有容器，再把未完成 Run/Job 标为 interrupted，

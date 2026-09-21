@@ -37,6 +37,9 @@ _EVENT_FIELDS = {
     "artifact.committed": ("name", "size_bytes", "missing"),
     "capture.truncated": ("job_id",),
     "capture.gap": ("source", "error_type"),
+    "tool.requested": ("tool_call_id", "tool_name"),
+    "tool.completed": ("tool_call_id", "tool_name"),
+    "tool.failed": ("tool_call_id", "tool_name", "status", "is_error"),
     "controller.error": ("type",),
     "evaluation.started": ("evaluator_ref",),
     "evaluation.finished": ("evaluator_ref", "feedback"),
@@ -136,7 +139,7 @@ class ConsoleService:
         return {"id": run_id, "status": run.status, "attempts": attempts}
 
     def events(self, attempt_id: str, cursor: str | None) -> dict[str, Any]:
-        self.reader.get_attempt(attempt_id)
+        attempt = self.reader.get_attempt(attempt_id)
         items: list[dict[str, Any]] = []
         # Scan a bounded number of pages; never send raw/private records or CAS references.
         for _ in range(10):
@@ -169,7 +172,15 @@ class ConsoleService:
             cursor = page.next_cursor
             if items or cursor is None:
                 break
-        return {"items": items, "next_cursor": cursor}
+        return {
+            "items": items,
+            "next_cursor": cursor,
+            "coverage": {
+                key: attempt.manifest.coverage[key]
+                for key in ("platform_tools", "host_agent")
+                if key in attempt.manifest.coverage
+            },
+        }
 
     def artifacts(self, attempt_id: str) -> list[dict[str, Any]]:
         self.reader.get_attempt(attempt_id)

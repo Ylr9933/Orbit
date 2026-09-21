@@ -9,6 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from agent_infra.bootstrap.gpu import gpu_doctor
 from agent_infra.bootstrap.host_research import import_host_trace, project_context
 from agent_infra.bootstrap.iteration import StudyActions
 from agent_infra.bootstrap.paths import prepare_controller_root, state_root
@@ -28,6 +29,7 @@ from agent_infra.gateways.http.control import create_control_server
 from agent_infra.gateways.mcp.research import serve_mcp
 from agent_infra.records.local import LocalRecordsStore
 from agent_infra.resources import LinuxHostResourceMonitor, LocalResourceManager, NodeCapacity
+from agent_infra.resources.gpu import authorized_gpus
 from agent_infra.runs.control_api import PreparedRun, SubmissionRequest
 from agent_infra.runs.control_store import RunControlStore
 from agent_infra.runs.controller import LocalRunController
@@ -61,11 +63,18 @@ def run_action(args: argparse.Namespace) -> dict[str, Any] | int:
         cpu=args.cpu,
         memory_bytes=int(args.memory_gib * 1024**3),
         proxy=args.model_proxy,
+        gpu_uuids=tuple(args.gpu_uuid),
     )
 
 
 def serve_controller(
-    state: Path, *, port: int, cpu: float, memory_bytes: int, proxy: str = "auto"
+    state: Path,
+    *,
+    port: int,
+    cpu: float,
+    memory_bytes: int,
+    proxy: str = "auto",
+    gpu_uuids: tuple[str, ...] = (),
 ) -> int:
     root = prepare_controller_root(state)
     lock = HostControllerLock(state)
@@ -80,11 +89,30 @@ def serve_controller(
     try:
         monitor = LinuxHostResourceMonitor()
         snapshot = monitor.sample()
-        # GPU admission is deliberately disabled until an explicit device allowlist is implemented.
-        resources = LocalResourceManager(NodeCapacity(snapshot.node_id, cpu, memory_bytes))
+        allowed_gpus = authorized_gpus(snapshot, gpu_uuids)
+        if allowed_gpus:
+            diagnosis = gpu_doctor(snapshot)
+            if not diagnosis["ready"]:
+                issues = diagnosis["issues"]
+                detail = (
+                    "; ".join(str(issue) for issue in issues)
+                    if isinstance(issues, list)
+                    else str(issues)
+                )
+                raise ValueError("GPU runtime unavailable: " + detail)
+        cdi_devices = diagnosis["cdi_devices"] if allowed_gpus else []
+        gpu_mode = (
+            "cdi"
+            if isinstance(cdi_devices, list)
+            and all(f"nvidia.com/gpu={gpu.device_id}" in cdi_devices for gpu in allowed_gpus)
+            else "legacy"
+        )
+        resources = LocalResourceManager(
+            NodeCapacity(snapshot.node_id, cpu, memory_bytes, gpus=allowed_gpus)
+        )
         resources.update_snapshot(snapshot)
         records = LocalRecordsStore(root / "records")
-        environment = DockerEnvironment(root / "environments")
+        environment = DockerEnvironment(root / "environments", gpu_mode=gpu_mode)
         service = LocalRunService(
             environment, resources, root / "work", node_id=snapshot.node_id, records=records
         )
@@ -155,6 +183,8 @@ def serve_controller(
                         "state_dir": str(state),
                         "cpu": cpu,
                         "memory_bytes": memory_bytes,
+                        "authorized_gpu_uuids": [gpu.device_id for gpu in allowed_gpus],
+                        "gpu_mode": gpu_mode if allowed_gpus else "disabled",
                     }
                 ),
                 flush=True,

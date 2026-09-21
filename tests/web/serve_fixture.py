@@ -47,6 +47,29 @@ def main():
                 ),
             )
         )
+        platform = store.scoped_sink(
+            RecordContext("fixture-run", "fixture-attempt", "environment", ProducerKind.ENVIRONMENT)
+        )
+        platform.append_events(
+            (
+                EventDraft(
+                    "tool.requested",
+                    {
+                        "tool_call_id": "fixture-call",
+                        "tool_name": "start",
+                        "arguments": "HIDDEN_COMMAND",
+                    },
+                ),
+                EventDraft(
+                    "tool.completed",
+                    {
+                        "tool_call_id": "fixture-call",
+                        "tool_name": "start",
+                        "result": "HIDDEN_RESULT",
+                    },
+                ),
+            )
+        )
         output = root / "result.txt"
         output.write_text("fixture result")
         sink.commit_artifact(output, name="fixture-result.txt")

@@ -87,6 +87,24 @@ def test_external_gpu_process_causes_temporary_wait() -> None:
     assert decision.shortages[-1].resource == "gpus"
 
 
+def test_gpu_requires_authorization_and_cannot_be_double_leased() -> None:
+    no_gpu = LocalResourceManager(
+        NodeCapacity("node-a", 4, 16 * GIB, labels=(("pool", "research"),)),
+        clock=lambda: NOW,
+    )
+    no_gpu.update_snapshot(_snapshot())
+    denied = no_gpu.try_allocate(_request("unauthorized", gpu_count=1))
+    assert denied.status is AllocationStatus.UNSATISFIABLE
+    assert any(shortage.resource == "gpus" for shortage in denied.shortages)
+
+    manager = LocalResourceManager(_capacity(), clock=lambda: NOW, id_factory=lambda: "lease-1")
+    manager.update_snapshot(_snapshot())
+    assert manager.try_allocate(_request("first", gpu_count=1)).status is AllocationStatus.GRANTED
+    waiting = manager.try_allocate(_request("second", gpu_count=1))
+    assert waiting.status is AllocationStatus.WAITING
+    assert waiting.shortages[-1].resource == "gpus"
+
+
 def test_stale_snapshot_causes_temporary_wait() -> None:
     manager = LocalResourceManager(_capacity(), clock=lambda: NOW)
     manager.update_snapshot(_snapshot(captured_at=NOW - timedelta(minutes=1)))

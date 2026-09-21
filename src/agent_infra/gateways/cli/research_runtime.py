@@ -29,6 +29,12 @@ class ResearchClient:
         )
         if "error" in result:
             raise ValueError(f"{result['error']}: {result.get('message', '')}")
+        if action == "artifact" and options.get("member") is not None and "format" in options:
+            if "format" not in result:
+                raise ValueError(
+                    "Controller does not support artifact views; finish active experiments, "
+                    "then restart Controller and MCP with the updated version"
+                )
         return result
 
 
@@ -107,6 +113,11 @@ def add_research_runtime_arguments(commands: Any) -> None:
         if action == "artifact":
             item.add_argument("artifact_id")
             item.add_argument("--member")
+            item.add_argument(
+                "--format", choices=("auto", "text", "base64", "metadata"), default="auto"
+            )
+            item.add_argument("--offset", type=int, default=0, help="Byte offset; use next_offset")
+            item.add_argument("--limit", type=int, default=16384, help="Page bytes, 4–65536")
         if action == "events":
             item.add_argument("--cursor")
 

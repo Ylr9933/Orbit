@@ -1,6 +1,6 @@
 # 本机 Run 控制服务
 
-状态：D 批实现；单节点、单管理员、单活跃 Run。此文描述当前命令，不代表 main 已合并或服务器已常驻部署。
+状态：D 批实现，G2 任务分支增加单机 GPU 白名单；单节点、单管理员、单活跃 Run。此文描述当前命令，不代表 main 已合并或服务器已常驻部署。
 
 ## 可以完成什么
 
@@ -9,7 +9,7 @@
 提交 CLI 返回后实验继续。科研任务可以不设置 evaluator；指标作为普通产物保存，不自动等同于 benchmark 分数。
 
 当前公开入口接受本状态目录登记的编译 Task，支持 Codex 0.154.0。其他 Agent 适配仍可通过既有 Python API 使用；
-Controller 的容器凭据流程暂未泛化到 Claude Code / DSH。没有自动安装、自动生成镜像、队列、GPU、Ray 或 Web 运行按钮。
+Controller 的容器凭据流程暂未泛化到 Claude Code / DSH。没有自动安装、自动生成镜像、队列、Ray 或 Web 运行按钮。冻结 Task 的单机 GPU 请求可通过 `controller serve --gpu-uuid` 授权；主机诊断与限制见[GPU 操作说明](../operations/gpu-local.md)。
 宿主机 Agent 通过 MCP 控制长期科研 Job 的另一入口见[H 批参考](host-research-mcp.md)；两条路径共用 Controller 和资源准入。
 
 ## 准备镜像和账号
@@ -47,7 +47,7 @@ CONNECT 的 Docker bridge 转发；不会修改原代理，也不会将其开放
 agent-infra controller serve --state-dir /absolute/state --cpu 1 --memory-gib 2 --port 8766
 ```
 
-`--cpu` 和 `--memory-gib` 是管理员允许本服务分配的总容量，不会自动占满宿主机。
+`--cpu` 和 `--memory-gib` 是管理员允许本服务分配的总容量，不会自动占满宿主机。`--gpu-uuid GPU-...` 可重复指定；缺省不授权 GPU，仅适用于冻结 Task 的容器执行。
 同一 OS 用户的所有状态目录共享一个主机锁；第二个 Controller 无法同时启动。
 Ctrl-C / SIGTERM 会请求取消并等待清理，不能把关闭服务当作让实验继续运行的操作。
 需要脱离终端时使用 tmux、nohup 或用户级服务管理器；提交客户端与服务是两个独立进程。

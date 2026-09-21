@@ -1,5 +1,6 @@
 """Console composition root."""
 
+import argparse
 import json
 from dataclasses import asdict
 from datetime import datetime
@@ -12,6 +13,7 @@ from agent_infra.agents.claude_code import ClaudeCodeAdapter
 from agent_infra.agents.codex import CodexAdapter
 from agent_infra.agents.deepseek_harness import DeepSeekHarnessAdapter
 from agent_infra.bootstrap.controller import run_action
+from agent_infra.bootstrap.gpu import gpu_doctor, gpu_smoke
 from agent_infra.bootstrap.projects import project_action
 from agent_infra.bootstrap.settings import load_settings
 from agent_infra.bootstrap.web import serve_console
@@ -63,6 +65,13 @@ def _inspect_resources() -> dict[str, object]:
 
 def _validate_resource_request(path: Path) -> dict[str, object]:
     return _json_mapping(asdict(load_resource_request(path)))
+
+
+def _gpu_action(action: str, args: argparse.Namespace) -> dict[str, object]:
+    snapshot = LinuxHostResourceMonitor().sample()
+    if action == "gpu-doctor":
+        return gpu_doctor(snapshot)
+    return gpu_smoke(snapshot, device_id=args.gpu_uuid, image=args.image)
 
 
 def _task_action(action: str, options: dict[str, str]) -> dict[str, object]:
@@ -165,6 +174,7 @@ def main() -> int:
         records_action=_records_action,
         project_action=project_action,
         run_action=run_action,
+        gpu_action=_gpu_action,
         web_action=lambda records, console, web, tasks, port, state: serve_console(
             _AGENTS, records, console, web, tasks, port, state
         ),

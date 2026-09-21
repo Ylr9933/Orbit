@@ -8,6 +8,7 @@ from pathlib import Path
 
 from agent_infra.gateways.cli.environment import add_environment_arguments
 from agent_infra.gateways.cli.projects import (
+    add_codex_session_arguments,
     add_compilation_arguments,
     add_init_arguments,
     add_research_arguments,
@@ -32,6 +33,7 @@ def run(
     web_action: Callable[[Path | None, Path, Path, tuple[Path, ...], int, str | None], int]
     | None = None,
     run_action: Callable[[argparse.Namespace], dict[str, object] | int] | None = None,
+    gpu_action: Callable[[str, argparse.Namespace], dict[str, object]] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(description="Agent Infra engineering utilities")
     parser.add_argument("--version", action="version", version=version("agent-infra"))
@@ -50,6 +52,9 @@ def run(
     project_commands = project.add_subparsers(dest="project_command", required=True)
     add_compilation_arguments(project_commands)
     add_research_arguments(project_commands.add_parser("research", help="Persist research plans"))
+    add_codex_session_arguments(
+        project_commands.add_parser("codex", help="Bind local Codex sessions")
+    )
     for name in ("init", "preview"):
         add_init_arguments(project_commands.add_parser(name))
     for name in ("show", "list", "recover"):
@@ -79,6 +84,12 @@ def run(
     resource_commands.add_parser("inspect", help="Read a host CPU, memory and GPU snapshot")
     validate = resource_commands.add_parser("validate", help="Validate a resource request YAML")
     validate.add_argument("request", type=Path)
+    resource_commands.add_parser("gpu-doctor", help="Check NVIDIA and Docker GPU readiness")
+    smoke = resource_commands.add_parser(
+        "gpu-smoke", help="Run a bounded CUDA calculation in an existing local image"
+    )
+    smoke.add_argument("--gpu-uuid", required=True)
+    smoke.add_argument("--image", required=True, help="Existing local Python image")
     task = commands.add_parser("task", help="Prepare and inspect task manifests")
     task_commands = task.add_subparsers(dest="task_command", required=True)
     for name in ("validate", "view", "freeze"):
@@ -134,10 +145,13 @@ def run(
         action = "init" if args.command == "init" else args.project_command
         if action == "research":
             action = "research-" + args.research_command
+        if action == "codex":
+            action = "codex-" + args.codex_command
         values = {
             key: str(value)
             for key, value in vars(args).items()
-            if key not in {"command", "project_command", "research_command", "dry_run"}
+            if key
+            not in {"command", "project_command", "research_command", "codex_command", "dry_run"}
             and value is not None
         }
         if "directory_option" in values:
@@ -214,15 +228,18 @@ def run(
 
     if args.command == "resource":
         try:
-            resource_result = (
-                inspect_resources()
-                if args.resource_command == "inspect"
-                else validate_resource_request(args.request)
-            )
+            if args.resource_command == "inspect":
+                resource_result = inspect_resources()
+            elif args.resource_command == "validate":
+                resource_result = validate_resource_request(args.request)
+            else:
+                if gpu_action is None:
+                    parser.exit(2, "GPU diagnostics are not configured\n")
+                resource_result = gpu_action(args.resource_command, args)
         except (OSError, RuntimeError, ValueError) as error:
             parser.exit(2, f"Resource error: {error}\n")
         print(json.dumps(resource_result, sort_keys=True))
-        return 0
+        return 1 if resource_result.get("ready") is False else 0
 
     try:
         callback = setup_agent if args.agent_command == "setup" else probe_agent

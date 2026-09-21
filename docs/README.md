@@ -54,6 +54,9 @@
 
 ## 单节点执行
 
+- [当前功能与首次科研任务试用](operations/first-research-trial.md)：从初始化、Codex MCP、Docker 实验到 Web 查看结果，并说明 GPU 已有基础与待接通边界。
+- [单机 GPU 诊断与准入](operations/gpu-local.md)：G1/G2 的诊断、自检、Controller UUID 授权、冻结 Task 请求及真实环境限制。
+
 - [科研工作流细分开发计划](development/research-workflow-implementation-plan.md)：A 批初始化、B 批研究规划及后续执行的实施顺序；实际验收与集成状态以任务记录为准。
 - [Project 初始化命令](reference/projects.md)：一句目标创建研究工作区，支持指定目录、自动命名、预览、查询和恢复。
 - [科研规划使用说明](reference/research-planning.md)：保存 Brief/Plan/Experiment、版本确认、笔记导入、会话恢复及项目内 Skill。
@@ -70,6 +73,7 @@
 - [Run / Environment 契约](architecture/run-environment-contract.md)：仅求解与隔离评测设计。
 - [执行 API 与验证说明](reference/run-environment.md)：Python 组装、记录、安全边界及真实 Docker 测试。
 - [宿主机科研与 MCP](reference/host-research-mcp.md)：长期环境、后台 Job、MCP 接入、文件、日志、产物及宿主机原生流导入。
+- [宿主机 Codex 会话绑定与采集](reference/codex-host-sessions.md)：按项目目录发现候选会话，显式绑定、增量导入与通知触发同步。
 - [H 批实现导读](implementation/host-research-mcp.md)：监督进程、Controller 用例、幂等状态、采集和故障恢复。
 - [本机 Run 控制服务](reference/local-run-controller.md)：冻结 Task 的预检、提交、查询、取消、认证、结果下载与 CPU 示例。
 - [Controller 实现与恢复](implementation/local-run-controller.md)：命令持久化、单 worker、资源互斥、Docker 对账及扩展入口。

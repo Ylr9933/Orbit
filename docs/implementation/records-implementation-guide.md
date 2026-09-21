@@ -89,7 +89,7 @@ Evaluator 返回的允许公开 feedback 记录在 `evaluation.finished`。只�
 ## 6. 轨迹派生
 
 `AttemptTrajectoryBuilder` 读取已完成 Attempt 的事件图，而不修改原始数据。当前 schema 为
-`records.trajectory.v2`，builder 为 `attempt-event-graph@2.0.1`。trajectory ID 由 Attempt、builder
+`records.trajectory.v2`，builder 为 `attempt-event-graph@2.0.2`。trajectory ID 由 Attempt、builder
 版本和源 event ID 计算，因此同一输入和 builder 版本具有稳定 ID。
 
 每个 step 保存 observation event、action event、后继 observation、reward、Span lineage、终止原因
@@ -99,6 +99,9 @@ Evaluator 返回的允许公开 feedback 记录在 `evaluation.finished`。只�
 
 当前 CLI Agent 通常没有 token ID 和 behavior logprob，因此导出会明确标记 unavailable。训练使用者
 必须按 `eligible_for`、`limitations` 和 features 筛选。
+平台 Environment 的工具请求可保留为分析 step，但不属于 Agent action；纯平台操作只具备 `analysis` 资格。
+`host_agent=partial` 或采集缺口会使采集特征为 partial，并取消 SFT/RL 候选资格。原生 Agent 流需另外导入并核对完整性；
+这些候选标签并不保证数据已满足特定训练算法。
 
 ## 7. 当前限制和扩展点
 
