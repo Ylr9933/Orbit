@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 
+from agent_infra.bootstrap.codex_capture import codex_session_action
 from agent_infra.bootstrap.compilation import compilation_action
 from agent_infra.bootstrap.paths import state_root
 from agent_infra.bootstrap.research import research_action
@@ -23,6 +24,8 @@ def project_action(action: str, options: dict[str, str]) -> dict[str, object]:
         result: dict[str, object]
         if action in {"compile", "compiled-tasks", "resolve-task", "rebind"}:
             result = compilation_action(store, action, options)
+        elif action.startswith("codex-"):
+            result = codex_session_action(action.removeprefix("codex-"), options)
         elif action.startswith("research-"):
             result = research_action(store, action.removeprefix("research-"), options)
         elif action in {"init", "preview"}:

@@ -101,3 +101,18 @@ def add_research_arguments(parser: argparse.ArgumentParser) -> None:
             entry.add_argument(
                 "--install", action="store_true", help="Install into this project's .agents/skills"
             )
+
+
+def add_codex_session_arguments(parser: argparse.ArgumentParser) -> None:
+    actions = parser.add_subparsers(dest="codex_command", required=True)
+    for action in ("discover", "bind", "sync", "notify"):
+        entry = actions.add_parser(action)
+        if action != "notify":
+            entry.add_argument("identifier", help="Project ID or current workspace path")
+        entry.add_argument("--state-dir")
+        if action in {"bind", "sync"}:
+            entry.add_argument("thread_id", help="Codex thread ID from discover")
+        if action != "discover":
+            entry.add_argument("--max-lines", type=int, default=2000)
+        if action == "notify":
+            entry.add_argument("notification", help="JSON argument supplied by Codex notify")

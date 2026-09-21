@@ -1,10 +1,11 @@
 # 项目当前状态
 
-Updated at: 2026-09-21T21:08:06+08:00
+Updated at: 2026-09-21T21:41:27+08:00
 
 Basis: 以本文在 `main` 中的版本为集成依据；涵盖 A/B/C/D、H/E/I/W，以及 `c22fd80` 的模块整理与回归。
 本文随用户授权的本次集成更新；具体合并与双远端同步事实以 Git 历史为准，不表示已配置常驻部署。
 G1/G2 叠加任务分支提出的更新仅在合并后成为集成事实；本机 GPU 诊断与容器计算已验收，完整 GPU Run 尚未验收。
+本任务分支另提出本机 Codex 交互会话绑定与增量采集；仅在合并后成为集成事实。
 
 当前定位：本机、单管理员、小型 CPU 科研工作流已可试用。
 初始化、版本化规划、冻结 Task、容器执行、记录、分析和 Web 已有连接；GPU 基础容器链已局部验收，完整 GPU 科研任务、原生 benchmark 和多节点尚未验收。
@@ -28,6 +29,7 @@ G1/G2 叠加任务分支提出的更新仅在合并后成为集成事实；本�
 - **Agent/Tasks/Resources/Records**：三种 CLI Agent adapter、Task 可见视图、资源 YAML 与宿主机观测；本地原始流、事件、产物、轨迹与 JSONL 导出。
   Python 执行内核支持求解与隔离评测；正式 Controller 提交仍限 Codex 和无评测科研 Task。
 - **G1/G2（合并后）**：GPU 只读诊断、限定单卡的 CUDA smoke 命令与 Controller UUID 白名单；冻结 Task 的 GPU 请求复用既有资源租约和 Docker 设备映射。本机 Toolkit 1.20.1、CDI 指定卡 CUDA 计算和 DockerEnvironment 清理已验证；完整冻结 Task + Codex GPU Run 尚未验证。
+- **宿主机 Codex 采集（合并后）**：项目目录发现候选会话、显式绑定真实 thread ID、原始 JSONL 与规范事件写入独立 Records Run，并支持轮次通知触发的断点续采；不启动模型或 Docker。
 - **W**：Web 兼容旧 catalog 和新工作区，支持初始化、研究方案查看、实验编译/预检/提交/取消、产物下载和分析展示。
 - **模块整理**：修复 Web-first 启动权限、统一状态目录/研究运行上下文，以及事件/产物/轨迹可见性；拆分 Records 内部实现并保留兼容 API。
   `make verify` 通过（272 项非 E2E）；18 项无模型真实 Docker 集成、两套浏览器流程和独立 wheel 安装通过。
@@ -38,7 +40,7 @@ G1/G2 叠加任务分支提出的更新仅在合并后成为集成事实；本�
 - **科研训练**：长期科研环境的 GPU 入口、CUDA/系统依赖模板、外部不可变数据与大权重传输；当前 HTTP 下载上限 16 MiB。真实 GPU 训练及完整冻结 Task 验收仍缺。
 - **执行与任务**：其他 provider 的完整容器链、ToolBinding、原生 benchmark 接入和评分等价、持久等待队列与训练 checkpoint 接续。
 - **自动研究**：仅能在冻结 Task 授权集合内迭代；自动新任务授权和科学真实性判断未实现。
-- **记录和界面**：平台外轨迹依赖显式导入，缺跨进程 spool/远端备份/token-logprob；Web 未覆盖 H/E/I 全部控制，HTTP/TypeScript 契约仍手工维护。
+- **记录和界面**：其他 Agent 的平台外轨迹仍依赖显式导入；Codex 本机交互记录的格式兼容需随 CLI 版本维护，尚无 Web 专门会话列表；缺跨进程 spool/远端备份/token-logprob。Web 未覆盖 H/E/I 全部控制，HTTP/TypeScript 契约仍手工维护。
 - **运维和扩展**：Web 资产需单独提供；单管理员服务未产品化为安装即用部署；无 Worker/Ray、多节点或多人在线权限。
 
 ## 下一步优先级
@@ -55,6 +57,7 @@ G1/G2 叠加任务分支提出的更新仅在合并后成为集成事实；本�
 
 - [本轮整理与验证](changes/20260920-integration-audit-r61c4e.md)、[代码检查与后续任务](development/20260920-integration-review.md)
 - [G1/G2 GPU 诊断和准入](changes/20260921-gpu-diagnostics-admission-f1d9c6.md)、[单机 GPU 操作说明](operations/gpu-local.md)
+- [Codex 宿主机会话采集](changes/20260921-codex-host-sessions-8d7a4e.md)、[使用说明](reference/codex-host-sessions.md)
 - [D 本机执行](changes/20260918-local-run-controller-d73a91.md)、[H 宿主机科研](changes/20260920-host-research-mcp-a81f2c.md)
 - [E 环境准备](changes/20260920-environment-preparation-e92b6a.md)、[I 分析迭代](changes/20260920-research-iteration-i73c9a.md)、[W Web](changes/20260920-web-workflow-w84d2a.md)
 - [文档导航](README.md)、[使用入口](../README.md)、[Web 使用说明](operations/web-console.md)

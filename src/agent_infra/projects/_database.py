@@ -52,7 +52,7 @@ class ProjectDatabase:
             db.row_factory = sqlite3.Row
             try:
                 version = db.execute("PRAGMA user_version").fetchone()[0]
-                if version not in {0, 1, 2, 3, 4}:
+                if version not in {0, 1, 2, 3, 4, 5}:
                     raise ProjectError("unsupported project store version")
                 if write:
                     db.execute("BEGIN IMMEDIATE")
@@ -92,7 +92,15 @@ class ProjectDatabase:
                         "project_id TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, "
                         "body TEXT NOT NULL, PRIMARY KEY(project_id,kind,id))"
                     )
-                    db.execute("PRAGMA user_version=4")
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS codex_sessions ("
+                        "thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, "
+                        "started_at TEXT NOT NULL, cwd TEXT NOT NULL, "
+                        "next_offset INTEGER NOT NULL DEFAULT 0, "
+                        "next_line INTEGER NOT NULL DEFAULT 0, "
+                        "FOREIGN KEY(project_id) REFERENCES projects(id))"
+                    )
+                    db.execute("PRAGMA user_version=5")
                 elif version == 0:
                     if db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchone():
                         raise ProjectError("unrecognized project store schema")

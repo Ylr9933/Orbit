@@ -8,6 +8,7 @@ from pathlib import Path
 
 from agent_infra.gateways.cli.environment import add_environment_arguments
 from agent_infra.gateways.cli.projects import (
+    add_codex_session_arguments,
     add_compilation_arguments,
     add_init_arguments,
     add_research_arguments,
@@ -51,6 +52,9 @@ def run(
     project_commands = project.add_subparsers(dest="project_command", required=True)
     add_compilation_arguments(project_commands)
     add_research_arguments(project_commands.add_parser("research", help="Persist research plans"))
+    add_codex_session_arguments(
+        project_commands.add_parser("codex", help="Bind local Codex sessions")
+    )
     for name in ("init", "preview"):
         add_init_arguments(project_commands.add_parser(name))
     for name in ("show", "list", "recover"):
@@ -141,10 +145,13 @@ def run(
         action = "init" if args.command == "init" else args.project_command
         if action == "research":
             action = "research-" + args.research_command
+        if action == "codex":
+            action = "codex-" + args.codex_command
         values = {
             key: str(value)
             for key, value in vars(args).items()
-            if key not in {"command", "project_command", "research_command", "dry_run"}
+            if key
+            not in {"command", "project_command", "research_command", "codex_command", "dry_run"}
             and value is not None
         }
         if "directory_option" in values:
