@@ -8,6 +8,7 @@ from typing import Any
 from agent_infra.records import AttemptTrajectoryBuilder, BlobRef, EventQuery
 from agent_infra.records.api import RecordsReader
 from agent_infra.records.visibility import artifact_visible, event_visible
+from agent_infra.runs._artifact_view import DEFAULT_PAGE_BYTES, artifact_view, validate_view
 from agent_infra.runs.control_store import RunControlStore
 
 
@@ -28,26 +29,34 @@ class RunQueries:
             if artifact_visible(item.data_class, item.visibility)
         ]
 
-    def artifact(self, run_id: str, artifact_id: str, member: str | None = None) -> dict[str, Any]:
+    def _artifact_files(self, run_id: str, artifact_id: str) -> list[dict[str, Any]]:
         allowed = {item["artifact_id"] for item in self.artifacts(run_id)}
         if artifact_id not in allowed:
             raise KeyError(artifact_id)
         artifact = self.records.get_artifact(artifact_id)
         with self.records.open_blob(artifact.manifest_blob) as file:
             manifest = json.load(file)
+        return list(manifest["files"])
+
+    @staticmethod
+    def _member(files: list[dict[str, Any]], member: str) -> BlobRef:
+        # Exact manifest membership, never resolve a caller-supplied host path.
+        match = next((item for item in files if item["path"] == member), None)
+        if match is None:
+            raise KeyError(member)
+        return BlobRef(**match["blob"])
+
+    def artifact(self, run_id: str, artifact_id: str, member: str | None = None) -> dict[str, Any]:
+        """Legacy whole-file download; retained for HTTP/Web and run artifact --output."""
+        files = self._artifact_files(run_id, artifact_id)
         if member is None:
             return {
                 "artifact_id": artifact_id,
                 "files": [
-                    {"path": item["path"], "size_bytes": item["size_bytes"]}
-                    for item in manifest["files"]
+                    {"path": item["path"], "size_bytes": item["size_bytes"]} for item in files
                 ],
             }
-        # Exact manifest membership, never resolve a caller-supplied host path.
-        match = next((item for item in manifest["files"] if item["path"] == member), None)
-        if match is None:
-            raise KeyError(member)
-        ref = BlobRef(**match["blob"])
+        ref = self._member(files, member)
         if ref.size_bytes > 16 * 1024**2:
             raise ValueError("file exceeds 16 MiB HTTP download limit; use local Records storage")
         with self.records.open_blob(ref) as file:
@@ -59,6 +68,33 @@ class RunQueries:
             "size_bytes": len(data),
             "content_base64": base64.b64encode(data).decode(),
         }
+
+    def artifact_view(
+        self,
+        run_id: str,
+        artifact_id: str,
+        member: str | None = None,
+        *,
+        format: str = "auto",
+        offset: int = 0,
+        limit: int = DEFAULT_PAGE_BYTES,
+    ) -> dict[str, Any]:
+        """Agent-facing bounded view; no member still lists the authorized manifest."""
+        validate_view(format, offset, limit)
+        if member is None:
+            return self.artifact(run_id, artifact_id)
+        ref = self._member(self._artifact_files(run_id, artifact_id), member)
+        with self.records.open_blob(ref) as file:
+            return artifact_view(
+                file,
+                ref,
+                run_id=run_id,
+                artifact_id=artifact_id,
+                member=member,
+                format=format,
+                offset=offset,
+                limit=limit,
+            )
 
     def events(self, run_id: str, cursor: str | None = None) -> dict[str, Any]:
         entry = self.commands.get(run_id)

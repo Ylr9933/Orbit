@@ -181,6 +181,15 @@ class ResearchController:
                 return self.queries.events(run["run_id"], options.get("cursor"))
             return self.queries.trajectory(run["run_id"])
         if action == "artifact":
+            if "format" in options:
+                return self.queries.artifact_view(
+                    run["run_id"],
+                    options["artifact_id"],
+                    options.get("member"),
+                    format=options["format"],
+                    offset=options.get("offset", 0),
+                    limit=options.get("limit", 16 * 1024),
+                )
             return self.queries.artifact(
                 run["run_id"], options["artifact_id"], options.get("member")
             )

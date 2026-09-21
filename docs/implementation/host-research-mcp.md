@@ -34,6 +34,25 @@ bootstrap/host_research.py 注入，Runs 不访问 Projects 后端。MCP 使用 
 | `agents/recording.py` | 托管运行和宿主机导入共用的 AgentEvent → EventDraft 转换 |
 | `gateways/cli/research_runtime.py` | 人工操作入口、明确文件上传和绑定 HTTP 客户端 |
 | `gateways/mcp/research.py` | stdio MCP 工具；连接终止不操作环境生命周期 |
+| `runs/query.py`、`runs/_artifact_view.py` | 共用产物授权/成员查找；原始下载与有界文本/二进制视图；不修改存储 |
+| `gateways/mcp/artifacts.py` | 将读取视图转为 MCP 文本、图片或资源链接；资源读取仍经过绑定客户端 |
+
+### 归档读取与兼容
+
+`ResearchController` 的 artifact 请求带 `format` 时调用 `RunQueries.artifact_view`；
+未带 format 的历史调用和 HTTP 下载继续走 `RunQueries.artifact`。两个入口共用可见性与
+精确成员查找，私有评测产物不能通过新文本、图片或资源路径绕过检查。
+内容视图只进行有界采样和分页读取；增量 UTF-8 解码将页尾未完成字符留给下一页，
+`next_offset` 按实际返回字节推进。不解析模型权重或执行文件内容。
+
+MCP schema 将 auto 作为默认；小图片的原始数据进入 ImageContent，不再复制到文本或
+structuredContent。资源模板固定 MIME 类型并校验图片类型；URI 只编码身份与成员，不暴露
+存储目录。科研 CLI 共用相同视图，Web/`run artifact --output` 保留整文件下载。
+详细参数、限额和更新已有服务的步骤见[归档文件可读视图](../reference/host-research-mcp.md#归档文件的可读视图)。
+
+`tests/unit/runs/test_artifact_views.py` 验证真实 Records 上的范围、编码与访问检查；
+`test_artifact_mcp.py` 通过 SDK 内存传输、真实 loopback HTTP 和 Controller/Records 验证
+工具与资源协议、项目隔离及旧下载。未使用的执行后端为替身，不启动 Docker 或调用模型。
 
 ## 状态权威与故障窗口
 
