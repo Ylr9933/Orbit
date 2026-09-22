@@ -71,6 +71,7 @@
 - [Web 控制台使用说明](operations/web-console.md)：已实现简版的启动、SSH 访问、页面范围、HTTP 接口与验证方式。
 
 - [Run / Environment 契约](architecture/run-environment-contract.md)：仅求解与隔离评测设计。
+- [Benchmark 接入层设计](architecture/benchmark-integration-layer.md)：ASI-Bench 与 TB-Science 原生执行适配、统一试次记录、资源与评分边界及分期验收；当前为未实现草案。
 - [执行 API 与验证说明](reference/run-environment.md)：Python 组装、记录、安全边界及真实 Docker 测试。
 - [宿主机科研与 MCP](reference/host-research-mcp.md)：长期环境、后台 Job、MCP 接入、文件、日志、产物及宿主机原生流导入。
 - [宿主机 Codex 会话绑定与采集](reference/codex-host-sessions.md)：按项目目录发现候选会话，显式绑定、增量导入与通知触发同步。
