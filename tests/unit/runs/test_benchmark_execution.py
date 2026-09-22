@@ -32,6 +32,7 @@ class Backend:
 
     def __init__(self, root):
         self.root, self.calls, self.handle = root, 0, None
+        self.handles = {}
         self.lost_reply, self.unknown, self.clean, self.collect_error = False, False, True, False
         self.log = b"native stdout\n\xffraw-byte"
         self.cancelled = False
@@ -39,6 +40,7 @@ class Backend:
     def submit(self, operation_id, spec):
         self.calls += 1
         self.handle = ExecutionHandle(operation_id, self.backend_id, "fake-native-1", spec.digest())
+        self.handles[operation_id] = self.handle
         if self.lost_reply:
             raise ConnectionError("reply lost after submit")
         return self.handle
@@ -47,7 +49,9 @@ class Backend:
         if self.unknown:
             return Reconciliation("unknown", self.handle, "native service unreachable")
         return (
-            Reconciliation("known", self.handle) if self.handle else Reconciliation("not_submitted")
+            Reconciliation("known", self.handles[operation_id])
+            if operation_id in self.handles
+            else Reconciliation("not_submitted")
         )
 
     def observe(self, handle, cursor=0):
@@ -121,15 +125,67 @@ def test_lost_submit_reply_recovers_without_relaunch(context):
     assert store.unfinished() == []
 
 
-def test_unknown_native_service_blocks_replay_and_new_slot(context):
+def test_unknown_native_service_blocks_replay_and_queues_new_operation(context):
     execution, _, _, backend, _ = context
     backend.lost_reply = True
     run = service(context).submit("one", execution)
     backend.unknown = True
     assert service(context).status(run["run_id"])["slot_held"]
     assert service(context).submit("one", execution)["state"] == "quarantined"
-    with pytest.raises(ValueError, match="slot held"):
-        service(context).submit("two", execution)
+    second = service(context).submit("two", execution)
+    assert second["state"] == "queued" and second["queue_position"] == 1
+    assert backend.calls == 1
+
+
+def test_fifo_waiter_starts_after_positive_cleanup_and_restart(context):
+    execution, store, records, backend, workspace = context
+    backend.clean = False
+    first = service(context).submit("one", execution)
+    assert first["state"] == "quarantined"
+    second = service(context).submit("two", execution)
+    assert second["state"] == "queued" and backend.calls == 1
+
+    backend.clean = True
+    assert service(context).status(first["run_id"])["state"] == "finished"
+    restarted = BenchmarkExecutionService(store, records, backend, workspace)
+    done = restarted.status(second["run_id"])
+    assert done["state"] == "finished" and backend.calls == 2
+    assert done["lease_state"] == "released"
+
+
+def test_crash_after_lease_commit_recovers_without_oversubscription(context, monkeypatch):
+    execution, store, _, backend, _ = context
+    scheduler = service(context)
+    original = store.update
+    fired = False
+
+    def crash(run_id, **fields):
+        nonlocal fired
+        if "lease_id" in fields and not fired:
+            fired = True
+            raise OSError("crash after lease commit")
+        return original(run_id, **fields)
+
+    monkeypatch.setattr(store, "update", crash)
+    with pytest.raises(OSError, match="after lease commit"):
+        scheduler.submit("one", execution)
+    assert backend.calls == 0
+    leases = scheduler.leases.list()
+    assert len(leases) == 1 and leases[0].state.value == "allocated"
+
+    done = service(context).status(store.unfinished()[0]["run_id"])
+    assert done["state"] == "finished" and backend.calls == 1
+    assert len(service(context).leases.list()) == 1
+
+
+def test_queued_cancel_never_calls_backend(context):
+    execution, _, _, backend, _ = context
+    backend.clean = False
+    service(context).submit("one", execution)
+    second = service(context).submit("two", execution)
+    cancelled = service(context).status(second["run_id"], cancel=True)
+    assert cancelled["state"] == "finished"
+    assert cancelled["result"]["cleanup_scope"] == "never_launched"
     assert backend.calls == 1
 
 
@@ -193,6 +249,7 @@ def test_records_completion_commit_gap_recovers_idempotently(context, monkeypatc
     assert run["state"] == "collecting"
     done = service(context).status(run["run_id"])
     assert done["state"] == "finished" and backend.calls == 1
+    assert done["lease_state"] == "released"
     assert len(records.list_artifacts(run["attempt_id"])) == 1
 
 

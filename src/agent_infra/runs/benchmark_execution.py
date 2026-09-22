@@ -1,7 +1,7 @@
-"""Single atomic benchmark execution using existing control intents and Records.
+"""FIFO-admitted atomic benchmark execution using durable leases and Records.
 
-No benchmark-specific branches, queue, scoring or numeric resource allocator.
-The durable execution slot remains held until cleanup AND evidence collection succeed.
+There are no benchmark-specific branches or scoring rules here. The deliberately small BM05-A
+scheduler keeps a lease until cleanup and evidence collection both succeed.
 """
 
 import json
@@ -26,6 +26,8 @@ from agent_infra.records.api import (
     RunManifest,
     Visibility,
 )
+from agent_infra.resources.api import AllocationStatus, ResourceClaim
+from agent_infra.resources.persistent import PersistentLeaseStore
 from agent_infra.runs.control_store import RunControlStore
 
 
@@ -43,6 +45,7 @@ class BenchmarkExecutionService:
         *,
         validate_native: Callable[[PreparedExecution], None] | None = None,
         interpret: Callable[[Path], dict[str, Any]] | None = None,
+        leases: PersistentLeaseStore | None = None,
     ) -> None:
         self.validate_native, self.interpret = validate_native, interpret
         self.store, self.records, self.backend, self.workspace_root = (
@@ -51,6 +54,7 @@ class BenchmarkExecutionService:
             backend,
             workspace_root,
         )
+        self.leases = leases or PersistentLeaseStore(store.path.parent / "leases")
 
     def submit(self, operation_id: str, execution: PreparedExecution) -> dict[str, Any]:
         if not operation_id or len(operation_id) > 128:
@@ -67,10 +71,6 @@ class BenchmarkExecutionService:
         with self.store.exclusive():
             run = self.store.lookup(operation_id, payload)
             if run is None:
-                if self.store.unfinished():
-                    raise ValueError(
-                        "benchmark execution slot held; reconcile/collect the existing Run"
-                    )
                 run = self.store.create(
                     operation_id,
                     payload,
@@ -78,6 +78,8 @@ class BenchmarkExecutionService:
                         "benchmark": execution.frozen_plan.plan.suite.benchmark,
                         "plan_digest": execution.frozen_plan.digest,
                     },
+                    initial_state="queued",
+                    launch_authorized=True,
                 )
             return self._advance(run, allow_submit=True)
 
@@ -121,6 +123,8 @@ class BenchmarkExecutionService:
                 "resources": (
                     "native_attestation"
                     if "cpu_memory_limits" in self.backend.features
+                    else "durable_admission_lease"
+                    if run.get("lease_id")
                     else "not_allocated"
                 ),
                 "cleanup": "backend_scope",
@@ -172,17 +176,114 @@ class BenchmarkExecutionService:
             )
         )
 
+    @staticmethod
+    def _claim(run: dict[str, Any], execution: PreparedExecution) -> ResourceClaim:
+        resources = execution.frozen_plan.plan.phases[0].resources
+        return ResourceClaim(
+            request_id=run["attempt_id"],
+            owner_id=run["run_id"],
+            backend=execution.frozen_plan.plan.phases[0].backend,
+            cpu_cores=resources.cpu_cores,
+            memory_bytes=resources.memory_bytes,
+            gpu_count=resources.gpu_count,
+            allocator=resources.allocator,
+        )
+
+    @staticmethod
+    def _shortages(decision: Any) -> list[dict[str, Any]]:
+        return [asdict(item) for item in decision.shortages]
+
+    def _release_lease(self, run: dict[str, Any]) -> None:
+        lease_id = run.get("lease_id")
+        epoch = run.get("lease_owner_epoch")
+        if lease_id is not None and epoch is not None:
+            self.leases.release(lease_id, epoch, cleanup_confirmed=True)
+
+    def _mark_reconciling(self, run: dict[str, Any], reason: str) -> None:
+        lease_id = run.get("lease_id")
+        epoch = run.get("lease_owner_epoch")
+        if lease_id is not None and epoch is not None:
+            self.leases.reconcile(lease_id, epoch, reason)
+
     def _advance(self, run: dict[str, Any], *, allow_submit: bool = False) -> dict[str, Any]:
         if run["state"] == "finished":
             return run
         execution = PreparedExecution.model_validate_json(json.dumps(run["request"]["execution"]))
+        if run["state"] == "queued":
+            if run["cancel_requested"]:
+                return self._finish(
+                    run,
+                    self._sink(run, execution),
+                    "cancelled",
+                    None,
+                    None,
+                    False,
+                    (),
+                    "never_launched",
+                )
+            position = self.store.queue_position(run["run_id"])
+            if position != 1:
+                return self.store.update(
+                    run["run_id"],
+                    state="queued",
+                    slot_held=False,
+                    queue_position=position,
+                    detail="waiting for earlier FIFO submissions",
+                )
+            decision = self.leases.acquire(self._claim(run, execution))
+            if decision.status is AllocationStatus.WAITING:
+                return self.store.update(
+                    run["run_id"],
+                    state="queued",
+                    slot_held=False,
+                    queue_position=position,
+                    shortages=self._shortages(decision),
+                    detail="waiting for durable resource lease",
+                )
+            if decision.status is AllocationStatus.UNSATISFIABLE:
+                return self._finish(
+                    run,
+                    self._sink(run, execution),
+                    "failed",
+                    None,
+                    None,
+                    False,
+                    (),
+                    "never_launched",
+                    {
+                        "evaluation": "not_applicable",
+                        "protocol": "valid",
+                        "reason": "resource request exceeds scheduler capacity",
+                        "shortages": self._shortages(decision),
+                    },
+                )
+            assert decision.lease is not None
+            run = self.store.update(
+                run["run_id"],
+                state="accepted",
+                slot_held=True,
+                queue_position=None,
+                shortages=[],
+                lease_id=decision.lease.lease_id,
+                lease_owner_epoch=decision.lease.owner_epoch,
+                lease_state=decision.lease.state.value,
+                detail=None,
+            )
+            allow_submit = True
         sink = self._sink(run, execution)
         # Records may have committed before the control-store completion acknowledgement.
         attempt = self.records.get_attempt(run["attempt_id"])
         if attempt.status != "running":
             self.records.finish_run(run["run_id"], status=attempt.status)
+            if (attempt.result or {}).get("cleanup_complete"):
+                self._release_lease(run)
+                self._event(sink, "execution.slot_released", {"cleanup_confirmed": True})
             return self.store.update(
-                run["run_id"], state="finished", slot_held=False, result=dict(attempt.result or {})
+                run["run_id"],
+                state="finished",
+                slot_held=False,
+                lease_state="released" if run.get("lease_id") else None,
+                result=dict(attempt.result or {}),
             )
         backend_operation = run["attempt_id"]
         spec = execution_spec(
@@ -197,7 +298,9 @@ class BenchmarkExecutionService:
         if receipt.state == "not_submitted":
             if run["cancel_requested"]:
                 return self._finish(run, sink, "cancelled", None, None, False, (), "never_launched")
-            if not allow_submit:
+            if not allow_submit and not (
+                run.get("launch_authorized") is True and run.get("lease_id")
+            ):
                 return self.store.update(
                     run["run_id"],
                     state="accepted",
@@ -209,6 +312,7 @@ class BenchmarkExecutionService:
                 self.backend.submit(backend_operation, spec)
             except Exception as error:
                 # The reply can be lost after launch. Persist uncertainty; never retry here.
+                self._mark_reconciling(run, f"submit unconfirmed: {type(error).__name__}")
                 return self.store.update(
                     run["run_id"],
                     state="quarantined",
@@ -218,6 +322,7 @@ class BenchmarkExecutionService:
             receipt = self.backend.reconcile(backend_operation)
         handle = receipt.handle
         if handle is None:
+            self._mark_reconciling(run, receipt.reason or "backend identity unavailable")
             return self.store.update(
                 run["run_id"],
                 state="quarantined",
@@ -228,6 +333,16 @@ class BenchmarkExecutionService:
             raise ValueError("reconciled operation belongs to a different execution spec")
         run = self.store.update(run["run_id"], handle=asdict(handle), slot_held=True)
         if handle.native_id:
+            lease_id = run.get("lease_id")
+            epoch = run.get("lease_owner_epoch")
+            if lease_id is not None and epoch is not None:
+                lease = self.leases.bind_native(
+                    lease_id,
+                    epoch,
+                    backend=self._claim(run, execution).backend,
+                    native_id=handle.native_id,
+                )
+                run = self.store.update(run["run_id"], lease_state=lease.state.value)
             self._event(
                 sink,
                 "execution.started",
@@ -245,6 +360,8 @@ class BenchmarkExecutionService:
             if observation.eof or not observation.data:
                 break
         if observation.status in {"running", "unknown"}:
+            if observation.status == "unknown":
+                self._mark_reconciling(run, receipt.reason or "native execution unknown")
             return self.store.update(
                 run["run_id"],
                 state="running" if observation.status == "running" else "quarantined",
@@ -253,6 +370,7 @@ class BenchmarkExecutionService:
             )
         cleanup = self.backend.cleanup(handle)
         if not cleanup.complete:
+            self._mark_reconciling(run, cleanup.reason or "cleanup unconfirmed")
             return self.store.update(
                 run["run_id"], state="quarantined", slot_held=True, detail=cleanup.reason
             )
@@ -335,10 +453,16 @@ class BenchmarkExecutionService:
             result["protocol"] = native_result.get("protocol", "unknown")
         self._event(sink, "execution.finished", result)
         self._event(sink, "execution.cleanup_confirmed", {"scope": scope})
-        # Release only after both durable evidence and a positive cleanup receipt.
-        self._event(sink, "execution.slot_released", {"cleanup_confirmed": True})
         self.records.finish_attempt(run["attempt_id"], status=status, result=result)
         self.records.finish_run(run["run_id"], status=status)
+        # Release only after both durable evidence and a positive cleanup receipt.
+        self._release_lease(run)
+        self._event(sink, "execution.slot_released", {"cleanup_confirmed": True})
         return self.store.update(
-            run["run_id"], state="finished", slot_held=False, result=result, detail=None
+            run["run_id"],
+            state="finished",
+            slot_held=False,
+            lease_state="released" if run.get("lease_id") else None,
+            result=result,
+            detail=None,
         )

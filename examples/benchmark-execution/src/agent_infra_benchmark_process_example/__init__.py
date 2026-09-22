@@ -23,7 +23,7 @@ from agent_infra.benchmarks.execution_api import NativeInvocation
 from agent_infra.environments.api import ProcessCommand
 
 RUNNER = (
-    "import json,sys,time; from pathlib import Path; time.sleep(0.2); "
+    "import json,sys,time; from pathlib import Path; time.sleep(1.0); "
     "result={'sum': sum(json.loads(sys.argv[1])['numbers'])}; "
     "Path('result.json').write_text(json.dumps(result)); print(json.dumps(result), flush=True)"
 )

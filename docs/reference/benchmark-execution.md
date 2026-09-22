@@ -1,12 +1,15 @@
-# BM01：Benchmark 受管执行
+# BM01 / BM05-A：Benchmark 受管执行与持久排队
 
-状态：执行扩展 **1.0**，基于 SDK **1.0**；本任务分支实现，集成状态以 Git 为准。
+状态：执行扩展 **1.0**，基于 SDK **1.0**；BM01 已集成，BM05-A 在任务分支实现，
+集成状态以 Git 为准。
 适用于 Linux、单管理员、同一状态目录下的一个可信本机进程任务。真实短时 CPU 进程和独立 wheel
 已验收；本文描述 BM01 通用进程后端。TB-Science 的新增原生容器入口见
-[BM02-A 操作说明](../operations/tb-science-native-trial.md)，其余三个原生 benchmark 尚未验收。
+[BM02-A 操作说明](../operations/tb-science-native-trial.md)，ASI-Bench 的范围见
+[BM02-B 操作说明](../operations/asi-bench-native-trial.md)；PAST-Bench 和 PostTrainBench 尚未接入。
 
 BM00 负责描述和检查协议；BM01 增加“冻结具体命令 → 持久提交 → 查询/取消 → 归档”。
-原生评分、容器资源控制、批量调度、Web 页面及外层优化仍按[阶段计划](../development/benchmark-development-plan.md)推进。
+原生评分、容器资源控制、大规模公平调度、Web 页面及外层优化仍按
+[阶段计划](../development/benchmark-development-plan.md)推进。
 
 ## 适用范围
 
@@ -16,7 +19,7 @@ BM00 负责描述和检查协议；BM01 增加“冻结具体命令 → 持久�
 | 后端 | `managed-process-v1`，独立监督进程管理协作式本机命令 |
 | 凭据与输入 | 不继承宿主机完整环境变量；stdin 和显式环境注入暂不支持。适配器通过非敏感 argv/固定路径描述输入 |
 | 超时 | 支持命令墙钟超时；协议声明了预算时必须是 `process_start`，且与命令 timeout 一致 |
-| 资源 | 没有 CPU/内存/GPU 硬限额。显式资源要求（含外部分配器声明）会拒绝，不能视为已经分配资源 |
+| 资源 | BM05-A 使用持久准入租约，默认同一状态目录最多一个活动任务；普通进程后端仍没有 CPU/内存/GPU 硬限额，不能把准入租约当成 cgroup 或设备隔离 |
 | 隔离 | 同 UID、本机权限；不是沙箱。含不允许 solver 读取的材料会拒绝；不能运行不可信 Agent 或秘密 grader |
 | 清理 | 本次监督进程拥有的进程组。子进程必须遵守该范围；脱离会话的 daemon、Docker 子容器不属于已支持能力 |
 | 重试 | 同 operation ID 查询/续采，不再启动。新试验需新 ID；平台拥有的协议重试尚不支持 |
@@ -69,11 +72,12 @@ agent-infra benchmark events RUN_ID --state-dir "$INFRA_BENCH_STATE"
 agent-infra benchmark artifacts RUN_ID --state-dir "$INFRA_BENCH_STATE"
 agent-infra benchmark cancel RUN_ID --state-dir "$INFRA_BENCH_STATE"
 agent-infra benchmark reconcile --state-dir "$INFRA_BENCH_STATE"
+agent-infra benchmark queue --state-dir "$INFRA_BENCH_STATE"
 ```
 
 上述大写 ID 是替换位置，不是 literal 参数。`events --cursor CURSOR` 可续读；当前页上限 200。
 `status/cancel/reconcile/events/artifacts` 不重新加载适配包；即使源目录暂时不可读，也可查询和收尾。
-这些命令会同步日志、对账状态并尝试归档，因此不是纯只读查询。没有自动轮询守护服务，停止查询时
+`queue` 只列出等待项及持久租约；其他状态命令会同步日志、对账状态并尝试归档，因此不是纯只读查询。没有自动轮询守护服务，停止查询时
 监督器仍会执行超时/清理并保存原始 spool；后续 `status` 或 `reconcile` 再将证据归入 Records。
 
 退出码 `0` 表示控制命令成功，不表示实验成功；检查 `state` 和 `result.execution`。
@@ -83,7 +87,8 @@ agent-infra benchmark reconcile --state-dir "$INFRA_BENCH_STATE"
 
 | 状态 | 含义与处理 |
 | --- | --- |
-| `accepted` | 控制意图已保存，后端确认没有提交；reconcile 不自动启动，可显式重复原 `run` 命令或取消 |
+| `queued` | 已持久保存并获准等待；只允许 FIFO 队首尝试获取租约。取消不会调用执行后端 |
+| `accepted` | 已取得持久租约、可以进入提交；BM01 旧状态中未带启动授权的意图仍需显式重复原 `run` 命令或取消 |
 | `submitting` | 提交意图已经保存，正在联系后端；重启后先 reconcile |
 | `running` | 找到本次真实进程身份，继续观察 |
 | `quarantined` | 启动回执未到、身份失联或清理尚未确认；保留槽位，继续查询。短暂启动窗口也可能出现此状态 |
@@ -98,14 +103,21 @@ operation 查原生身份，不产生第二次启动。监督器身份包含 boo
 管理员需要调查该次 native 目录、进程身份及输出，确认真实清理和数据保全；不要删除数据库或换 state-dir
 绕过隔离。完整的人工解除隔离流程和外部 job 对账在后续可靠性阶段补充。
 
-每个状态目录只有一个持久执行槽，**不等于资源租约**。多个状态目录之间没有全局 CPU/GPU 配额协调，
-也不进入现有科研 Controller 的调度槽。本阶段只用于受控的小型本机任务。
+BM05-A 在 `STATE/benchmarks/leases/leases.sqlite3` 保存租约、申请、owner epoch、原生 job ID、
+清理确认及历史状态。默认容量为一个活动租约；等待项在控制库中按提交顺序排队。租约取得后、Run
+写回前崩溃时，同一 request 会复用原租约；提交响应丢失或执行身份未知时租约进入
+`reconciling`，不会给下一项复用。只有后端确认清理且 Records 收尾完成后才释放。
+
+这一租约是单状态目录内的准入账本。多个状态目录之间尚无全局配额协调，也不进入现有科研
+Controller 的调度槽；普通进程后端不会据此设置 cgroup/GPU。BM05-B 才增加公平性、并发扩展、
+实际用量采样、预算累计和远端调度。
 
 ## 日志和产物在哪里
 
 ```text
 STATE/benchmarks/
-  control.sqlite3        # operation、Run/Attempt、handle、日志游标、执行槽
+  control.sqlite3        # operation、Run/Attempt、FIFO 状态、handle 与日志游标
+  leases/leases.sqlite3  # 持久申请、租约、owner epoch、native ID 与释放历史
   native/<operation摘要>/
     spec.json            # 具体命令和预算
     launch.json          # 持久启动意图

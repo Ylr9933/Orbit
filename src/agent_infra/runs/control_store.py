@@ -76,13 +76,21 @@ class RunControlStore:
         return dict(json.loads(row["document"]))
 
     def create(
-        self, operation_id: str, payload: dict[str, Any], lineage: dict[str, Any]
+        self,
+        operation_id: str,
+        payload: dict[str, Any],
+        lineage: dict[str, Any],
+        *,
+        initial_state: str = "accepted",
+        launch_authorized: bool = False,
     ) -> dict[str, Any]:
+        if initial_state not in {"accepted", "queued"}:
+            raise ValueError("unsupported initial control state")
         document = {
             "operation_id": operation_id,
             "run_id": uuid.uuid4().hex,
             "attempt_id": "attempt_" + uuid.uuid4().hex,
-            "state": "accepted",
+            "state": initial_state,
             "cancel_requested": False,
             "created_at": now(),
             "updated_at": now(),
@@ -90,6 +98,8 @@ class RunControlStore:
             "lineage": lineage,
             "result": None,
         }
+        if launch_authorized:
+            document["launch_authorized"] = True
         with closing(self._connect()) as db:
             db.execute(
                 "INSERT INTO commands VALUES (?,?,?,?,?)",
@@ -139,5 +149,24 @@ class RunControlStore:
 
     def unfinished(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as db:
-            rows = db.execute("SELECT document FROM commands").fetchall()
+            rows = db.execute("SELECT document FROM commands ORDER BY rowid").fetchall()
         return [item for row in rows if (item := json.loads(row[0]))["state"] != "finished"]
+
+    def queue_position(self, run_id: str) -> int | None:
+        """One-based FIFO position among launch-authorized queued commands."""
+        queued = [
+            item
+            for item in self.unfinished()
+            if item["state"] == "queued" and item.get("launch_authorized") is True
+        ]
+        for position, item in enumerate(queued, start=1):
+            if item["run_id"] == run_id:
+                return position
+        return None
+
+    def queued(self) -> list[dict[str, Any]]:
+        return [
+            item
+            for item in self.unfinished()
+            if item["state"] == "queued" and item.get("launch_authorized") is True
+        ]

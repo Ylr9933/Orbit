@@ -7,7 +7,12 @@ from agent_infra.resources.api import (
     GpuObservation,
     GpuRequest,
     HostResourceSnapshot,
+    LeaseCapacity,
     NodeCapacity,
+    PersistentLeaseDecision,
+    PersistentLeaseState,
+    PersistentResourceLease,
+    ResourceClaim,
     ResourceLease,
     ResourceManager,
     ResourceRequest,
@@ -16,6 +21,7 @@ from agent_infra.resources.api import (
 from agent_infra.resources.config import load_resource_request
 from agent_infra.resources.local import LocalResourceManager
 from agent_infra.resources.monitor import LinuxHostResourceMonitor
+from agent_infra.resources.persistent import PersistentLeaseStore
 
 __all__ = [
     "AllocationDecision",
@@ -24,9 +30,15 @@ __all__ = [
     "GpuObservation",
     "GpuRequest",
     "HostResourceSnapshot",
+    "LeaseCapacity",
     "LinuxHostResourceMonitor",
     "LocalResourceManager",
     "NodeCapacity",
+    "PersistentLeaseDecision",
+    "PersistentLeaseState",
+    "PersistentLeaseStore",
+    "PersistentResourceLease",
+    "ResourceClaim",
     "ResourceLease",
     "ResourceManager",
     "ResourceRequest",

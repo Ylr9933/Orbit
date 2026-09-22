@@ -18,7 +18,16 @@ def benchmark_action(args: argparse.Namespace) -> dict[str, object]:
     config = load_config(args.config)
     registry = AdapterRegistry(config)
     action = args.benchmark_command
-    if action in {"prepare", "run", "status", "cancel", "reconcile", "events", "artifacts"}:
+    if action in {
+        "prepare",
+        "run",
+        "status",
+        "cancel",
+        "reconcile",
+        "queue",
+        "events",
+        "artifacts",
+    }:
         return execution_action(args, registry)
     if action == "adapters":
         return {

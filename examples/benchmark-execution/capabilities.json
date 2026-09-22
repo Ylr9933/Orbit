@@ -19,7 +19,7 @@
       "adapter_id": "process-demo",
       "adapter_version": "0.1.0",
       "suite_digest": "sha256:5b40217c9f1db2cab6101fb4005b90336ef68964301bd9ee81235e3b21e16cd3",
-      "runner_digest": "sha256:05a156f487f7b953035a52cea9ed45d2948c51a88b5517f35b9240bd93a47c5a",
+      "runner_digest": "sha256:777c21016435b0c92ce2e75b84ebcb344a63d22cf9312dd68ac6f1ec1d63553d",
       "profile": "sum-v1",
       "agent": "cooperative-fixture",
       "agent_version": "1",

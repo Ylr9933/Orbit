@@ -1,7 +1,8 @@
-# BM01 实现逻辑
+# BM01 / BM05-A 实现逻辑
 
-状态：本任务分支实现；公共命令和边界见[使用参考](../reference/benchmark-execution.md)。
-这一阶段复用既有数据库 schema 和事件格式，没有另建评分状态机。
+状态：BM01 已集成，BM05-A 在任务分支实现；公共命令和边界见
+[使用参考](../reference/benchmark-execution.md)。BM05-A 沿用原执行与事件格式，增加持久租约账本和
+控制库中的 FIFO 等待语义，没有另建评分状态机。
 
 ## 调用链
 
@@ -9,9 +10,10 @@
 独立适配包：discover / plan / validate / invocation
   → benchmarks：FrozenPlan → PreparedExecution（冻结确定的 argv）
   → bootstrap：检查声明和实际后端，组装 store / records / backend
-  → runs：保存 operation 意图，reconcile，再 submit / observe / cancel
+  → runs：保存 operation 意图并排队；队首向 resources 申请持久租约
+  → runs：reconcile，再 submit / observe / cancel
   → environments：独立监督器启动命令，保存日志与清理收据
-  → runs：停止后 collect，写入 Records，再释放本状态目录执行槽
+  → runs：停止后 collect，写入 Records，再释放持久租约
 ```
 
 | 文件 | 职责 |
@@ -24,19 +26,22 @@
 | [environments/_process_state.py](../../src/agent_infra/environments/_process_state.py) | Linux 锁、boot/PID/starttime 身份与 pidfd 定向信号；不广播清理其他进程 |
 | [runs/benchmark_execution.py](../../src/agent_infra/runs/benchmark_execution.py) | 一个原子 Run 的持久意图、保守恢复、Records 衔接和完成门槛 |
 | [runs/control_store.py](../../src/agent_infra/runs/control_store.py) | 复用既有 SQLite；增加本地跨进程事务范围锁，不改表结构 |
+| [resources/persistent.py](../../src/agent_infra/resources/persistent.py) | 独立 SQLite 租约账本；幂等申请、容量判断、owner epoch、native ID、对账与释放历史 |
 | [bootstrap/benchmark_execution.py](../../src/agent_infra/bootstrap/benchmark_execution.py) | 命令编排、实际后端和存储组装；CLI 只解析参数 |
 
 `ExecutionBackend` 不依赖 Benchmark/Run/资源后端，公开的 handle 不包含 Popen、Docker client 或数据库连接。
 BM01 ExecutionSpec 只覆盖当前受管命令能力，后续容器、外部分配引用和大文件交接要通过明确的扩展契约补齐。
 默认 backend 只承诺自己的 `cleanup_scope=process_group`，Run 记录该范围，不将其泛化为整个宿主机清理成功。
 
-## 三份持久状态各管什么
+## 四份持久状态各管什么
 
-1. **控制 store**：用户 operation ID 对应一个 Run/Attempt，保存完整冻结请求和游标。跨 CLI 文件锁保护
-   “查询现有操作 → 占槽 → 调用后端 → 写结果”，避免同一 state-dir 两个提交者同时通过准入。
-2. **后端 journal/spool**：启动意图、原生身份、进程原始字节和清理收据。不等于另一套 Records，
+1. **控制 store**：用户 operation ID 对应一个 Run/Attempt，保存完整冻结请求、FIFO 状态和游标。
+   跨 CLI 文件锁保护“查询操作 → 队首准入 → 调用后端 → 写结果”，避免同一 state-dir 两个提交者同时准入。
+2. **资源 lease store**：request/Run 对应唯一租约，保存 claim、owner epoch、状态和 native ID。
+   `allocated/active/reconciling` 都占容量；只有正向清理证据才能转为 `released`。等待队列不复制到这里。
+3. **后端 journal/spool**：启动意图、原生身份、进程原始字节和清理收据。不等于另一套 Records，
    它是控制端离线期间的运行恢复依据；不会尝试解释对话或成绩。
-3. **Records**：统一 Run/Attempt、事件、流和产物引用。只追加确认的字节；原生日志不做 UTF-8 改写。
+4. **Records**：统一 Run/Attempt、事件、流和产物引用。只追加确认的字节；原生日志不做 UTF-8 改写。
    本地 raw stream 修复了创建 spool/提交数据库之间，以及 fsync 字节/提交游标之间的崩溃窗口：
    重试以已提交游标为准，丢弃未提交尾部后重新采集；缺失已提交字节则报错，不补零、不伪造完整记录。
 
@@ -58,6 +63,8 @@ PID、starttime、session 和 boot ID 检查避免 PID 复用误杀；pidfd 在�
 
 | 发生位置 | 恢复行为 |
 | --- | --- |
+| 等待项已写入，协调器退出 | 重启后仍按控制库顺序等待；`reconcile` 从最早未完成项推进 |
+| 租约已提交，Run 尚未写回 | 同一 attempt 的幂等申请返回原租约；不会再次占容量 |
 | 控制意图已写，但没有后端 launch | status 不启动；用户显式重试原 operation 才可启动，也可以取消 |
 | 后端已启动，但提交响应丢失 | 保留 operation；重连查原 handle，不重放 |
 | 监督器死亡/身份未知 | quarantined，继续占槽；没有证明时不能推断进程已清理 |
@@ -67,8 +74,9 @@ PID、starttime、session 和 boot ID 检查避免 PID 复用误杀；pidfd 在�
 | 清理未确认或证据归档失败 | 保留槽位和源 spool，重试查询/归档；不把实验失败与清理失败混为一谈 |
 
 生命周期事件使用稳定 producer sequence 和每 Attempt 独立的幂等键。结果分别描述 execution、exit_code、
-cleanup、capture、missing_outputs；evaluation/protocol 为未解释/未验证。执行槽释放是控制面状态，不代表
-CPU/GPU 租约已释放：当前没有这种租约。
+cleanup、capture、missing_outputs；evaluation/protocol 为未解释/未验证。租约释放是持久资源状态；
+结果中的 `slot_held=false` 只在收尾后出现。BM05-A 租约负责准入，普通进程 backend 仍不提供
+CPU/GPU 物理限制或实际用量证明。
 
 ## 扩展时沿用的边界
 
@@ -78,6 +86,7 @@ CPU/GPU 租约已释放：当前没有这种租约。
 - 本机命令的 capability 不代表能管理其创建的 Docker/Slurm/Harbor 作业。首次出现这些后端时，
   先补原生 job ID、资源和清理证据，再复用 Run 编排；不能只套一层 subprocess 就宣布支持。
 - 后续接入原生轨迹解释和 Outcome 时保留原始文件、协议预算/可见性，复用当前 Records 引用。
-- 队列/资源租约 BM05-A、四个原生参考包、评分和优化循环仍分别实施，不在 BM01 用示例替代验收。
+- BM05-B 的公平/并发调度、任务级资源采样、大文件恢复，以及剩余原生参考包、评分和优化循环仍分别实施。
 
-验证入口：[任务记录](../changes/20260922-benchmark-execution-bm01-a4f8d2.md)。
+验证入口：[BM01 任务记录](../changes/20260922-benchmark-execution-bm01-a4f8d2.md)和
+[BM05-A 任务记录](../changes/20260922-benchmark-reliability-bm05a-91d7c4.md)。

@@ -74,7 +74,7 @@
 - [Run / Environment 契约](architecture/run-environment-contract.md)：仅求解与隔离评测设计。
 - [Benchmark 接入层设计](architecture/benchmark-integration-layer.md)：四类协议/执行适配、调度、状态轨迹与外层优化；BM00/BM01/BM02-A 已进入本地 `main`，BM02-B 在当前分支完成工程验收。
 - [Benchmark SDK 与命令](reference/benchmark-sdk.md)：独立适配包、显式启用、规划冻结和兼容性检查。
-- [BM01 受管执行](reference/benchmark-execution.md)、[执行实现说明](implementation/benchmark-execution.md)：可信本机进程、持久提交、恢复、取消和 Records；通用本机进程后端。
+- [BM01/BM05-A 受管执行](reference/benchmark-execution.md)、[执行实现说明](implementation/benchmark-execution.md)、[队列操作说明](operations/benchmark-queue.md)：可信本机进程、持久提交、FIFO 排队、租约恢复、取消和 Records。
 - [BM02-A TB-Science 试运行](operations/tb-science-native-trial.md)、[Harbor 实现](implementation/benchmark-harbor.md)：独立适配包、原生容器 trial 与工程验收边界。
 - [BM02-B ASI-Bench 试运行](operations/asi-bench-native-trial.md)、[实现路径](implementation/benchmark-asi-bench.md)：公开 seed31415 原生产出/评分及 seed42 外部提交边界。
 - [Benchmark 实施顺序](development/benchmark-development-plan.md)、[适配包开发指南](development/benchmark-adapters.md)：每阶段检查点与新 bench 的独立包接入方式。

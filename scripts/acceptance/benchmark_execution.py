@@ -98,6 +98,15 @@ def main() -> None:
         assert not (scratch / "state").exists()
         run = cli(*arguments, "--allow-host-process")
         run_id = run["run_id"]
+        second_arguments = tuple(
+            "bm05a-second" if value == "bm01-installed" else value for value in arguments
+        )
+        second = cli(*second_arguments, "--allow-host-process")
+        second_run_id = second["run_id"]
+        assert second["state"] == "queued" and not second["slot_held"]
+        queued = cli("queue", *state)
+        assert [item["run_id"] for item in queued["queued"]] == [second_run_id]
+        assert len([item for item in queued["leases"] if item["state"] != "released"]) == 1
         try:
             # Each call is a fresh CLI/coordinator. A lost client does not own runner lifetime.
             assert cli(*arguments, "--allow-host-process")["run_id"] == run_id
@@ -111,7 +120,6 @@ def main() -> None:
             assert run["result"]["execution"] == "completed" and not run["slot_held"]
             assert run["result"]["evaluation"] == "not_interpreted"
             assert run["handle"]["native_id"]
-            assert cli("reconcile", *state)["runs"] == []
             assert len(cli("artifacts", run_id, *state)["items"]) == 1
             events = cli("events", run_id, *state)["items"]
             assert len(events) == 5 and len({item["event_id"] for item in events}) == 5
@@ -144,9 +152,21 @@ def main() -> None:
                 check=True,
             )
             snapshots = list((scratch / "state/benchmarks/native").glob("*/collected"))
-            assert len(snapshots) == 1
+            assert len(snapshots) >= 1
             assert json.loads((snapshots[0] / "outputs/result.json").read_bytes()) == {"sum": 10}
             assert cli(*arguments, "--allow-host-process")["result"] == run["result"]
+
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                second = cli("status", second_run_id, *state)
+                if second["state"] == "finished":
+                    break
+                time.sleep(0.1)
+            assert second["state"] == "finished" and second["result"]["execution"] == "completed"
+            assert second["lease_state"] == "released"
+            assert cli("reconcile", *state)["runs"] == []
+            leases = cli("queue", *state)["leases"]
+            assert len(leases) == 2 and all(item["state"] == "released" for item in leases)
         finally:
             # On failure, request cancellation and wait for the owned <=30s supervisor.
             current = cli("cancel", run_id, *state)
@@ -156,7 +176,14 @@ def main() -> None:
                 current = cli("status", run_id, *state)
             if current["state"] != "finished":
                 raise RuntimeError(f"owned execution did not finalize: {current}")
-    print("BM01: independent wheels, explicit opt-in, CLI restart, idempotency and Records passed.")
+            second_current = cli("cancel", second_run_id, *state)
+            deadline = time.monotonic() + 35
+            while second_current["state"] != "finished" and time.monotonic() < deadline:
+                time.sleep(0.1)
+                second_current = cli("status", second_run_id, *state)
+            if second_current["state"] != "finished":
+                raise RuntimeError(f"queued execution did not finalize: {second_current}")
+    print("BM05-A: independent wheels, FIFO queue, durable leases, restart and Records passed.")
 
 
 if __name__ == "__main__":
