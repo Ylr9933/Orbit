@@ -59,11 +59,17 @@ small shared references belong in `contracts/`. Agree changes with consumers bef
 No business interfaces are defined in S0.
 
 The import-linter contract in pyproject.toml enforces dependency direction and independent peers:
-bootstrap → gateways → projects → runs → agents/tasks → environments/resources → records → contracts.
+bootstrap → gateways → projects → runs → benchmarks → agents/tasks → environments/resources → records → contracts.
 The same-level pairs cannot import each other. An allowed direction does not authorize importing
 private backend code: callers use public contracts; bootstrap assembles concrete dependencies.
 S1 must add public/private contract checks with the first actual interfaces. Dynamic imports are
 not a permitted workaround and are not covered by the static graph.
+
+Benchmark adapters use the designated external-package extension boundary, not dynamic imports
+between core modules. An operator enables a pinned distribution and versioned entry point;
+adapters import `agent_infra.benchmarks.api` and the public conformance helper only.
+See [adapter authoring](docs/development/benchmark-adapters.md). The existing wheel smoke check
+also builds and installs the independent example adapter in a disposable environment.
 
 Tests follow `tests/unit/<module>/`, `tests/contracts/`, `tests/integration/` and `tests/e2e/`;
 the foundation tests currently sit directly in unit/contracts. Test doubles belong in

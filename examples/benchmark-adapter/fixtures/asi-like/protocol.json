@@ -1,0 +1,110 @@
+{
+  "benchmark": "synthetic-asi-shape",
+  "profile": "external-score",
+  "units": [
+    {
+      "unit_id": "case-1",
+      "native_id": "native/case-1",
+      "kind": "single",
+      "conditions": [
+        {
+          "condition_id": "baseline",
+          "state": {
+            "session": "fresh",
+            "workspace": "native",
+            "conversation": "discard",
+            "memory": "none",
+            "checkpoint": "none",
+            "scope": "trial",
+            "owner": "synthetic-native-runner"
+          }
+        }
+      ]
+    }
+  ],
+  "phases": [
+    {
+      "phase_id": "produce",
+      "kind": "solve",
+      "owner": "native",
+      "backend": "demo-native",
+      "depends_on": [],
+      "required_capabilities": [
+        "isolated_solver",
+        "provenance"
+      ],
+      "resources": {},
+      "budget": {},
+      "materials": [
+        {
+          "material_id": "instruction",
+          "source": {
+            "uri": "urn:synthetic:instruction",
+            "revision": "fixture-v1",
+            "digest": "sha256:5a92f6f089f63f0d476ba2494aa0848b93dbd0bcb7f058544e10992e67f09c98"
+          },
+          "purpose": "instruction",
+          "readers": [
+            "solver"
+          ]
+        },
+        {
+          "material_id": "input",
+          "source": {
+            "uri": "urn:synthetic:input",
+            "revision": "fixture-v1",
+            "digest": "sha256:c96c6d5be8d08a12e7b5cdc1b207fa6b2430974c86803d8891675e76fd992c20"
+          },
+          "purpose": "input",
+          "readers": [
+            "solver"
+          ]
+        }
+      ],
+      "native_config": {
+        "uri": "urn:synthetic:produce-config",
+        "revision": "fixture-v1",
+        "digest": "sha256:1d0cc7931020385b5be88a58d754d3c1cc4bd4d96a13a18fdca179306c4a6cb3"
+      }
+    },
+    {
+      "phase_id": "bundle",
+      "kind": "submit",
+      "owner": "native",
+      "backend": "demo-native",
+      "depends_on": [
+        "produce"
+      ],
+      "required_capabilities": [
+        "external_submission"
+      ],
+      "resources": {},
+      "budget": {},
+      "materials": [],
+      "native_config": {
+        "uri": "urn:synthetic:bundle-config",
+        "revision": "fixture-v1",
+        "digest": "sha256:c034b2d58e45021467a912fcd989c041d2ff0d5174c2a835ac113adee80130b0"
+      }
+    }
+  ],
+  "retry": {
+    "owner": "native",
+    "native_rule": {
+      "uri": "urn:synthetic:native-attempt-policy",
+      "revision": "fixture-v1",
+      "digest": "sha256:537420d6e8f24033bdc9dee8019bf8e6a7a2783312871910cdd20c8a343e8ac8"
+    }
+  },
+  "feedback": [
+    {
+      "recipient": "admin",
+      "fields": [
+        "submission.status",
+        "official.score"
+      ],
+      "release": "after_campaign",
+      "purpose": "external-score-review"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from importlib.metadata import version
 from pathlib import Path
 
+from agent_infra.gateways.cli.benchmarks import add_benchmark_arguments
 from agent_infra.gateways.cli.environment import add_environment_arguments
 from agent_infra.gateways.cli.projects import (
     add_codex_session_arguments,
@@ -34,10 +35,12 @@ def run(
     | None = None,
     run_action: Callable[[argparse.Namespace], dict[str, object] | int] | None = None,
     gpu_action: Callable[[str, argparse.Namespace], dict[str, object]] | None = None,
+    benchmark_action: Callable[[argparse.Namespace], dict[str, object]] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(description="Agent Infra engineering utilities")
     parser.add_argument("--version", action="version", version=version("agent-infra"))
     commands = parser.add_subparsers(dest="command", required=True)
+    add_benchmark_arguments(commands)
     add_planner_arguments(commands)
     add_study_arguments(commands)
     add_run_arguments(commands)
@@ -124,6 +127,21 @@ def run(
     export.add_argument("--root", required=True)
     export.add_argument("--destination", required=True)
     args = parser.parse_args(argv)
+    if args.command == "benchmark":
+        if benchmark_action is None:
+            parser.exit(2, "Benchmark planning is not configured\n")
+        try:
+            benchmark_result = benchmark_action(args)
+        except (OSError, ValueError, RuntimeError) as error:
+            parser.exit(
+                2,
+                json.dumps(
+                    {"error": "benchmark_planning", "message": str(error)}, ensure_ascii=False
+                )
+                + "\n",
+            )
+        print(json.dumps(benchmark_result, ensure_ascii=False, indent=2))
+        return 1 if benchmark_result.get("compatible") is False else 0
     if args.command in {"run", "controller", "research", "mcp", "environment", "study", "planner"}:
         if run_action is None:
             parser.exit(2, "Run controller is not configured\n")

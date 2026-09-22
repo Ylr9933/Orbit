@@ -1,0 +1,13 @@
+[build-system]
+requires = ["uv_build==0.12.10"]
+build-backend = "uv_build"
+
+[project]
+name = "agent-infra-benchmark-example"
+version = "0.1.0"
+description = "Synthetic planning-only adapter; not an official benchmark runner"
+requires-python = ">=3.12,<3.13"
+dependencies = ["agent-infra==0.1.0"]
+
+[project.entry-points."agent_infra.benchmarks.v1"]
+contract-demo = "agent_infra_benchmark_example:Adapter"

@@ -71,8 +71,10 @@
 - [Web 控制台使用说明](operations/web-console.md)：已实现简版的启动、SSH 访问、页面范围、HTTP 接口与验证方式。
 
 - [Run / Environment 契约](architecture/run-environment-contract.md)：仅求解与隔离评测设计。
-- [Benchmark 接入层设计](architecture/benchmark-integration-layer.md)：ASI-Bench、TB-Science、PostTrainBench、PAST-Bench 的协议/执行适配、资源调度、状态轨迹与外层优化；当前为未实现草案，按 BM00–BM07 分期。
-- [Benchmark 协议与执行分离 ADR](adr/20260922-benchmark-protocol-execution.md)：原生 runner、执行后端与优化循环分离的拟议取舍。
+- [Benchmark 接入层设计](architecture/benchmark-integration-layer.md)：四类协议/执行适配、调度、状态轨迹与外层优化；BM00 SDK/规划已在任务分支实现，其余按阶段推进。
+- [Benchmark SDK 与命令](reference/benchmark-sdk.md)：独立适配包、显式启用、规划冻结和兼容性检查；目前不执行 benchmark。
+- [Benchmark 实施顺序](development/benchmark-development-plan.md)、[适配包开发指南](development/benchmark-adapters.md)：每阶段检查点与新 bench 的独立包接入方式。
+- [Benchmark 协议与执行分离 ADR](adr/20260922-benchmark-protocol-execution.md)：原生 runner、独立适配包、执行后端与优化循环的职责边界。
 - [执行 API 与验证说明](reference/run-environment.md)：Python 组装、记录、安全边界及真实 Docker 测试。
 - [宿主机科研与 MCP](reference/host-research-mcp.md)：长期环境、后台 Job、MCP 接入、文件、日志、产物及宿主机原生流导入。
 - [宿主机 Codex 会话绑定与采集](reference/codex-host-sessions.md)：按项目目录发现候选会话，显式绑定、增量导入与通知触发同步。

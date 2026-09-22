@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[2]
         ("resources", "bootstrap"),
         ("contracts", "tasks"),
         ("agents", "tasks"),
+        ("environments", "benchmarks"),
+        ("benchmarks", "runs"),
     ],
 )
 def test_reverse_dependency_is_rejected(tmp_path: Path, source: str, target: str) -> None:

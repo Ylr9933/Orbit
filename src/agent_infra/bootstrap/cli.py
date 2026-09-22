@@ -12,6 +12,7 @@ from agent_infra.agents import AgentRegistry
 from agent_infra.agents.claude_code import ClaudeCodeAdapter
 from agent_infra.agents.codex import CodexAdapter
 from agent_infra.agents.deepseek_harness import DeepSeekHarnessAdapter
+from agent_infra.bootstrap.benchmarks import benchmark_action
 from agent_infra.bootstrap.controller import run_action
 from agent_infra.bootstrap.gpu import gpu_doctor, gpu_smoke
 from agent_infra.bootstrap.projects import project_action
@@ -175,6 +176,7 @@ def main() -> int:
         project_action=project_action,
         run_action=run_action,
         gpu_action=_gpu_action,
+        benchmark_action=benchmark_action,
         web_action=lambda records, console, web, tasks, port, state: serve_console(
             _AGENTS, records, console, web, tasks, port, state
         ),

@@ -1,0 +1,111 @@
+{
+  "benchmark": "synthetic-terminal-shape",
+  "profile": "isolated-verifier",
+  "units": [
+    {
+      "unit_id": "case-1",
+      "native_id": "native/case-1",
+      "kind": "single",
+      "conditions": [
+        {
+          "condition_id": "baseline",
+          "state": {
+            "session": "fresh",
+            "workspace": "native",
+            "conversation": "discard",
+            "memory": "none",
+            "checkpoint": "none",
+            "scope": "trial",
+            "owner": "synthetic-native-runner"
+          }
+        }
+      ]
+    }
+  ],
+  "phases": [
+    {
+      "phase_id": "solve",
+      "kind": "solve",
+      "owner": "native",
+      "backend": "demo-harbor",
+      "depends_on": [],
+      "required_capabilities": [
+        "isolated_solver"
+      ],
+      "resources": {
+        "cpu_cores": 1.0,
+        "memory_bytes": 1073741824,
+        "gpu_count": 0,
+        "allocator": "local"
+      },
+      "budget": {},
+      "materials": [
+        {
+          "material_id": "instruction",
+          "source": {
+            "uri": "urn:synthetic:instruction",
+            "revision": "fixture-v1",
+            "digest": "sha256:5a92f6f089f63f0d476ba2494aa0848b93dbd0bcb7f058544e10992e67f09c98"
+          },
+          "purpose": "instruction",
+          "readers": [
+            "solver"
+          ]
+        }
+      ],
+      "native_config": {
+        "uri": "urn:synthetic:solve-config",
+        "revision": "fixture-v1",
+        "digest": "sha256:f3fac5e76f913c75f02695f52f78e566ef8c284a28212fbc6fd1aedc31df13e5"
+      }
+    },
+    {
+      "phase_id": "verify",
+      "kind": "evaluate",
+      "owner": "native",
+      "backend": "demo-harbor",
+      "depends_on": [
+        "solve"
+      ],
+      "required_capabilities": [
+        "clean_verifier",
+        "frozen_artifacts"
+      ],
+      "resources": {},
+      "budget": {},
+      "materials": [
+        {
+          "material_id": "private-tests",
+          "source": {
+            "uri": "urn:synthetic:private-tests",
+            "revision": "fixture-v1",
+            "digest": "sha256:eb3fd515e3a195adf4e9ab2ac2d3fbc291f9202c1a66f466db3891b097175acf"
+          },
+          "purpose": "private-tests",
+          "readers": [
+            "grader"
+          ]
+        }
+      ],
+      "native_config": {
+        "uri": "urn:synthetic:verify-config",
+        "revision": "fixture-v1",
+        "digest": "sha256:93bd185a879f0bc99534c72f21af2fd955d8edd23f8d22f8badfc92d497d921b"
+      }
+    }
+  ],
+  "retry": {
+    "owner": "none",
+    "max_attempts": 1
+  },
+  "feedback": [
+    {
+      "recipient": "admin",
+      "fields": [
+        "reward"
+      ],
+      "release": "after_trial",
+      "purpose": "native-results"
+    }
+  ]
+}

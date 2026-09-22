@@ -1,0 +1,81 @@
+{
+  "benchmark": "synthetic-past-shape",
+  "profile": "paired-fresh-sessions",
+  "units": [
+    {
+      "unit_id": "family-1",
+      "native_id": "native/family-1",
+      "kind": "paired_sequence",
+      "episodes": [
+        "episode-1",
+        "episode-2",
+        "episode-3"
+      ],
+      "conditions": [
+        {
+          "condition_id": "persistence-on",
+          "state": {
+            "session": "fresh",
+            "workspace": "native",
+            "conversation": "discard",
+            "memory": "native_scoped",
+            "checkpoint": "none",
+            "scope": "condition",
+            "owner": "synthetic-native-runner"
+          }
+        },
+        {
+          "condition_id": "persistence-off",
+          "state": {
+            "session": "fresh",
+            "workspace": "native",
+            "conversation": "discard",
+            "memory": "none",
+            "checkpoint": "none",
+            "scope": "condition",
+            "owner": "synthetic-native-runner"
+          }
+        }
+      ]
+    }
+  ],
+  "phases": [
+    {
+      "phase_id": "family",
+      "kind": "native",
+      "owner": "native",
+      "backend": "demo-sequence",
+      "depends_on": [],
+      "required_capabilities": [
+        "ordered_episodes",
+        "condition_state_isolation",
+        "fresh_sessions",
+        "memory_evidence"
+      ],
+      "resources": {},
+      "budget": {},
+      "materials": [],
+      "native_config": {
+        "uri": "urn:synthetic:family-config",
+        "revision": "fixture-v1",
+        "digest": "sha256:1f9fe22e98f9f8921bcdbcd92a09d2d8e7245946c6843266705be5e034badb3f"
+      }
+    }
+  ],
+  "retry": {
+    "owner": "none",
+    "max_attempts": 1
+  },
+  "feedback": [
+    {
+      "recipient": "admin",
+      "fields": [
+        "episodes",
+        "sequence_summary",
+        "paired_comparison"
+      ],
+      "release": "after_trial",
+      "purpose": "paired-native-report"
+    }
+  ]
+}

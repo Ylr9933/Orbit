@@ -1,0 +1,22 @@
+{
+  "selection": [
+    "case-1"
+  ],
+  "candidate": {
+    "candidate_id": "fixture-candidate",
+    "agent": "demo-agent",
+    "agent_version": "fixture-v1",
+    "model": "no-model-called",
+    "configuration_digest": "sha256:dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7",
+    "target_model": {
+      "uri": "urn:synthetic:target-base-model",
+      "revision": "fixture-v1",
+      "digest": "sha256:426b625c94d2e091366baa3e7fe023a6d9d7aab0fdbaa487dddebf7c5efcb037"
+    },
+    "judge": {
+      "uri": "urn:synthetic:judge-model",
+      "revision": "fixture-v1",
+      "digest": "sha256:5f7886b7e2d18962ebdd7d5121d20853c60feaee2428b5f5135b51be47f485c3"
+    }
+  }
+}

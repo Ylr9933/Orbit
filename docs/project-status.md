@@ -1,9 +1,10 @@
 # 项目当前状态
 
-Updated at: 2026-09-21T21:55:41+08:00
+Updated at: 2026-09-22T16:33:28+08:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
-GPU 诊断与容器基础链，以及宿主机 Codex 会话采集。具体合并与双远端同步事实以 Git 历史为准，
+GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及本任务分支的 BM00 SDK/离线规划提议更新。
+BM00 尚未合并；具体合并与双远端同步事实以 Git 历史为准，
 不表示已配置常驻部署。本机 GPU 诊断与容器计算已验收，完整 GPU Run 尚未验收。
 
 当前定位：本机、单管理员、小型 CPU 科研工作流已可试用。
@@ -29,6 +30,7 @@ GPU 诊断与容器基础链，以及宿主机 Codex 会话采集。具体合并
   Python 执行内核支持求解与隔离评测；正式 Controller 提交仍限 Codex 和无评测科研 Task。
 - **G1/G2**：GPU 只读诊断、限定单卡的 CUDA smoke 命令与 Controller UUID 白名单；冻结 Task 的 GPU 请求复用既有资源租约和 Docker 设备映射。本机 Toolkit 1.20.1、CDI 指定卡 CUDA 计算和 DockerEnvironment 清理已验证；完整冻结 Task + Codex GPU Run 尚未验证。
 - **宿主机 Codex 采集**：项目目录发现候选会话、显式绑定真实 thread ID、原始 JSONL 与规范事件写入独立 Records Run，并支持轮次通知触发的断点续采；不启动模型或 Docker。
+- **BM00（本分支，待集成）**：版本化 Benchmark SDK、独立包显式启用、目录检查/计划冻结/离线兼容检查；四类合成协议样例。只提供规划，尚无四个原生适配器或 benchmark 执行入口，不代表真实评分等价。
 - **W**：Web 兼容旧 catalog 和新工作区，支持初始化、研究方案查看、实验编译/预检/提交/取消、产物下载和分析展示。
 - **模块整理**：修复 Web-first 启动权限、统一状态目录/研究运行上下文，以及事件/产物/轨迹可见性；拆分 Records 内部实现并保留兼容 API。
   `make verify` 通过（272 项非 E2E）；18 项无模型真实 Docker 集成、两套浏览器流程和独立 wheel 安装通过。
@@ -44,9 +46,9 @@ GPU 诊断与容器基础链，以及宿主机 Codex 会话采集。具体合并
 
 ## 下一步优先级
 
-1. 确定长期状态目录，补齐安装诊断和启动/备份指南，用一个真实科研项目试用完整流程。
+1. 用户检查 BM00 后，实施 BM01 受管执行/恢复，再按[Benchmark 顺序](development/benchmark-development-plan.md)落地四个独立参考适配包；优先补单实例持久恢复，再扩大并发。
 2. 准备 CUDA 训练镜像，完成冻结 Task + Codex 单 GPU Run 验收；随后补长期科研环境 GPU 入口及大数据/权重入口。
-3. 分阶段拆分 Run 内部执行逻辑，补 Web 长期 Job 操作和跨入口契约测试；具体拆分见[检查与计划](development/20260920-integration-review.md)。
+3. 确定长期状态目录，补齐安装诊断和启动/备份指南，用一个真实科研项目试用完整流程。
 
 ## 项目级阻塞与限制
 
@@ -54,6 +56,7 @@ GPU 诊断与容器基础链，以及宿主机 Codex 会话采集。具体合并
 
 ## 相关记录
 
+- [BM00 SDK 与独立适配包](changes/20260922-benchmark-sdk-bm00-c7e2a1.md)、[SDK 参考](reference/benchmark-sdk.md)
 - [本轮整理与验证](changes/20260920-integration-audit-r61c4e.md)、[代码检查与后续任务](development/20260920-integration-review.md)
 - [G1/G2 GPU 诊断和准入](changes/20260921-gpu-diagnostics-admission-f1d9c6.md)、[单机 GPU 操作说明](operations/gpu-local.md)
 - [Codex 宿主机会话采集](changes/20260921-codex-host-sessions-8d7a4e.md)、[使用说明](reference/codex-host-sessions.md)

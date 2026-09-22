@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -236,6 +237,11 @@ def main() -> None:
             check=True,
         )
     print("Wheel installation and isolated package/CLI smoke checks passed.")
+    subprocess.run(
+        [sys.executable, str(root / "scripts/ci/smoke_benchmark_adapter.py")],
+        cwd=root,
+        check=True,
+    )
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Benchmark 接入层：通用执行、资源调度、轨迹与迭代优化
 
-状态：**设计草案 v0.2，尚未实现**。2026-09-22 修订，覆盖 ASI-Bench、Terminal-Bench-Science、PostTrainBench、PAST-Bench。接口和命令均为拟议；当前实现以[项目状态](../project-status.md)为准。本轮只检查官方资料和代码，没有运行这些 benchmark。主要取舍见[协议与执行分离 ADR](../adr/20260922-benchmark-protocol-execution.md)。
+状态：**设计 v0.3；BM00 SDK/规划在任务分支实现，其余为提案**。2026-09-22 修订，覆盖 ASI-Bench、Terminal-Bench-Science、PostTrainBench、PAST-Bench。下文完整执行/评分接口仍为拟议；已实现部分见 [SDK 参考](../reference/benchmark-sdk.md)，集成状态以[项目状态](../project-status.md)和 Git 为准。尚未运行这四个原生 benchmark。主要取舍见[协议与执行分离 ADR](../adr/20260922-benchmark-protocol-execution.md)。
 
 ## 1. 结论与通用性的边界
 
@@ -211,17 +211,17 @@ Outcome 分为 execution、evaluation、protocol validity、cleanup、capture、
 
 ## 11. 代码结构与兼容迁移
 
-建议按现有领域扩展，避免引入新的总管类：
+按现有领域扩展，适配器采用**独立 Python 发行包**。公共 SDK 随核心提供，适配包只导入公开接口。
+安装之后通过管理员配置显式启用 distribution/version/entry point；不修改核心注册表或按 bench 名增加 CLI 分支。
+核心 SDK、包和原生 runner 分别版本化，不允许 Task manifest 指定任意 import 路径。
 
 ```text
 src/agent_infra/
   benchmarks/
-    api.py                 # 协议对象与 adapter 接口
-    registry.py            # bootstrap 注册的可信适配器
-    asibench/              # 目录、计划、结果/提交规则
-    tb_science/            # Harbor task/profile 与原生评分规则
-    posttrainbench/        # 训练 + judges + 聚合
-    pastbench/             # family、条件与状态策略
+    api.py                 # 已实现：SDK 1.0 协议对象与规划接口
+    registry.py            # 已实现：显式启用、entry point、版本检查
+    planning.py            # 已实现：目录快照、冻结、能力检查
+    testing.py             # 已实现：公开 conformance helper
   runs/
     benchmark_batch.py     # 分批实现，复用 Run/Attempt 与控制存储
   environments/
@@ -232,11 +232,27 @@ src/agent_infra/
     benchmark_campaign.py  # 复用候选修订、授权与分析模式
   resources/               # 扩展持久分配、设备能力与采样
   records/                 # 扩展关联、状态/大产物清单与轨迹导入
+
+examples/benchmark-adapter/ # 已实现：独立可安装模板 + 四类合成 fixtures
+adapters/                  # 后续：四个独立 Python 项目，可独立迁仓发布
+  asibench/
+  tb-science/
+  posttrainbench/
+  pastbench/
 ```
 
-上面是拟议修改入口，不能据目录名称推断已经存在。执行后端不理解分数/答案，原生语义模块不操作数据库或直接分配资源。拟议导入方向：`bootstrap → gateways → projects → runs → benchmarks → agents/tasks → environments/resources → records → contracts`；同行仍独立、跨模块只调用公共契约。实现 PR 需更新并验证 import-linter，注册由 bootstrap 显式完成；不把 manifest 里的字符串当任意插件代码执行。
+除标为已实现的入口外，上面仍是拟议目录。执行后端不理解分数/答案，原生语义模块不操作数据库或直接分配资源。导入方向：`bootstrap → gateways → projects → runs → benchmarks → agents/tasks → environments/resources → records → contracts`；同行仍独立、跨模块只调用公共契约。BM00 已更新 import-linter 并补反向依赖测试；bootstrap 组装注册器，只有明确启用的受信任包才可加载。
 
-现有科研命令继续使用原流程。新入口建议为 `agent-infra benchmark inspect/plan/run/status/cancel/results`，Campaign 单独提供 `optimize`；**这些命令尚未实现**。inspect/plan 只生成固定预检报告和可审核计划；run 依据同一 plan digest 执行，参数/数据变更要求重新规划。最初 CLI 完整后再接 Web，HTTP/MCP 复用同一业务用例。
+现有科研命令继续使用原流程。`agent-infra benchmark adapters/inspect/plan/check` 在 BM00 实现，
+只做元数据、确定性规划与离线声明检查，`runtime_ready` 保持 false；配置、摘要和源码漂移均检查。
+`run/status/cancel/results/optimize` **尚未实现**。后续 run 依据同一 plan digest 执行，参数/数据变更要求重新规划。
+最初 CLI 完整后再接 Web，HTTP/MCP 复用同一业务用例。
+
+包入口使用 `agent_infra.benchmarks.v1`，SDK 精确版本握手；不同 major 不隐式加载。
+支持矩阵至少保留 adapter/source/runner/profile 与 Agent 版本、模型、backend 的组合，
+包可加载、计划有效、声明兼容、真实执行通过、官方接受分别记录。独立样例 wheel 的安装验收
+在源码树外进行，不能仅用 `PYTHONPATH` 注入来证明包独立。
+扩展者入口见[开发指南](../development/benchmark-adapters.md)。
 
 ## 12. 当前实现差距与修改顺序
 
@@ -255,16 +271,16 @@ src/agent_infra/
 
 | 阶段 | 最小交付 | 可验证结果 |
 | --- | --- | --- |
-| BM00 协议与四类 fixtures | 固定来源、WorkUnit、Plan、state/feedback、能力矩阵 | 四种代表性协议都可表达；不允许把 family 展平/把公开 eval 隐藏；无模型运行 |
+| BM00 协议与独立 SDK | 独立适配包、SDK、启用/兼容检查、来源/WorkUnit/Plan/state/feedback、四类 fixtures | 独立 wheel 无需改核心；未启用/不兼容拒绝；四种协议可表达；保留序列与公开 eval；无模型运行 |
 | BM01 执行与恢复契约 | operation/handle、observe/cancel/reconcile、证据游标 | 提交丢响应不重复启动、重启查询/失联隔离、取消与清理顺序可测 |
 | BM02 两个首批 adapter | ASI CPU 本地评分 + TB-Science CPU 原生 trial | 同一产物评测/解析等价；真实 Agent 结果有随机性，不要求两个独立求解分数完全相同 |
 | BM03 序列验收 | PAST 一个完整 family/配对；先原生支持的 Agent | 顺序、fresh session、on/off state、机制事件和原生汇总均可核对 |
 | BM04 训练与产物验收 | PostTrainBench 一项训练的隔离后端、权重交接与完整 judges | 先有限预算工程 smoke 标为非标准条件，再按原生硬件/预算单独验收兼容性 |
 | BM05 资源与 Batch | 持久租约/队列、并发、逐 job 监测、阶段预算 | 在共享节点不越权、不超卖；外部调度分配可追溯；大产物中断可恢复 |
 | BM06 外层优化 | Candidate、FeedbackPolicy、预算/停止/选优、对照记录 | 至少两候选基于允许反馈迭代；不给 optimizer 隐藏评测；保留全部比较依据 |
-| BM07 交付与扩展 | Batch/Campaign Web、原生 submission bridge、适配器模板与兼容矩阵 | 无官方 API 时明确待外部确认；新 bench 不修改 Run 主状态机 |
+| BM07 交付与扩展 | Batch/Campaign Web、原生 submission bridge、第三方扩展验收与兼容矩阵 | 模板已在 BM00 提供；无官方 API 时待外部确认；新 bench 不修改 Run 主状态机 |
 
-BM00/BM01 先定义 BM03/BM04 所需的状态和产物扩展；BM04 前落实实际 GPU 限额与清理范围，不能等 BM05 再补安全执行。BM05 才扩大并发。初期持久状态复用本地数据库和单调度进程，后续 Worker/Ray 作为独立阶段推进，不先引入完整分布式系统。
+BM00/BM01 先定义 BM03/BM04 所需的状态和产物扩展；BM05-A 的最小持久队列/租约对账提前到长任务接入前，BM05-B 才扩大并发。BM04 前落实实际 GPU 限额、清理范围和权重交接。初期持久状态复用本地数据库和单调度进程，后续 Worker/Ray 作为独立阶段推进。逐阶段检查点见[实施顺序](../development/benchmark-development-plan.md)，每阶段交付后等待用户检查再继续。
 
 每阶段分别记录结构/契约测试、替身测试、真实 backend 与真实模型验收。自造 fixtures 只证明平台语义，不能证明原生评分等价；采样的评分对照也不能证明全 benchmark 无差异。原生版本/工具变更触发相关兼容用例，缓存和已完成 trial 均按计划摘要识别。
 

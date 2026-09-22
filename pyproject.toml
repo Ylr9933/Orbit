@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "mcp==1.26.0",
+    "pydantic>=2.13.5,<3",
     "pyyaml>=6.0.2,<7",
 ]
 
@@ -61,6 +62,7 @@ layers = [
     "gateways",
     "projects",
     "runs",
+    "benchmarks",
     "agents | tasks",
     "environments | resources",
     "records",
