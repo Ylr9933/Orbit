@@ -1,6 +1,6 @@
 # Benchmark 接入层：通用执行、资源调度、轨迹与迭代优化
 
-状态：**设计 v0.3；BM00 SDK/规划在任务分支实现，其余为提案**。2026-09-22 修订，覆盖 ASI-Bench、Terminal-Bench-Science、PostTrainBench、PAST-Bench。下文完整执行/评分接口仍为拟议；已实现部分见 [SDK 参考](../reference/benchmark-sdk.md)，集成状态以[项目状态](../project-status.md)和 Git 为准。尚未运行这四个原生 benchmark。主要取舍见[协议与执行分离 ADR](../adr/20260922-benchmark-protocol-execution.md)。
+状态：**设计 v0.3；BM00 SDK/规划、BM01 最小受管执行在任务分支实现，其余为提案**。2026-09-22 修订，覆盖 ASI-Bench、Terminal-Bench-Science、PostTrainBench、PAST-Bench。下文完整执行/评分接口仍为拟议；已实现部分见 [SDK 参考](../reference/benchmark-sdk.md)与[BM01 参考](../reference/benchmark-execution.md)，集成状态以[项目状态](../project-status.md)和 Git 为准。尚未运行这四个原生 benchmark。主要取舍见[协议与执行分离 ADR](../adr/20260922-benchmark-protocol-execution.md)。
 
 ## 1. 结论与通用性的边界
 

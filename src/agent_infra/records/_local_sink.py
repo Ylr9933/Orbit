@@ -150,6 +150,7 @@ class _LocalRecordSink:
         filename = hashlib.sha256(stream_id.encode()).hexdigest() + ".part"
         spool = self._store.spool_root / filename
         with self._store._lock, closing(self._store._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT * FROM streams WHERE stream_id=?", (stream_id,)
             ).fetchone()
@@ -178,7 +179,20 @@ class _LocalRecordSink:
                 if actual != expected:
                     raise ValueError("stream ID already has different metadata")
                 return
-            spool.touch(mode=0o600, exist_ok=False)
+            # An interrupted creation may leave an uncommitted spool. No row means
+            # no accepted bytes; recover that file without inventing a second stream.
+            descriptor = os.open(
+                spool, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW, 0o600
+            )
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            descriptor = os.open(spool.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
             connection.execute(
                 """INSERT INTO streams(
                        stream_id,run_id,attempt_id,producer_id,name,media_type,visibility,
@@ -198,6 +212,7 @@ class _LocalRecordSink:
         if offset < 0:
             raise ValueError("stream offset must be non-negative")
         with self._store._lock, closing(self._store._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT spool_path,size_bytes,blob_digest FROM streams WHERE stream_id=?",
                 (stream_id,),
@@ -216,7 +231,13 @@ class _LocalRecordSink:
                 return WriteReceipt(DurabilityLevel.DURABLE_LOCAL, 0, (stream_id,))
             if offset != size:
                 raise ValueError("stream append offset is not contiguous")
-            with path.open("ab") as stream:
+            with path.open("r+b") as stream:
+                if os.fstat(stream.fileno()).st_size < size:
+                    raise ValueError("stream spool is shorter than its committed cursor")
+                # A crash can happen after fsync but before the SQLite cursor commit.
+                # Only committed bytes are authoritative; the producer resends the rest.
+                stream.truncate(size)
+                stream.seek(size)
                 stream.write(chunk)
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -252,7 +273,10 @@ class _LocalRecordSink:
                     CaptureStatus(str(row["capture_status"])),
                 )
             path = self._store.root / str(row["spool_path"])
-            data = path.read_bytes()
+            with path.open("rb") as source:
+                data = source.read(int(row["size_bytes"]))
+            if len(data) != int(row["size_bytes"]):
+                raise ValueError("stream spool is shorter than its committed cursor")
             blob = self._store._put_blob(data, str(row["media_type"]))
             connection.execute(
                 "UPDATE streams SET blob_digest=?,capture_status=? WHERE stream_id=?",

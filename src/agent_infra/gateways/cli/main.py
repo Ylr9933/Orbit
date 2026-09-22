@@ -132,7 +132,7 @@ def run(
             parser.exit(2, "Benchmark planning is not configured\n")
         try:
             benchmark_result = benchmark_action(args)
-        except (OSError, ValueError, RuntimeError) as error:
+        except (OSError, ValueError, RuntimeError, KeyError) as error:
             parser.exit(
                 2,
                 json.dumps(
@@ -140,7 +140,7 @@ def run(
                 )
                 + "\n",
             )
-        print(json.dumps(benchmark_result, ensure_ascii=False, indent=2))
+        print(json.dumps(benchmark_result, ensure_ascii=False, indent=2, default=str))
         return 1 if benchmark_result.get("compatible") is False else 0
     if args.command in {"run", "controller", "research", "mcp", "environment", "study", "planner"}:
         if run_action is None:

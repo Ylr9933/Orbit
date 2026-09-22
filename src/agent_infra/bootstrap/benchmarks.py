@@ -11,12 +11,15 @@ from agent_infra.benchmarks.planning import (
     write_plan,
 )
 from agent_infra.benchmarks.registry import AdapterRegistry, load_config
+from agent_infra.bootstrap.benchmark_execution import execution_action
 
 
 def benchmark_action(args: argparse.Namespace) -> dict[str, object]:
     config = load_config(args.config)
     registry = AdapterRegistry(config)
     action = args.benchmark_command
+    if action in {"prepare", "run", "status", "cancel", "reconcile", "events", "artifacts"}:
+        return execution_action(args, registry)
     if action == "adapters":
         return {
             "configured": [item.model_dump(mode="json") for item in config.adapters],

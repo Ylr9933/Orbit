@@ -1,0 +1,154 @@
+"""Freeze-before-run and backend restrictions, without executing native commands."""
+
+import argparse
+import importlib
+import json
+import shutil
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from agent_infra.benchmarks.api import AdapterIdentity, PlanRequest
+from agent_infra.benchmarks.execution import (
+    execution_spec,
+    prepare_execution,
+    read_execution,
+    validate_backend,
+    write_execution,
+)
+from agent_infra.benchmarks.planning import freeze_plan
+from agent_infra.benchmarks.registry import AdapterError, LoadedAdapter
+from agent_infra.bootstrap.benchmark_execution import execution_action
+from agent_infra.environments.execution_api import ExecutionSpec
+from agent_infra.environments.managed_process import ManagedProcessBackend
+
+EXAMPLE = Path(__file__).resolve().parents[3] / "examples/benchmark-execution"
+
+
+@pytest.fixture
+def prepared(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(EXAMPLE / "src"))
+    adapter = importlib.import_module("agent_infra_benchmark_process_example").Adapter()
+    loaded = LoadedAdapter(
+        adapter,
+        AdapterIdentity(
+            distribution="agent-infra-benchmark-process-example",
+            version="0.1.0",
+            entry_point="process-demo",
+            adapter_id="process-demo",
+            sdk_version="1.0",
+        ),
+    )
+    source = tmp_path / "source"
+    shutil.copytree(EXAMPLE / "fixture", source)
+    request = PlanRequest.model_validate_json((EXAMPLE / "request.json").read_bytes())
+    frozen = freeze_plan(loaded, source, request)
+    return prepare_execution(frozen, loaded), loaded, source
+
+
+def test_prepared_file_detects_tampering_and_never_overwrites(prepared, tmp_path):
+    execution, _, _ = prepared
+    path = tmp_path / "execution.json"
+    write_execution(execution, path)
+    assert read_execution(path) == execution and path.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(FileExistsError):
+        write_execution(execution, path)
+    body = json.loads(path.read_bytes())
+    body["invocation"]["command"]["argv"][-1] = "changed"
+    path.write_text(json.dumps(body))
+    with pytest.raises(AdapterError, match="digest mismatch"):
+        read_execution(path)
+
+
+def test_planning_only_adapter_and_source_drift_are_rejected(prepared, monkeypatch):
+    execution, loaded, source = prepared
+    with monkeypatch.context() as scoped:
+        scoped.setattr(loaded.implementation, "invocation", None)
+        with pytest.raises(AdapterError, match="planning only"):
+            prepare_execution(execution.frozen_plan, loaded)
+    original = loaded.implementation.invocation
+
+    def mutating(plan):
+        invocation = original(plan)
+        (source / "input.json").write_text('{"numbers": [9]}')
+        return invocation
+
+    monkeypatch.setattr(loaded.implementation, "invocation", mutating)
+    with pytest.raises(AdapterError, match="source changed"):
+        prepare_execution(execution.frozen_plan, loaded)
+
+
+@pytest.mark.parametrize(
+    ("patch", "message"),
+    [
+        ({"resources": {"cpu_cores": 1}}, "allocations"),
+        ({"resources": {"gpu_count": 1}}, "allocations"),
+        ({"resources": {"allocator": "external"}}, "allocations"),
+        ({"budget": {"wall_seconds": 30, "clock": "first_model_call"}}, "budget/clock"),
+        ({"budget": {"wall_seconds": 1, "clock": "process_start"}}, "budget/clock"),
+        ({"owner": "platform"}, "native-owned"),
+        ({"backend": "docker"}, "capabilities"),
+    ],
+)
+def test_unsupported_native_requirements_fail_closed(prepared, patch, message):
+    execution, _, _ = prepared
+    body = execution.model_dump(mode="json")
+    body["frozen_plan"]["plan"]["phases"][0].update(patch)
+    modified = type(execution).model_validate_json(json.dumps(body))
+    with pytest.raises(ValueError, match=message):
+        validate_backend(modified, ManagedProcessBackend.backend_id, ManagedProcessBackend.features)
+
+
+def test_private_materials_and_platform_retries_are_not_silently_ignored(prepared):
+    execution, _, _ = prepared
+    body = execution.model_dump(mode="json")
+    plan = body["frozen_plan"]["plan"]
+    plan["phases"][0]["materials"] = [
+        {
+            "material_id": "answers",
+            "source": plan["suite"]["source"],
+            "purpose": "score",
+            "readers": ["grader"],
+        }
+    ]
+    with pytest.raises(ValueError, match="private"):
+        validate_backend(
+            type(execution).model_validate_json(json.dumps(body)),
+            ManagedProcessBackend.backend_id,
+            ManagedProcessBackend.features,
+        )
+    plan["phases"][0]["materials"] = []
+    plan["retry"]["owner"] = "platform"
+    with pytest.raises(ValueError, match="retries"):
+        validate_backend(
+            type(execution).model_validate_json(json.dumps(body)),
+            ManagedProcessBackend.backend_id,
+            ManagedProcessBackend.features,
+        )
+
+
+@pytest.mark.parametrize("change", [{"outputs": ("../escape",)}, {"outputs": ("x", "x")}])
+def test_output_paths_are_validated_before_launch(prepared, tmp_path, change):
+    execution, _, _ = prepared
+    spec = execution_spec(execution, "run", "attempt", tmp_path / "work")
+    with pytest.raises(ValueError):
+        ExecutionSpec.model_validate_json(spec.model_copy(update=change).model_dump_json())
+    command = replace(spec.command, environment=(("SECRET", "example"),))
+    with pytest.raises(ValueError, match="credential"):
+        ExecutionSpec.model_validate_json(
+            spec.model_copy(update={"command": command}).model_dump_json()
+        )
+
+
+def test_cli_requires_opt_in_before_import_or_state_creation(tmp_path):
+    class Registry:
+        def load_identity(self, identity):
+            pytest.fail("execution adapter must not be loaded without host-process opt-in")
+
+    args = argparse.Namespace(
+        benchmark_command="run", allow_host_process=False, state_dir=str(tmp_path / "state")
+    )
+    with pytest.raises(ValueError, match="allow-host-process"):
+        execution_action(args, Registry())
+    assert not (tmp_path / "state").exists()

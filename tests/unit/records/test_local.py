@@ -1,5 +1,6 @@
 """Durability, idempotency, query, stream, and artifact tests for local Records."""
 
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
@@ -95,6 +96,39 @@ def test_streams_retry_offsets_and_artifacts_use_content_addressing(tmp_path):
     assert store.list_artifacts("attempt-1") == (artifact,)
     with store.open_blob(artifact.manifest_blob) as source:
         assert b"records.artifact_manifest.v1" in source.read()
+
+
+@pytest.mark.parametrize("resume_append", [True, False])
+def test_stream_crash_tail_is_not_duplicated_or_finalized(tmp_path, resume_append):
+    store = configured_store(tmp_path)
+    context = RecordContext("run-1", "attempt-1", "controller-1", ProducerKind.RUN)
+    sink = store.scoped_sink(context)
+    sink.start_stream("crash", "stdout")
+    sink.append_stream("crash", b"accepted", 0)
+    spool = tmp_path / "records/spool" / (hashlib.sha256(b"crash").hexdigest() + ".part")
+    # Emulate fsynced file bytes whose SQLite cursor transaction never committed.
+    with spool.open("ab") as output:
+        output.write(b"uncommitted")
+    recovered = LocalRecordsStore(tmp_path / "records").scoped_sink(context)
+    if resume_append:
+        recovered.append_stream("crash", b"resent", len(b"accepted"))
+    ref = recovered.finalize_stream("crash")
+    with store.open_blob(ref.blob) as source:
+        assert source.read() == b"accepted" + (b"resent" if resume_append else b"")
+
+
+def test_stream_creation_crash_and_truncated_committed_spool(tmp_path):
+    store = configured_store(tmp_path)
+    sink = store.scoped_sink(RecordContext("run-1", "attempt-1", "controller-1", ProducerKind.RUN))
+    spool = tmp_path / "records/spool" / (hashlib.sha256(b"new").hexdigest() + ".part")
+    spool.touch()  # File created, row not committed.
+    sink.start_stream("new", "stdout")
+    sink.append_stream("new", b"accepted", 0)
+    spool.write_bytes(b"short")  # Data loss must fail, rather than manufacture missing bytes.
+    with pytest.raises(ValueError, match="shorter"):
+        sink.append_stream("new", b"more", len(b"accepted"))
+    with pytest.raises(ValueError, match="shorter"):
+        sink.finalize_stream("new")
 
 
 def test_independent_producers_can_append_concurrently(tmp_path):

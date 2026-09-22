@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "agents": [
+    "cooperative-fixture"
+  ],
+  "backends": [
+    {
+      "backend": "managed-process-v1",
+      "features": [
+        "durable_operation",
+        "bounded_logs",
+        "process_group_cleanup",
+        "wall_timeout"
+      ]
+    }
+  ],
+  "combinations": [
+    {
+      "adapter_id": "process-demo",
+      "adapter_version": "0.1.0",
+      "suite_digest": "sha256:5b40217c9f1db2cab6101fb4005b90336ef68964301bd9ee81235e3b21e16cd3",
+      "runner_digest": "sha256:05a156f487f7b953035a52cea9ed45d2948c51a88b5517f35b9240bd93a47c5a",
+      "profile": "sum-v1",
+      "agent": "cooperative-fixture",
+      "agent_version": "1",
+      "model": "none",
+      "backend": "managed-process-v1"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # 新 benchmark 适配包开发指南
 
-状态：SDK 1.0 / BM00 规划能力已实现；执行和结果解释扩展尚未实现。
+状态：SDK 1.0 / BM00 规划与 BM01 受管执行扩展 1.0 已在任务分支实现；结果解释扩展尚未实现。
 把本文件、[SDK 参考](../reference/benchmark-sdk.md)、benchmark 固定仓库版本交给开发者或 Agent，
 即可开始独立包开发。原生规则不清楚时先调查并记录，不能为了填 schema 自行发明 benchmark 规则。
 
@@ -40,7 +40,7 @@ class Adapter:
         ...  # 原生选项、预算、反馈与结果使用的协议限制
 ```
 
-上面是接口示意，能安装运行的模板以示例包为准。仅依赖公开 `api` 与 `testing`，不导入 Run、
+上面是接口示意，能安装运行的模板以示例包为准。规划仅依赖公开 `api` 与 `testing`，不导入 Run、
 Docker、数据库、核心 registry 私有实现；需要新能力时声明 required_capabilities，当前 backend 不具备则预检失败。
 不要在 discover/plan/validate 中安装、下载、启动任务、调用模型或上传成绩，它们须确定性且不修改输入。
 
@@ -56,11 +56,22 @@ Docker、数据库、核心 registry 私有实现；需要新能力时声明 req
    补正常/失败 fixture，验证不可见材料没有进入公开视图、状态没有串分支、缺字段没有变成猜测值。
 6. **构建/安装/启用**：核心 SDK wheel 与适配包 wheel 安装到同一专用环境，用 TOML 显式启用，执行 inspect/plan/check。
    可以先让 check 报告缺失执行能力，不能把缺失项删掉来得到通过。
-7. **后续执行验收**：BM01 后接指定通用 backend；再测取消、失联、清理、资源限额、轨迹覆盖与原生产物评分对照。
+7. **执行验收**：声明并连接受支持的通用 backend；再测取消、失联、清理、资源限额、轨迹覆盖与原生产物评分对照。
    完成证据前只报告 planning/indexed，不宣称 runnable/scored/protocol_validated。
 
 conformance 只验证结构、目录保真、规划稳定性，不审查原生评分逻辑。对于原生重复/失败规则、
 PAST fresh-session 和真实 state 使用、PostTrain 的模型来源/judges、ASI 正式提交资格等，必须有各自真实对照证据。
+
+## 可选执行扩展 1.0
+
+需要本机受管执行的包另实现 `invocation(plan) -> NativeInvocation`，从
+`agent_infra.benchmarks.execution_api` 和 `agent_infra.environments.api.ProcessCommand` 导入公共对象。
+该方法只返回确定的 argv、相对 cwd、超时和输出相对路径，不启动任务、不安装依赖、不修改源目录。
+规划包没有此方法仍可 inspect/plan/check，只有 prepare 明确报“不支持执行扩展”。
+
+可独立安装的实现见 [examples/benchmark-execution](../../examples/benchmark-execution/)；命令冻结、
+opt-in、能力限制和验收脚本见[执行参考](../reference/benchmark-execution.md)。当前 backend 只处理
+可信协作式进程，不接管 Docker/HPC 子作业；不能用包装原生 CLI 的方式绕过清理或资源要求。
 
 ## BM00 四类样例代表什么
 

@@ -1,0 +1,10 @@
+{
+  "selection": ["sum"],
+  "candidate": {
+    "candidate_id": "process-fixture",
+    "agent": "cooperative-fixture",
+    "agent_version": "1",
+    "model": "none",
+    "configuration_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import sqlite3
 import uuid
-from contextlib import closing
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -18,6 +21,16 @@ def now() -> str:
 
 
 class RunControlStore:
+    @contextmanager
+    def exclusive(self) -> Iterator[None]:
+        """Serialize a multi-store control operation across local CLI processes."""
+        fd = os.open(self.path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
     def __init__(self, root: Path, *, read_only: bool = False) -> None:
         self.path = root / "control.sqlite3"
         self.read_only = read_only

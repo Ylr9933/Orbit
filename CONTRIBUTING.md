@@ -67,7 +67,9 @@ not a permitted workaround and are not covered by the static graph.
 
 Benchmark adapters use the designated external-package extension boundary, not dynamic imports
 between core modules. An operator enables a pinned distribution and versioned entry point;
-adapters import `agent_infra.benchmarks.api` and the public conformance helper only.
+planning adapters import `agent_infra.benchmarks.api` and the public conformance helper.
+The optional BM01 execution extension additionally uses `benchmarks.execution_api` and
+`environments.api.ProcessCommand`, never Run or backend implementation internals.
 See [adapter authoring](docs/development/benchmark-adapters.md). The existing wheel smoke check
 also builds and installs the independent example adapter in a disposable environment.
 
