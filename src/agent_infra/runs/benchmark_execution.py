@@ -5,7 +5,8 @@ The durable execution slot remains held until cleanup AND evidence collection su
 """
 
 import json
-from dataclasses import asdict
+from collections.abc import Callable
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -39,7 +40,11 @@ class BenchmarkExecutionService:
         records: ExecutionRecords,
         backend: ExecutionBackend,
         workspace_root: Path,
+        *,
+        validate_native: Callable[[PreparedExecution], None] | None = None,
+        interpret: Callable[[Path], dict[str, Any]] | None = None,
     ) -> None:
+        self.validate_native, self.interpret = validate_native, interpret
         self.store, self.records, self.backend, self.workspace_root = (
             store,
             records,
@@ -50,7 +55,14 @@ class BenchmarkExecutionService:
     def submit(self, operation_id: str, execution: PreparedExecution) -> dict[str, Any]:
         if not operation_id or len(operation_id) > 128:
             raise ValueError("operation_id must contain 1–128 characters")
-        validate_backend(execution, self.backend.backend_id, self.backend.features)
+        validate_backend(
+            execution,
+            self.backend.backend_id,
+            self.backend.features,
+            native_runtime=self.validate_native is not None,
+        )
+        if self.validate_native is not None:
+            self.validate_native(execution)
         payload = {"kind": "benchmark", "execution": execution.model_dump(mode="json")}
         with self.store.exclusive():
             run = self.store.lookup(operation_id, payload)
@@ -93,21 +105,35 @@ class BenchmarkExecutionService:
                 },
             )
         )
-        self.records.begin_attempt(
-            AttemptManifest(
-                run["attempt_id"],
-                run["run_id"],
-                timestamp,
-                task_id=execution.frozen_plan.plan.units[0].unit_id,
-                task_digest=execution.frozen_plan.digest,
-                coverage={
-                    "agent_native": "not_instrumented",
-                    "process_output": "bounded_raw",
-                    "resources": "not_allocated",
-                    "cleanup": "backend_scope",
-                },
-            )
+        manifest = AttemptManifest(
+            run["attempt_id"],
+            run["run_id"],
+            timestamp,
+            task_id=execution.frozen_plan.plan.units[0].unit_id,
+            task_digest=execution.frozen_plan.digest,
+            coverage={
+                "agent_native": (
+                    "native_bundle"
+                    if "native_evidence" in self.backend.features
+                    else "not_instrumented"
+                ),
+                "process_output": "bounded_raw",
+                "resources": (
+                    "native_attestation"
+                    if "cpu_memory_limits" in self.backend.features
+                    else "not_allocated"
+                ),
+                "cleanup": "backend_scope",
+            },
         )
+        try:
+            previous = self.records.get_attempt(run["attempt_id"]).manifest
+        except KeyError:
+            pass
+        else:
+            # Capture declarations are frozen at first admission, including older runtimes.
+            manifest = replace(manifest, coverage=previous.coverage)
+        self.records.begin_attempt(manifest)
         sink = self.records.scoped_sink(
             RecordContext(
                 run["run_id"],
@@ -266,6 +292,7 @@ class BenchmarkExecutionService:
                 truncated,
                 submission.missing,
                 self.backend.cleanup_scope,
+                self.interpret(submission.root) if self.interpret else None,
             )
         except (OSError, ValueError, RuntimeError) as error:
             # Keep the source spool and slot; a later status/reconcile retries collection only.
@@ -286,6 +313,7 @@ class BenchmarkExecutionService:
         truncated: bool,
         missing: tuple[str, ...],
         scope: str,
+        native_result: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         capture = CaptureStatus.TRUNCATED if truncated else CaptureStatus.COMPLETE
         stream = sink.finalize_stream(run["attempt_id"] + ":combined", capture)
@@ -301,6 +329,10 @@ class BenchmarkExecutionService:
             "artifact_id": artifact_id,
             "stream": asdict(stream),
         }
+        if native_result is not None:
+            result["native_result"] = native_result
+            result["evaluation"] = native_result.get("evaluation", "unknown")
+            result["protocol"] = native_result.get("protocol", "unknown")
         self._event(sink, "execution.finished", result)
         self._event(sink, "execution.cleanup_confirmed", {"scope": scope})
         # Release only after both durable evidence and a positive cleanup receipt.

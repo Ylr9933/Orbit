@@ -75,5 +75,5 @@ def benchmark_action(args: argparse.Namespace) -> dict[str, object]:
         "digest": frozen.digest,
         "units": [unit.unit_id for unit in frozen.plan.units],
         "synthetic": frozen.plan.suite.synthetic,
-        "next": "benchmark check PLAN --config CONFIG; execution is not implemented in BM00",
+        "next": "benchmark check PLAN --config CONFIG; prepare requires execution support",
     }

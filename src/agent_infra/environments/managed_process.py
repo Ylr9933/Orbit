@@ -116,6 +116,11 @@ class ManagedProcessBackend:
             raise ValueError("native identity changed; refusing operation")
         return self._path(handle.operation_id)
 
+    def spec(self, handle: ExecutionHandle) -> ExecutionSpec:
+        """Read a verified persisted spec for backend extensions; do not expose mutation."""
+        root = self._checked(handle)
+        return ExecutionSpec.model_validate_json((root / "spec.json").read_bytes())
+
     def observe(self, handle: ExecutionHandle, cursor: int = 0) -> ExecutionObservation:
         root = self._checked(handle)
         reconciliation = self.reconcile(handle.operation_id)

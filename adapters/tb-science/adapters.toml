@@ -1,0 +1,7 @@
+schema_version = 1
+[[adapters]]
+alias = "tb-science"
+distribution = "agent-infra-tb-science"
+version = "0.1.0"
+entry_point = "tb-science"
+sdk_version = "1.0"

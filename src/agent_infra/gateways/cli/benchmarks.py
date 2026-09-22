@@ -12,7 +12,7 @@ def add_benchmark_arguments(commands: Any) -> None:
         if name in {"prepare", "run"}:
             entry.add_argument("--config", type=Path, required=True)
         else:
-            entry.set_defaults(config=None)
+            entry.add_argument("--config", type=Path, help="Required for native runtime adapters")
         if name == "prepare":
             entry.add_argument("plan", type=Path)
             entry.add_argument("--output", type=Path, required=True)
@@ -25,6 +25,7 @@ def add_benchmark_arguments(commands: Any) -> None:
             entry.add_argument("--operation-id", required=True)
             entry.add_argument("--capabilities", type=Path, required=True)
             entry.add_argument("--allow-host-process", action="store_true")
+            entry.add_argument("--allow-native-runtime", action="store_true")
         elif name not in {"prepare", "reconcile"}:
             entry.add_argument("run_id")
         if name == "events":

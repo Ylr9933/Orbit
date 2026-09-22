@@ -1,0 +1,8 @@
+[build-system]
+requires = ["uv_build==0.12.10"]
+build-backend = "uv_build"
+[project]
+name = "agent-infra-harbor"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["agent-infra==0.1.0", "harbor @ git+https://github.com/harbor-framework/harbor.git@bac9a80d1d63a0265cf85e8fe18f1b752dad62d7"]

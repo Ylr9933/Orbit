@@ -1,0 +1,14 @@
+{
+  "selection": ["terminal-bench-science/symbolic-regression"],
+  "candidate": {
+    "candidate_id": "oracle-engineering",
+    "agent": "oracle",
+    "agent_version": "1.0.0",
+    "model": "none",
+    "configuration_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  },
+  "parameters": [
+    {"key": "cpu", "value": "1"},
+    {"key": "memory_mb", "value": "2048"}
+  ]
+}

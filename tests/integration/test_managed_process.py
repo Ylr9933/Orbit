@@ -175,3 +175,30 @@ def test_child_does_not_inherit_host_credentials(tmp_path, monkeypatch):
         spec(tmp_path, "import os; print(os.environ.get('BM01_TEST_SECRET','absent'),flush=True)"),
     )
     assert wait(backend, handle).data == b"absent\n"
+
+
+def test_cancellation_grace_allows_native_teardown(tmp_path):
+    code = """
+import signal,time
+from pathlib import Path
+def close(*_):
+    time.sleep(.6)
+    Path('closed').write_text('confirmed')
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, close)
+Path('ready').touch()
+while True: time.sleep(.1)
+"""
+    backend = ManagedProcessBackend(tmp_path / "native")
+    request = spec(tmp_path, code, timeout=4, outputs=("closed",)).model_copy(
+        update={"cancellation_grace_seconds": 2.0}
+    )
+    handle = backend.submit("native-grace", request)
+    deadline = time.monotonic() + 3
+    while not (tmp_path / "work/ready").exists():
+        assert time.monotonic() < deadline
+        time.sleep(0.025)
+    backend.cancel(handle)
+    result = wait(backend, handle)
+    assert result.status == "cancelled"
+    assert (backend.collect(handle).root / "outputs/closed").read_text() == "confirmed"

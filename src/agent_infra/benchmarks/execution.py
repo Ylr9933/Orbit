@@ -80,11 +80,16 @@ def execution_spec(
         command=execution.invocation.command,
         workspace=str(workspace.absolute()),
         outputs=execution.invocation.outputs,
+        cancellation_grace_seconds=execution.invocation.cancellation_grace_seconds,
     )
 
 
 def validate_backend(
-    execution: PreparedExecution, backend_id: str, features: tuple[str, ...]
+    execution: PreparedExecution,
+    backend_id: str,
+    features: tuple[str, ...],
+    *,
+    native_runtime: bool = False,
 ) -> None:
     plan = execution.frozen_plan.plan
     if len(plan.units) != 1 or len(plan.phases) != 1 or plan.phases[0].owner != "native":
@@ -94,6 +99,8 @@ def validate_backend(
         raise ValueError("BM01 does not implement platform-owned benchmark retries")
     if phase.backend != backend_id or set(phase.required_capabilities) - set(features):
         raise ValueError("actual backend cannot provide the plan's required execution capabilities")
+    if native_runtime:
+        return  # The explicitly enabled native extension validates its full request separately.
     resources = phase.resources.model_dump(exclude_none=True)
     if resources != {"allocator": "unspecified"}:
         raise ValueError(

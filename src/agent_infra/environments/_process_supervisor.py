@@ -83,7 +83,7 @@ def supervise(root: Path) -> None:
                             status = "cancelled" if (root / "cancel.json").exists() else "timed_out"
                             stop_at = now
                             signal_members(pid, signal.SIGTERM)
-                        if stop_at is not None and now - stop_at >= 0.25:
+                        if stop_at is not None and now - stop_at >= spec.cancellation_grace_seconds:
                             signal_members(pid, signal.SIGKILL)
                         exited = process.poll() is not None
                         if exited:
@@ -103,7 +103,8 @@ def supervise(root: Path) -> None:
                         if exited and not selector.get_map():
                             break
                         if (exit_at is not None and now - exit_at > 2) or (
-                            stop_at is not None and now - stop_at > 3
+                            stop_at is not None
+                            and now - stop_at > spec.cancellation_grace_seconds + 3
                         ):
                             unclosed_pipe, truncated = True, True
                             break

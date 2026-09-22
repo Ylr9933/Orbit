@@ -71,9 +71,10 @@
 - [Web 控制台使用说明](operations/web-console.md)：已实现简版的启动、SSH 访问、页面范围、HTTP 接口与验证方式。
 
 - [Run / Environment 契约](architecture/run-environment-contract.md)：仅求解与隔离评测设计。
-- [Benchmark 接入层设计](architecture/benchmark-integration-layer.md)：四类协议/执行适配、调度、状态轨迹与外层优化；BM00/BM01 已在任务分支实现，其余按阶段推进。
+- [Benchmark 接入层设计](architecture/benchmark-integration-layer.md)：四类协议/执行适配、调度、状态轨迹与外层优化；BM00/BM01/BM02-A 已在任务分支实现，其余按阶段推进。
 - [Benchmark SDK 与命令](reference/benchmark-sdk.md)：独立适配包、显式启用、规划冻结和兼容性检查。
-- [BM01 受管执行](reference/benchmark-execution.md)、[执行实现说明](implementation/benchmark-execution.md)：可信本机进程、持久提交、恢复、取消和 Records；尚无四个原生适配器。
+- [BM01 受管执行](reference/benchmark-execution.md)、[执行实现说明](implementation/benchmark-execution.md)：可信本机进程、持久提交、恢复、取消和 Records；通用本机进程后端。
+- [BM02-A TB-Science 试运行](operations/tb-science-native-trial.md)、[Harbor 实现](implementation/benchmark-harbor.md)：独立适配包、原生容器 trial 与工程验收边界。
 - [Benchmark 实施顺序](development/benchmark-development-plan.md)、[适配包开发指南](development/benchmark-adapters.md)：每阶段检查点与新 bench 的独立包接入方式。
 - [Benchmark 协议与执行分离 ADR](adr/20260922-benchmark-protocol-execution.md)：原生 runner、独立适配包、执行后端与优化循环的职责边界。
 - [执行 API 与验证说明](reference/run-environment.md)：Python 组装、记录、安全边界及真实 Docker 测试。

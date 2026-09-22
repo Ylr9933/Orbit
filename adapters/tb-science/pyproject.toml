@@ -1,0 +1,10 @@
+[build-system]
+requires = ["uv_build==0.12.10"]
+build-backend = "uv_build"
+[project]
+name = "agent-infra-tb-science"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["agent-infra==0.1.0", "agent-infra-harbor==0.1.0"]
+[project.entry-points."agent_infra.benchmarks.v1"]
+tb-science = "agent_infra_tb_science:Adapter"

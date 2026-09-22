@@ -24,6 +24,9 @@ class ExecutionSpec(BaseModel):
     command: ProcessCommand
     workspace: str
     outputs: tuple[str, ...] = ()
+    cancellation_grace_seconds: float = Field(
+        default=0.25, ge=0.25, le=120, exclude_if=lambda value: value == 0.25
+    )
     max_log_bytes: Annotated[int, Field(gt=0, le=64 * 1024**2)] = 8 * 1024**2
     max_artifact_bytes: Annotated[int, Field(gt=0, le=64 * 1024**2)] = 16 * 1024**2
 

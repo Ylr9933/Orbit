@@ -1,21 +1,25 @@
-"""BM01 composition; existing research Controller and Docker services are untouched."""
+"""Compose explicitly enabled benchmark runtimes; research Controller is independent."""
 
 import argparse
+import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from agent_infra.benchmarks.api import CapabilityProfile
 from agent_infra.benchmarks.execution import (
+    PreparedExecution,
     execution_spec,
     prepare_execution,
     read_execution,
     validate_backend,
     write_execution,
 )
+from agent_infra.benchmarks.execution_api import NativeRuntimeAdapter
 from agent_infra.benchmarks.planning import check_plan, read_plan
 from agent_infra.benchmarks.registry import AdapterRegistry
 from agent_infra.bootstrap.paths import state_root
+from agent_infra.environments.execution_api import ExecutionBackend
 from agent_infra.environments.managed_process import ManagedProcessBackend
 from agent_infra.records.api import EventQuery
 from agent_infra.records.local import LocalRecordsStore
@@ -38,15 +42,20 @@ def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dic
             "digest": execution.digest,
             "invocation": execution.invocation.model_dump(mode="json"),
             "runtime_ready": False,
-            "next": "review command; run requires --allow-host-process",
+            "next": "review resources; use --allow-host-process or --allow-native-runtime",
         }
     prepared = None
     if action == "run":
-        if not args.allow_host_process:
+        if not args.allow_host_process and not getattr(args, "allow_native_runtime", False):
             raise ValueError(
-                "review the prepared command and pass --allow-host-process to execute it"
+                "review execution and pass --allow-host-process or --allow-native-runtime"
             )
         prepared = read_execution(args.execution)
+        is_host = prepared.frozen_plan.plan.phases[0].backend == ManagedProcessBackend.backend_id
+        if is_host and not args.allow_host_process:
+            raise ValueError("host execution requires --allow-host-process")
+        if not is_host and not getattr(args, "allow_native_runtime", False):
+            raise ValueError("native execution requires --allow-native-runtime")
         loaded = registry.load_identity(prepared.frozen_plan.adapter)
         # All source and invocation checks happen before creating state or starting a process.
         if prepare_execution(prepared.frozen_plan, loaded) != prepared:
@@ -56,24 +65,61 @@ def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dic
         errors = [issue.message for issue in issues if issue.severity == "error"]
         if errors:
             raise ValueError("incompatible declarations: " + "; ".join(errors))
-        validate_backend(prepared, ManagedProcessBackend.backend_id, ManagedProcessBackend.features)
     root = state_root(args.state_dir) / "benchmarks"
     store = RunControlStore(root)
     records = LocalRecordsStore(root / "records")
-    backend = ManagedProcessBackend(root / "native")
-    service = BenchmarkExecutionService(store, records, backend, root / "workspaces")
+
+    def service_for(execution: PreparedExecution) -> BenchmarkExecutionService:
+        backend: ExecutionBackend
+        if execution.frozen_plan.plan.phases[0].backend == ManagedProcessBackend.backend_id:
+            if action == "run" and not args.allow_host_process:
+                raise ValueError("review the command and pass --allow-host-process")
+            backend = ManagedProcessBackend(root / "native")
+            validate_backend(execution, backend.backend_id, backend.features)
+            return BenchmarkExecutionService(store, records, backend, root / "workspaces")
+        if action == "run" and not args.allow_native_runtime:
+            raise ValueError("review native containers/resources and pass --allow-native-runtime")
+        runtime = cast(
+            NativeRuntimeAdapter,
+            registry.load_identity(execution.frozen_plan.adapter).implementation,
+        )
+        if not all(
+            callable(getattr(runtime, name, None))
+            for name in ("execution_backend", "validate_execution", "interpret")
+        ):
+            raise ValueError("adapter does not provide the native runtime extension")
+        backend = runtime.execution_backend(root / "native")
+
+        def validate(value: PreparedExecution) -> None:
+            runtime.validate_execution(value.frozen_plan.plan, value.invocation)
+
+        return BenchmarkExecutionService(
+            store,
+            records,
+            backend,
+            root / "workspaces",
+            validate_native=validate,
+            interpret=runtime.interpret,
+        )
+
+    def existing(run: dict[str, Any]) -> BenchmarkExecutionService:
+        return service_for(
+            PreparedExecution.model_validate_json(json.dumps(run["request"]["execution"]))
+        )
+
     if action == "run":
         assert prepared is not None
-        run = service.submit(args.operation_id, prepared)
+        run = service_for(prepared).submit(args.operation_id, prepared)
         return {key: value for key, value in run.items() if key != "request"}
     if action == "reconcile":
         return {
             "runs": [
                 {key: value for key, value in run.items() if key != "request"}
-                for run in service.reconcile()
+                for pending in store.unfinished()
+                for run in [existing(pending).status(pending["run_id"])]
             ]
         }
-    run = service.status(args.run_id, cancel=action == "cancel")
+    run = existing(store.get(args.run_id)).status(args.run_id, cancel=action == "cancel")
     if action == "events":
         page = records.read_events(EventQuery(run_id=args.run_id, limit=200), args.cursor)
         return {"items": [asdict(item) for item in page.items], "next_cursor": page.next_cursor}

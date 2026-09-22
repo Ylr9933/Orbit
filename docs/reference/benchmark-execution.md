@@ -2,7 +2,8 @@
 
 状态：执行扩展 **1.0**，基于 SDK **1.0**；本任务分支实现，集成状态以 Git 为准。
 适用于 Linux、单管理员、同一状态目录下的一个可信本机进程任务。真实短时 CPU 进程和独立 wheel
-已验收；没有运行 ASI、TB-Science、PAST 或 PostTrain 的原生任务。
+已验收；本文描述 BM01 通用进程后端。TB-Science 的新增原生容器入口见
+[BM02-A 操作说明](../operations/tb-science-native-trial.md)，其余三个原生 benchmark 尚未验收。
 
 BM00 负责描述和检查协议；BM01 增加“冻结具体命令 → 持久提交 → 查询/取消 → 归档”。
 原生评分、容器资源控制、批量调度、Web 页面及外层优化仍按[阶段计划](../development/benchmark-development-plan.md)推进。
