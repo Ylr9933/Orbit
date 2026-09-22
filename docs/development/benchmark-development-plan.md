@@ -1,7 +1,7 @@
 # Benchmark 分阶段实现计划
 
-状态：BM00、BM01、BM02-A、BM02-B 已进入本地 `main`；BM05-A 已在当前任务分支实现并完成
-无模型 CPU 安装包验收，待用户检查。BM03 及以后未开启。2026-09-22。
+状态：BM00、BM01、BM02-A、BM02-B 已进入本地 `main`；BM05-A 在父任务分支完成，BM03 在其上
+叠加的任务分支实现并完成无模型 CPU 安装包验收，均待检查与集成。BM04 及以后未开启。2026-09-22。
 
 目标：新 bench 使用独立适配包接入；已有执行能力足够时，不修改核心注册表、Run 状态机或通用 CLI。
 第一次遇到新的执行形态时，补通用 backend，并单独验收。兼容不等于官方认证，也不保证所有 bench
@@ -38,3 +38,6 @@ BM02-B 的[验收范围](../operations/asi-bench-native-trial.md)限公开 seed3
 BM05-A 增加同一 benchmark 状态目录内的 FIFO 等待队列和持久租约账本：请求/Run、owner epoch、
 原生 job ID、对账与清理后释放均可恢复；默认仍为单活动租约。它不提供 cgroup/GPU 硬限额、后台
 自动调度、公平并发、跨状态目录配额或多节点能力。操作入口见[队列说明](../operations/benchmark-queue.md)。
+BM03 把一个固定 PAST family 的 persistence on/off 配对作为原子任务，保留原生 episode 顺序、
+fresh session、history/state 分支、失败和聚合语义。无模型工程 profile 已验收；真实 Agent、judge、
+Docker sandbox 与官方榜单尚未验收，范围见[BM03 操作说明](../operations/past-bench-native-trial.md)。

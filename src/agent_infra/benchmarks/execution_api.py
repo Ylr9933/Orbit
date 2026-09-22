@@ -16,6 +16,18 @@ class NativeInvocation(Contract):
     cancellation_grace_seconds: float = Field(
         default=0.25, ge=0.25, le=120, exclude_if=lambda value: value == 0.25
     )
+    max_log_bytes: int = Field(
+        default=8 * 1024**2,
+        gt=0,
+        le=64 * 1024**2,
+        exclude_if=lambda value: value == 8 * 1024**2,
+    )
+    max_artifact_bytes: int = Field(
+        default=16 * 1024**2,
+        gt=0,
+        le=64 * 1024**2,
+        exclude_if=lambda value: value == 16 * 1024**2,
+    )
 
 
 class BenchmarkExecutionAdapter(Protocol):

@@ -1,0 +1,8 @@
+schema_version = 1
+
+[[adapters]]
+alias = "past-bench"
+distribution = "agent-infra-past-bench"
+version = "0.1.0"
+entry_point = "past-bench"
+sdk_version = "1.0"

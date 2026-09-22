@@ -81,6 +81,8 @@ def execution_spec(
         workspace=str(workspace.absolute()),
         outputs=execution.invocation.outputs,
         cancellation_grace_seconds=execution.invocation.cancellation_grace_seconds,
+        max_log_bytes=execution.invocation.max_log_bytes,
+        max_artifact_bytes=execution.invocation.max_artifact_bytes,
     )
 
 

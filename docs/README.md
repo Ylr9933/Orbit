@@ -77,6 +77,7 @@
 - [BM01/BM05-A 受管执行](reference/benchmark-execution.md)、[执行实现说明](implementation/benchmark-execution.md)、[队列操作说明](operations/benchmark-queue.md)：可信本机进程、持久提交、FIFO 排队、租约恢复、取消和 Records。
 - [BM02-A TB-Science 试运行](operations/tb-science-native-trial.md)、[Harbor 实现](implementation/benchmark-harbor.md)：独立适配包、原生容器 trial 与工程验收边界。
 - [BM02-B ASI-Bench 试运行](operations/asi-bench-native-trial.md)、[实现路径](implementation/benchmark-asi-bench.md)：公开 seed31415 原生产出/评分及 seed42 外部提交边界。
+- [BM03 PAST-Bench 试运行](operations/past-bench-native-trial.md)、[实现路径](implementation/benchmark-past-bench.md)：完整 family 配对序列、session/state 隔离、原生聚合及工程验收边界。
 - [Benchmark 实施顺序](development/benchmark-development-plan.md)、[适配包开发指南](development/benchmark-adapters.md)：每阶段检查点与新 bench 的独立包接入方式。
 - [Benchmark 协议与执行分离 ADR](adr/20260922-benchmark-protocol-execution.md)：原生 runner、独立适配包、执行后端与优化循环的职责边界。
 - [执行 API 与验证说明](reference/run-environment.md)：Python 组装、记录、安全边界及真实 Docker 测试。
