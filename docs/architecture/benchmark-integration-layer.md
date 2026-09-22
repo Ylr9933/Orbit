@@ -1,144 +1,279 @@
-# Benchmark 接入层设计：ASI-Bench、Terminal-Bench-Science 与后续基准
+# Benchmark 接入层：通用执行、资源调度、轨迹与迭代优化
 
-状态：**设计草案，尚未实现**。本文描述目标接口和分阶段落地方案，不表示 Agent Infra 已能运行或正式提交这两个 benchmark。实际能力以[项目状态](../project-status.md)、[Tasks 参考](../reference/tasks.md)和代码为准。
+状态：**设计草案 v0.2，尚未实现**。2026-09-22 修订，覆盖 ASI-Bench、Terminal-Bench-Science、PostTrainBench、PAST-Bench。接口和命令均为拟议；当前实现以[项目状态](../project-status.md)为准。本轮只检查官方资料和代码，没有运行这些 benchmark。主要取舍见[协议与执行分离 ADR](../adr/20260922-benchmark-protocol-execution.md)。
 
-## 1. 目标与边界
+## 1. 结论与通用性的边界
 
-Agent Infra 要统一管理一批 benchmark 的任务发现、资源准入、运行状态、原始轨迹、结果查询与对比，但**不替代 benchmark 官方定义的任务生成、容器协议、评分规则和提交资格检查**。同一个 Web/CLI 入口应能选择数据集固定版本、任务子集、Agent、模型、资源上限与尝试次数，随后看到每个 trial 的真实结果及其来源。
+目标是：新 benchmark 接入时，增加协议适配、必要的执行后端和兼容性验收，复用平台的资源管理、记录、界面和迭代机制，**不修改 Run 的通用状态机来容纳每一个 benchmark**。
 
-首期支持两条原生路径：
+上一版“原生 runner + adapter”可以保留，但其独立单任务、同步 `run_trial()` 和 Docker 中心的假设不够通用。新方案明确三个边界：
 
-- ASI-Bench：由固定版本 `asibench` 拉取实例、运行 Agent、收集输出；seed31415 调用原生本地评分，seed42 保留 Docker OS provenance 并按官方流程生成待确认的提交。平台不自行计算 seed42 官方分数。
-- Terminal-Bench-Science（下称 TB-Science）：由固定版本 Harbor 读取数据集/任务并管理求解容器、声明的 artifacts 和独立 verifier；平台读取 Harbor job/trial 产物，不复制 `tests/`、`solution/` 到 Agent 环境。
+1. **BenchmarkAdapter 定义原生语义**：评测单位、材料可见性、阶段依赖、状态继承、评分、反馈、汇总和提交资格。
+2. **ExecutionBackend 执行并观测工作**：本机受管进程、Docker、原生 runner、外部调度器/远端服务，以稳定 handle 返回进度、结果与清理证据。
+3. **OptimizationCampaign 管外层改进**：基于允许反馈形成新候选版本，按固定预算与比较规则运行，不改写 benchmark 本身。
 
-先做**原生执行器托管模式**：一个 trial 的容器由原生执行器全权创建和清理，Agent Infra 在外层提供预检、调度与记录。现有 `LocalRunService` 的平台求解/评测路径保留给科研 Task 和已证明等价的集成；不能在同一 trial 中既让原生 runner 管容器，又让 `Environment` 再管一套容器。以后只有在上游扩展点可用且通过等价性验收时，才允许平台托管内部容器。
+“任意 bench 可接入”指架构不把协议限制为某两个数据集、某个 Agent 或 Docker。它不意味着给一个 URL 就零开发自动刷榜；UI、浏览器、模拟器、私有 API、在线交互、特殊硬件等仍可能需要 executor/工具扩展。外部权限、官方规则和资源可用性也不是接口能消除的限制。支持情况以 **benchmark 版本 × Agent × backend × 协议配置** 的验收矩阵表达。
 
-**非目标**：用统一 YAML 重写任意 benchmark 的 grader；把公开本地分数称为官方分数；绕过官网认证或人工确认；保证所有原生 runner 都能准确限制指定 GPU。Benchmark adapter 是可验证的协议连接器，不是无须开发和测试的万能转换器。
+## 2. 四种 benchmark 对抽象的检验
 
-## 2. 经官方协议核对的差异
-
-| 方面 | ASI-Bench | TB-Science / Harbor | 接入要求 |
+| Benchmark | 合理的运行单位 | 必须保留的协议差异 | 对平台的要求 |
 | --- | --- | --- | --- |
-| 固定身份 | 实例集 seed、原生 task ID、B1–B4 prompt level、原生版本 | Harbor 数据集版本、任务 ID、task 包与 Harbor 版本 | 批次与每次 trial 均记录不可变来源；不默认 `latest` |
-| 求解材料 | 拉取的 prompt/input，原生 builder 准备工作区 | `instruction.md`、`task.toml`、`environment/` | 仅索引实际允许 Agent 读取的材料，保留原生路径 |
-| 原生执行 | `asibench run`；内置 Agent 与通用 `--agent-cmd` 的 sandbox 能力不同 | `harbor run`；内置或自定义 Agent、环境 provider | 先做可用 Agent × sandbox/provider 能力检查 |
-| 评测 | seed31415 可本地评分；seed42 网站私有评分 | 声明 artifacts 经独立 verifier，产生 reward | 分开记录评测状态、原生分数、正式状态 |
-| 提交 | seed42 只接受有效 OS Docker provenance 的结果；上传 draft 后须网页确认 | Harbor job/trial 与其结果查看、可能的 Hub/榜单流程 | 官方资格由原生协议判定，不由平台推断 |
-| 资源 | 原生 sandbox 决定实际容器启动参数 | `task.toml` 声明 CPU、内存、存储、GPU，provider 有各自执行策略 | 同时核对任务要求、平台配额和原生执行器实测限制 |
+| ASI-Bench | task 实例、seed、prompt level 对应的原生运行单位 | seed31415 本地评分；seed42 官网私有评分、OS Docker provenance 与提交确认 | 产物、评分、提交分离；原生 ID/seed/level 不丢失 |
+| TB-Science | 固定 task 的 Harbor trial | 求解与独立 verifier，原生声明的 artifacts、资源、网络和时间约束 | 原生 task 包与容器协议保留，Agent/结果通过 Harbor 接口适配 |
+| PostTrainBench | 指定目标基础模型与下游评测任务的一次限时训练实验 | 求解 Agent 可在预算内训练和评估；最终模型需评估，并有原生 judges | 长时 GPU、权重存储、阶段预算；solver/目标模型/judge 身份分开 |
+| PAST-Bench | 一个 family 的有序 episode 序列及协议要求的配对比较 | fresh session、允许的持久状态、persistence on/off、原生汇总 | family 不能拆成无依赖任务；状态分支隔离；记录记忆读写和更新证据 |
 
-TB-Science 任务的 `tests/` 与 `solution/` 不可见于求解 Agent；它要求独立 verifier，并仅传递 `task.toml` 声明的 artifacts。ASI-Bench seed42 的私有参考答案在官网，公开本地评分与正式评分是不同结果。[ASI-Bench 入门](https://github.com/apexin-ai/ASI-Bench/blob/main/docs/guide/getting-started.md)、[ASI-Bench 评分](https://github.com/apexin-ai/ASI-Bench/blob/main/docs/guide/how-scoring-works.md)、[TB-Science 任务与评测规范](https://github.com/harbor-framework/terminal-bench-science/blob/main/CONTRIBUTING.md)、[Harbor 任务格式](https://www.harborframework.com/docs/tasks)。
+ASI 的官方与本地评分边界、TB-Science 的独立 verifier 必须沿用源协议，而非由平台选择。[ASI 入门](https://github.com/apexin-ai/ASI-Bench/blob/main/docs/guide/getting-started.md)、[ASI 评分](https://github.com/apexin-ai/ASI-Bench/blob/main/docs/guide/how-scoring-works.md)、[TB-Science 规范](https://github.com/harbor-framework/terminal-bench-science/blob/main/CONTRIBUTING.md)。
 
-## 3. 与当前模块的关系
+### 2.1 PostTrainBench 的核对结论
+
+官方仓库当前以 HTCondor 调度、Apptainer 容器为主，描述了 H100 上 10 小时的后训练任务；Harbor 接入 PR #8 仍为 open，不能把它写成已合并的稳定入口。实际接入需固定 upstream commit 和配置；缩短时间、换 GPU 或采用未合并适配分支时，记录为不同实验条件。[README](https://github.com/aisa-group/PostTrainBench/tree/3ed1d32ff1ec1f41282be6f8ebbcec07b19fc3d1)、[Harbor PR #8](https://github.com/aisa-group/PostTrainBench/pull/8)。
+
+原生提示允许查询 `evaluate.py` 和多次实验，要求保存 `final_model`，并对基础模型、测试数据训练、额外模型 API 使用等作出限制。不能把所有 eval 都设为隐藏，也不能默认给求解 Agent 增加研究助手、用户交互或额外 API。[固定版本提示模板](https://github.com/aisa-group/PostTrainBench/blob/3ed1d32ff1ec1f41282be6f8ebbcec07b19fc3d1/src/eval/general/prompt.txt)。
+
+结果处理还包括分析 Agent 轨迹的 judges，其 verdict 会影响分数处理或是否需要复核。只保存准确率和 `final_model` 不足以复现整套协议；应保存 judge 输入引用、版本、输出、重评关系和原生聚合结果。[Judge 说明](https://github.com/aisa-group/PostTrainBench/blob/3ed1d32ff1ec1f41282be6f8ebbcec07b19fc3d1/src/judges/README.md)。
+
+### 2.2 PAST-Bench 的核对结论
+
+原生运行入口围绕 family 展开，生成逐 episode、sequence summary 和 paired comparison。平台的“可调度单位”至少需要包含完整序列及比较条件；内部 episode 可以展示，不能任意乱序或并行。[官方 README](https://github.com/Gen-Verse/PAST-Bench/tree/f8223517ae7491e776b69793d9f11e9d074ab42e)。
+
+论文描述每个 episode 清除易失对话上下文，持久信息通过原生 memory/skill/history 等机制传递；persistence-off 对照移除对先前状态的访问。提升需要结合原生机制证据判断，不能只计算末轮分数。[论文协议](https://arxiv.org/html/2608.04003v1)。
+
+源代码还表达 history anchors、分支、preseed 和每个 episode 的 persistence/session 配置。平台要读取固定 manifest 的原生策略，不能只靠“每轮换一个 Docker”实现清理，也不能替 Agent 注入平台总结来增强其记忆。[Sequence 模型](https://github.com/Gen-Verse/PAST-Bench/blob/f8223517ae7491e776b69793d9f11e9d074ab42e/src/past_bench/models/self_evolve.py)、[原生 runner](https://github.com/Gen-Verse/PAST-Bench/blob/f8223517ae7491e776b69793d9f11e9d074ab42e/src/past_bench/runner/self_evolve.py)。
+
+## 3. 逻辑架构与模块职责
 
 ```mermaid
-flowchart LR
-    UI[CLI / HTTP / Web] --> Batch[BenchmarkBatch 协调]
-    Batch --> Catalog[Tasks: 公开索引与固定快照]
-    Batch --> Admission[Resources: 配额、租约与队列]
-    Batch --> Contract[BenchmarkProtocol]
-    Contract --> ASI[ASI adapter / 原生 asibench]
-    Contract --> Harbor[Harbor adapter / 原生 harbor]
-    ASI --> NativeEnv[原生执行器管理的容器]
-    Harbor --> NativeEnv
-    Batch --> Records[Records: 原始证据与标准索引]
-    NativeEnv --> Records
+flowchart TB
+    UI[CLI / HTTP / MCP / Web] --> Campaign[Projects: 可选 OptimizationCampaign]
+    UI --> Run[Runs: Batch 队列与执行生命周期]
+    Campaign -->|冻结候选与预算| Run
+    Run --> Adapter[BenchmarkAdapter: 原生协议与结果解释]
+    Adapter --> Plan[ExecutionPlan: 单任务 / 阶段 / 有序序列 / 原生黑盒]
+    Plan --> Run
+    Run --> Resources[Resources: 准入、租约、配额、观测]
+    Run --> Backend[ExecutionBackend: 稳定 handle 与执行控制]
+    Backend --> Native[原生 runner / Docker / Apptainer / 外部调度与服务]
+    Run --> Records[Records: 事件、原始证据、状态与产物血缘]
+    Backend -->|受限记录接口| Records
+    Records -->|协议允许的反馈视图| Campaign
 ```
 
-- **Tasks** 保存可见任务索引、原生 ID/revision、材料来源和能力声明。现有 `import_asibench_workspace()` 仅完成 `indexed_only`；新增 adapter 不把原生 `task.toml` 或评测配置强行改写为平台 `task.yaml`。TB-Science 可做只读公开索引，但完整 task 包仍由 Harbor 解释。
-- **Agent** 描述平台支持的 provider/模型/能力；adapter 将其映射到原生 runner 的已验证 Agent 选项。平台有 Codex adapter 不代表 ASI 的任意 `--agent-cmd` 可用于 seed42 官方模式；不兼容时预检拒绝或开发上游兼容 adapter。
-- **Runs** 负责 Batch/Trial/Attempt 生命周期、幂等提交、取消、重试和最终汇总。它只调用 `BenchmarkProtocol`，不 `if benchmark == ...` 解析原生文件或分数。科研 Run 与 benchmark Trial 共用 Records/Resources 基础设施，但流程互不冒充。
-- **Environment** 在原生托管模式下不创建求解或评分容器；它可提供宿主机 Docker/镜像诊断、所有权检查与清理证据。原生 runner 内部的容器 ID、状态和 provenance 通过 adapter 回报。平台托管模式以后另行设计。
-- **Resources** 先根据 task 原生硬约束、平台配额和 provider 能力做 admission；分配租约后才启动 runner。必须验证子容器确实受 CPU/内存/GPU 限制，不能把外层租约当作已执行的隔离。
-- **Records** 保留原生 job/result/trajectory/评分报告作为不可改写证据，再生成统一查询视图。隐藏评测日志、答案和凭据按既有可见性分类，不暴露给 Agent 或普通前端。
-- **Web** 展示数据集版本、Batch/Trial 状态、资源、原生轨迹入口、评分来源与官方提交状态；操作按钮依赖 adapter 能力，不能为未实现的提交协议显示“已刷榜”。
+以上是业务调用关系，不表示所有组件可以相互 import。
 
-建议新增 `src/agent_infra/benchmarks/`（`api.py`、`asib/`、`harbor/`、`registry.py`），只放原生协议适配与结果解释；中立的少量值对象/协议放 `src/agent_infra/contracts/benchmark.py`，由 `bootstrap` 注入 Run。`runs` 不直接依赖具体 adapter；具体 adapter 也不访问 `runs`、Records 或 Resources 的内部实现。实现前需把新包纳入 `pyproject.toml` 的 import-linter 规则，并给出允许方向；不能用动态导入绕过现有边界。目录名是建议，接口边界比目录名重要。
-
-## 4. 最小公共契约（拟议）
-
-保持小的强类型公共结构，原生特有字段放命名空间扩展与原始文件引用，不塞进通用 `TaskDefinition` 的不相干字段。
-
-| 对象 | 最小内容 | 要求 |
+| 模块 | 负责 | 不应放进来的逻辑 |
 | --- | --- | --- |
-| `SuiteRef` | `benchmark_id`、固定数据集版本/commit、runner 版本、来源摘要 | 一次 Batch 锁定；禁止正式运行时解析漂移的 `latest` |
-| `CaseRef` | 原生 ID、variant（如 ASI B level）、实例 seed、公开指令/输入的安全引用、原生资源要求 | 不猜测源协议没有的字段；材料路径可以隐藏 |
-| `TrialSpec` | Suite/Case、Agent 与模型、Attempt 编号、预算、平台资源上限、原生选项快照 | 原生选项通过 adapter 白名单校验；不能直接拼 shell |
-| `CapabilityReport` | 支持的 Agent、sandbox/provider、GPU、网络、评测、官方提交、取消和轨迹级别 | 同时给出 `ready`/`unsupported`/`needs_input` 与原因 |
-| `TrialOutcome` | execution/evaluation/cleanup 各自状态、原生结果引用、公开反馈、资源实际值、provenance | 退出码 0、评测运行成功、答案正确是三件事 |
-| `SubmissionStatus` | `not_applicable`/`ineligible`/`ready`/`draft`/`awaiting_confirmation`/`submitted`/`official_scored`，外部引用 | 只有官方回执才能推进到正式状态 |
+| `benchmarks`（新增） | 固定来源、能力协商、原生计划、可见性/状态/反馈策略、解析/聚合/资格检查 | 通用队列、数据库后端、修改 Agent 的推理循环 |
+| `tasks` | 公开材料索引、Task 身份和快照；供展示与平台任务使用 | 强制把原生 task 包搬成一个统一目录 |
+| `runs` | 计划推进、operation ID、唯一的 Batch 等待队列、状态恢复、取消、重试策略执行 | 在通用代码中解析每个 bench 的原生文件 |
+| `agents` | Agent 配置与运行能力、会话与原生事件适配 | 让所有 CLI 默认拥有原生框架的持久记忆能力 |
+| `environments` | 本机进程/容器执行、文件/服务生命周期与隔离；提供后端公共接口 | 评测权重、family 聚合、外层方案选择 |
+| `resources` | 准入、持久租约、后端分配映射、资源采样、配额与预算 | 决定哪些答案正确或允许多少次官方尝试 |
+| `records` | 原始证据、派生视图、artifact/state 引用、可见性与导出 | 自动把私有 grader 结果交给优化 Agent |
+| `projects` | 用户目标与外层 Campaign：候选修订、授权范围、停止/选优 | 替代 benchmark 内部已经规定的学习或训练过程 |
+| `bootstrap` / `gateways` | 注册已审核 adapter/backend；薄的入口与身份检查 | 通过不可信 manifest 任意 import Python 模块或执行宿主机 shell |
 
-拟议协议示意；具体签名以首个实现 PR 的契约测试定稿：
+原生 runner 内部已有阶段调度时，由它负责内部次序；平台提交一个 `native_job` 并观测子事件。平台只有在拥有相应执行权、且 adapter 提供完整语义时，才调度显式阶段。两层不能同时给同一批子任务排队、计预算或释放同一 GPU。
+
+## 4. 从“独立任务”改成“协议定义的工作单位”
+
+保留目录与执行的区别：`Suite → Case/Family` 是固定数据集目录；`Campaign（可选）→ Batch → Trial → Attempt` 是运行血缘。Case 是引用，不是又一套业务状态机。一个 Trial 内允许含有顺序阶段和多个 episode；一个 native job 也可能产生多个原生 trial，adapter 必须给出一对多映射，不能丢掉子身份。
+
+| 概念 | 必要字段与语义 |
+| --- | --- |
+| `SuiteRef` | benchmark/release、task 集合摘要、runner/adapter 版本、配置与数据 revision；`latest` 在规划时解析为固定版本 |
+| `WorkUnit` | case 或 family 引用；`single` / `sequence` / `paired_sequence` / `native_job`；原子边界由协议决定 |
+| `CandidateRef` | solver Agent/harness 版本、模型、提示/工具/skill 配置；目标训练模型与 evaluator/judge 另存独立引用 |
+| `ExecutionPlan` | 工作单位、阶段依赖、执行所有者、资源/预算请求、会话/状态/反馈策略、原生不可变配置与计划摘要 |
+| `ExecutionHandle` | backend ID、原生 job ID、operation ID、owner、状态游标；不返回 Docker client/Ray handle |
+| `StateRef` / `ArtifactRef` | 版本/摘要、存储引用、大小、可见性、产生者及父引用；复用现有 ArtifactRef，新增恢复语义元数据 |
+| `Outcome` | 执行、评测、协议有效性、清理、记录完整性分别表达；原生分数向量、聚合器版本与证据引用 |
+
+首期只实现独立任务、顺序阶段、原生托管序列这三种计划形态。依赖字段预留表达能力，不先写完整通用 DAG 平台。交互式远端 API 可作为一个运行单元持续返回观测；需要新执行能力时增加 backend，不改 Case 的含义。
+
+**Attempt、Episode 和候选迭代不同**：Attempt 是一次物理启动/恢复记录；Episode 是原生协议里的学习/评测环节；修改方法形成新 Candidate。平台重试、原生采样和优化迭代各自计数，不能靠“基础设施重试”重置原生次数或时间。只有确实未开始求解且协议允许的失败才可安全重试；其余默认保留失败或交由原生恢复规则处理。
+
+## 5. 对外接口：协议、执行与证据分开
+
+以下为职责示意，不是可执行 API。各领域的契约放其公开 `api.py`，`contracts/` 仅放真正跨领域的轻量引用，不放所有 benchmark DTO。
 
 ```python
-class BenchmarkProtocol(Protocol):
-    def discover(self, suite: SuiteRef) -> tuple[CaseRef, ...]: ...
-    def preflight(self, spec: TrialSpec, host: HostCapabilities) -> CapabilityReport: ...
-    def run_trial(self, spec: TrialSpec, owned_dir: Path, cancel: Cancellation) -> TrialOutcome: ...
-    def collect(self, outcome: TrialOutcome) -> NativeEvidence: ...
-    def prepare_submission(self, batch: BatchRef) -> SubmissionStatus: ...
+class BenchmarkAdapter(Protocol):
+    def discover(self, source: SuiteRef) -> Catalog: ...
+    def plan(self, selection: Selection, candidate: CandidateRef) -> ExecutionPlan: ...
+    def validate(self, plan: ExecutionPlan, capabilities: Capabilities) -> Preflight: ...
+    def interpret(self, evidence: EvidenceRef) -> BenchmarkOutcome: ...
+    def aggregate(self, outcomes: tuple[BenchmarkOutcome, ...]) -> AggregateResult: ...
+    def submission_spec(self, results: ResultSetRef) -> SubmissionSpec | None: ...
+
+class ExecutionBackend(Protocol):
+    def submit(self, operation_id: str, spec: ExecutionSpec) -> ExecutionHandle: ...
+    def observe(self, handle: ExecutionHandle, cursor: str | None) -> ObservationPage: ...
+    def cancel(self, handle: ExecutionHandle) -> CancelReceipt: ...
+    def reconcile(self, operation_id: str) -> Reconciliation: ...
+    def collect(self, handle: ExecutionHandle) -> EvidenceManifest: ...
+    def cleanup(self, handle: ExecutionHandle) -> CleanupReceipt: ...
 ```
 
-`prepare_submission` 对无对应机制的 adapter 返回 `not_applicable`，不得模拟官方提交。长时运行应由 Run 包装成可恢复的状态机；上面同步签名只说明职责，不要求线程阻塞实现。各 adapter 必须提供稳定的 operation ID、任务所有权标签/目录和可重复的结果解析。取消只作用于本次任务的子进程、容器和临时文件；原生 runner 已创建的 trial 要逐一对账。失败或重启时先查原生 job 状态，不能盲目重跑产生重复官方尝试。
+Run 把 Benchmark 层的 `ExecutionPlan` 翻译成 Environment 公共 `ExecutionSpec`：通用命令/原生作业描述、受控输入、资源限额、预算、状态范围和所有权引用。后者不 import Benchmark 层或 Resources 的类型；数值来自已批准的租约/配额，沿用现有 ProcessCommand/InputMount 等契约，避免低层依赖高层。checkpoint/resume 是独立的可选 capability，不能给所有 backend 提供一个空实现而声称支持。原生语义无法按阶段暴露时，adapter 产出固定参数的黑盒计划，由后台监督器运行，事件覆盖明确标为有限。
 
-## 5. Batch 与资源执行规则
+`submission_spec` 只生成提交计划；真正上传、外部 job 启动由 Run 经执行接口执行，继续受既有授权与预算约束。这样不再把上传、等待官网和评分塞进一个同步 `run_trial()`。
 
-层级为 `BenchmarkBatch → Case → Trial → Attempt`。Batch 指明数据集固定版本、任务选择、Agent/model、重复次数、并发上限、预算和评分范围；Case 是 benchmark 定义的任务；Trial 是一次规定配置的独立尝试；Attempt 仅用于同一 Trial 的平台级重试。原生协议若将重试计入新的尝试或禁止重复，adapter 必须映射或拒绝平台重试。
+提交前先持久化 intent；外部成功但本地尚未保存 handle 的窗口，通过原生幂等 key/ownership tag 查询。上游没有幂等或查询能力时，状态设为 `unknown` 待对账，不承诺 exactly-once、不盲目再提交。恢复后预算累计不归零；失联也不等于资源已清理。
 
-每个 Trial 的计划在启动前冻结：原生 task 与输入摘要、镜像/runner 版本、Agent/模型、种子或 prompt level、时间/费用、网络及资源要求。容量不足进入持久 `waiting`，不可满足的要求返回 `unsatisfiable`，不能默默降配。配额应覆盖 Agent 容器、可能的 verifier 容器和 runner 自身；两阶段顺序可复用租约，若 provider 并行使用则按峰值预留。
+## 6. 状态、会话与可见性必须显式声明
 
-**资源控制分三档记录**：`admitted`（平台有空闲配额）、`enforced`（已证明原生子容器受指定限额）、`observed_only`（只能监测，不能证明限额）。需要严格 GPU 独占的正式运行仅接受 `enforced`。尤其应单测 ASI 原生 OS sandbox 是否能指定租约中的 GPU UUID；如果 runner 只支持 `--gpus all`，共享多卡宿主机上不能声称单卡隔离。可先在整机独占节点上验收，或通过受支持的 runner/provider 扩展落实设备绑定，然后再开放共享调度。Harbor 也要按所选 provider 核对其资源策略与实际 Docker/云端分配，不假定 `task.toml` 的数值自动强制执行。[Harbor 资源说明](https://www.harborframework.com/docs/tasks)、[TB-Science 资源约束](https://github.com/harbor-framework/terminal-bench-science/blob/main/CONTRIBUTING.md)。
+`StatePolicy` 至少分别表达：`session`（fresh/resume/native）、`workspace`（reset/preserve/native）、`persistent_state`（none/native_scoped/指定 snapshot）、`scope`（episode/sequence/condition/trial）、以及由哪个原生组件 reset/snapshot/restore。权重 checkpoint、Agent memory、对话记录和系统状态不可混成一个“持久目录”。
 
-现有 Controller 一次只允许一个活动 Run，且没有持久 Batch 队列。这是未来 Batch 调度器需补的能力；首个原生 trial 可以顺序运行，不应先做大并发。多节点/Ray 是后续 executor 选择，不进入 adapter 的任务/评分语义。
+PAST adapter 第一版让原生 runner 管理整个 family 和配对分支；平台记录各 episode/session ID、分支 ID、前后状态摘要与原生事件。需要复制或清除哪些 home、memory、skill、session index 由原生 adapter 实现并验证；不能只删提示词。配对状态与不同 family 的状态不能交叉；原生规定共享的 cold/anchor 按协议引用。Records 中保存了历史，不等于求解 Agent 自动获得历史读取权限。
 
-## 6. 评分、轨迹和提交
+PostTrainBench 的训练进程可能在一个 session 内多次更新目标模型；这些是同一个限时 trial 的内部行为。保存恢复 checkpoint 不自动授权额外训练时间或额外尝试，官方模式是否可以 resume 由原生规则决定。
 
-Records 至少保存：`suite/case/trial/attempt` 关联、固定版本、运行命令的脱敏结构化参数、原生 job 目录清单与摘要、Agent 原生轨迹、标准化轨迹、资源/时间采样、退出与清理证据、原生评分文件，以及官方回执。Harbor 的 job 通常包含 `config.json`、`result.json`、每个 trial 的 `agent/trajectory.json` 和 `verifier/reward.*`；具体文件以所锁定 Harbor 版本实测。不能以抽象的 `process.exited` 事件代替 Agent 轨迹；缺失则记录 `unavailable`/`partial`，不伪造。[Harbor 结果结构](https://github.com/harbor-framework/harbor/blob/main/docs/content/docs/run-jobs/run-evals.mdx)。
+`VisibilityPolicy` 需要按角色和阶段区分 solver、训练代码、公开自检、私有 grader、outer optimizer 和管理员。PostTrainBench 原生允许的 evaluation 工具应继续可见；ASI 私有评分和 TB verifier 不因此开放。平台摘要、外层助手、MCP 工具、缓存、错误日志和预置记忆同样受策略控制。
 
-成绩分层显示：`produced`（提交产物已收集）、`local_scored`（原生本地评测成功）、`draft`/`awaiting_confirmation`（待官网确认）、`official_scored`（取得官方结果）。另外保留 `evaluation_error`，避免评测基础设施失败被当作 0 分。汇总只使用同一 suite 版本、规则、variant 和官方性级别的数据；原生聚合公式仍是权威，平台计算的统计标注为分析值。Agent 是否可见评分与允许反馈次数遵守原生协议，不能自动把隐藏反馈喂回下一轮。
+如果评测器必须加载候选模型/代码，按原生契约在受限 evaluator 环境执行，隔离宿主机与无关私密数据；不能强制套用现有“所有 scorer 都只读纯数据”的通用样例。若原生协议隔离能力不足，标出验证边界；修改隔离方法须验证不会改变评分语义。
 
-## 7. 两个 adapter 的实施细节
+## 7. 资源监控、调度与原生执行权
 
-### ASI-Bench adapter
+资源管理需区分四项事实：**要求是什么、谁获准分配、实际分配了什么、观测到用了多少**。上一版 `admitted/enforced/observed_only` 不应是互斥的一个状态；新版分别记录 admission、allocation、enforcement evidence 与 telemetry coverage。
 
-1. 锁定 `asibench` 发行版/源码 commit、实例仓库 revision、seed、task ID 和 B level；调用原生 pull/loader，不手工模拟输入生成。
-2. 预检 Agent 与 sandbox 组合。seed42 正式候选必须使用官方接受的 `os` 运行方式和兼容 adapter；通用 `--agent-cmd` 的可用范围不能外推到正式提交。[ASI-Bench Agent 与 sandbox 文档](https://github.com/apexin-ai/ASI-Bench/blob/main/docs/guide/getting-started.md)。
-3. `run` 阶段仅产生输出与原生 provenance。seed31415 可在隔离的本地评分阶段调用原生 `score`；seed42 不调用本地 scorer。
-4. 先用原生命令的本地校验确认 seed42 bundle 合格，再由独立提交动作生成/上传 draft。官网确认和正式评分需要外部结果回写；不在无人授权的后台流程中自动确认提交。
-5. 原始 prompt、实例数据、run 结果、score 报告、bundle 摘要分别存引用；私有答案从不进入求解容器。官方 provenance 校验失败时不得手工修改 metadata 伪装合格。
+| 能力 | 需要补齐的内容 |
+| --- | --- |
+| 请求与配额 | CPU/内存、GPU 数量与型号/显存/UUID、磁盘容量、工作目录与模型缓存；必要时 GPU 拓扑及同组启动 |
+| 持久调度 | Run 维护等待队列与优先级/公平性，Resources 维护原子租约、心跳、陈旧观测处理和分配对账；不能仅有进程内 `_leases` |
+| 阶段资源 | 构建、solver、训练、评测、judge、sidecar 的资源图；顺序共享或并发峰值、服务就绪与就近数据 |
+| 实际限制 | CPU/memory cgroup、指定 GPU 设备及进程可见范围；`CUDA_VISIBLE_DEVICES` 单独不能作为安全隔离证据 |
+| 监测归属 | 主机利用率 + job/cgroup/container 的 CPU、RSS、GPU 显存/利用率、磁盘/IO、时间；共享 GPU 只报告可归属数据 |
+| 外部调度 | HTCondor/其他队列/云 API 返回的 job ID、节点/设备分配、实际开始/结束、计费与取消回执 |
+| 长时预算 | 队列、构建、Agent、训练、评测、judge、收集时长分别计量；起算点遵守原生规则 |
 
-### TB-Science / Harbor adapter
+本机执行由 Resources 发放实际租约，backend 将限额应用到它创建的资源。外部调度模式由平台发放配额授权、由上游 allocator 分配实际节点，平台记录映射；不能同时在本机预占一张 GPU 又把同一请求交给远端队列。外部资源不足保持 queued，不用本机 `nvidia-smi` 冒充远端监测。
 
-1. 锁定 TB-Science 数据集 tag/digest 与 Harbor 版本；先读 task 元数据和 capability，不复制整个任务目录给平台 Agent。
-2. Harbor 负责构建 `environment/Dockerfile` 和 `tests/Dockerfile`，运行选定内置或自定义 Agent，按 `artifacts` 搬运输出并在独立 verifier 评分。平台只传已验证的 Agent/model/provider 配置。
-3. 读取 Harbor job/trial 的原始结果、trajectory、verifier reward 和错误分类。保存原始证据，归一化时保留来源字段与版本。Oracle/nop 只用于任务/环境验收，不作为实际 Agent 成绩。
-4. GPU 任务需验证选定 provider 真的提供要求的设备和资源限制。TB-Science 示例建议某些 GPU/大资源任务使用 Modal；本地 Docker 支持与否必须按具体 task 实测，不能因 Harbor 能启动 CPU task 就宣称全套可跑。[TB-Science 运行说明](https://github.com/harbor-framework/terminal-bench-science/blob/main/README.md)。
+**原生 runner 不是天然可安全托管的程序。** 当前检查的 PostTrainBench `run_task.sh` 在最终评估前包含枚举可见 GPU 进程并 kill 的操作，以及带固定路径的工作区处理。这反映了它的运行环境假设，直接在共享宿主机调用可能影响其他任务。必须先审计并建立独占节点/VM/有效权限隔离，或实现经验证的 scoped-cleanup 适配；不能只包 `subprocess` 就启动。[固定版本运行脚本](https://github.com/aisa-group/PostTrainBench/blob/3ed1d32ff1ec1f41282be6f8ebbcec07b19fc3d1/src/run_task.sh)。同样检查 Docker socket、宿主机目录挂载和服务端口。
 
-## 8. 接入第三种 benchmark 的最低清单
+ASI 原生 runner 如只支持 `--gpus all`，不能在共享多卡节点宣称指定卡独占；Harbor/云 provider 的资源策略也须实测。后台 Agent 退出不等于训练进程、容器或外部服务退出；收到任务资源不存在的证据后才释放租约。失联时进入 quarantine/reconciling，不按超时自动超卖。
 
-1. 固定上游版本与任务集；写一个只读目录/元数据解析器，标记 solver 可见、仅 controller 可见、仅 evaluator 可见的材料。
-2. 标明执行权威：原生 runner、平台 runner 或外部 API；列出 Agent、sandbox、GPU、网络、时限、轨迹、取消、重试、评分和提交能力矩阵。
-3. 实现 adapter 的预检、执行、收集与结果解释；保留原生原始证据。没有的字段保持 `unspecified`/`unsupported`，不补造。
-4. 用同一固定输入分别执行原生命令和 Agent Infra 接入路径，对照输出、provenance、分数/错误分类及清理；无法等价则标为实验性兼容。
-5. 给官方提交资格另设验收。能跑一个任务、能本地评分、能产生有效官方结果是三个不同里程碑。
+Ray 可在后续作为分布式派发/Worker 实现，实际限额仍由 backend/OS/provider 执行。兼容多节点的契约现在明确，本轮不要求先引入 Ray、Kubernetes 和所有集群后端。
 
-对于 Harbor 格式的后续 benchmark，可复用 Harbor 执行 adapter，只增加 suite 配置和特殊协议校验；非 Harbor benchmark 仍需少量连接代码和真实验收。这是“丝滑接入”的合理边界。
+## 8. 记录：从最终结果扩展到全过程证据
 
-## 9. 分期开发与验收
+复用 Records 的 raw stream、EventEnvelope、ArtifactRef、可见性与 normalization version，新增引用与关联，不再建一个平行日志系统。
 
-| 阶段 | 交付 | 验收门槛 |
+| 数据 | 用途与要求 |
+| --- | --- |
+| 执行证据 | operation/native job ID、phase/episode/session、命令与结果、结束原因、清理和资源回执 |
+| 原生 Agent 轨迹 | 请求、消息、tool call/result、原生 session/step；可获取多少记录多少，缺失/截断/脱敏明确标注 |
+| 训练证据 | 配置、代码/data/base-model revision、指标、checkpoint/final-model、父 checkpoint 和预算消耗 |
+| 持久状态证据 | memory/skill/history 的实际写入/检索/更新事件、状态前后摘要与差异、分支和 anchor；仅有文件 diff 不能证明实际读取 |
+| 评测证据 | 原生结果、judge 输入引用与版本、允许反馈视图、评测重跑关系、聚合公式与纳入/排除原因 |
+| 候选血缘 | campaign/candidate/parent、更改说明、依据的允许反馈、训练/验证/正式数据用途、比较结果 |
+
+“框架外部运行”可以先保存原生文件和低覆盖的事件，但预检要声明不能承诺看见每条容器指令、模型请求或 memory read。需要细粒度分析时为原生 runner/Agent 增加钩子；不为凑齐标准格式捏造缺失步骤。时间戳之外保留 producer 序号和调用关联，避免并行日志被简单按时间排序后错误配对。
+
+大模型产物不能靠把 HTTP 下载上限调大解决。Records 保存清单、大小、checksum、可用性与受控存储引用；大文件流式/分块传输、断点续传，支持本地或对象存储。共享 volume 仅在 quiesce 后形成只读快照或受控副本并校验，不能让 evaluator 读仍被训练端修改的权重。固定基础模型和公开数据可复用只读缓存；PAST 的 memory、测试结果缓存等不得串 trial。
+
+保留原始格式以便以后重新解析，正常运行证据保存在仓库外；凭据不归档，必要脱敏留标记。RL 导出另外检查许可、split、完整 observation/action/tool result、reward/终止、行为策略版本等。现有 CLI 轨迹不保证 token ID/logprob，也不能仅凭原生 JSONL 就声称可直接用于任意 PPO/GRPO 训练；具体训练算法需单独的数据充分性检查。
+
+## 9. 评分与“循环优化刷榜”
+
+### 9.1 保留多维结果，遵守原生失败语义
+
+Outcome 分为 execution、evaluation、protocol validity、cleanup、capture、submission 六个维度。评分包含原生指标、方向、单位、粒度和来源；聚合由 adapter 解释，保留原始输出。不能默认所有 benchmark 都是 pass@1、平均分或越高越好。
+
+平台不把基础设施失败擅自改成零分，但若原生规则明确规定超时计零、违规回退 baseline 或某类错误需要人工复核，应记录该原生处理及原因。PAST 论文报告了超时/崩溃 episode 不重跑并计零的设置，具体执行以锁定 runner 为准；PostTrainBench 部分 judge verdict 会触发 baseline 回退。原始失败仍要保存，不能仅留下一个 0。[PAST 复现实验设置](https://arxiv.org/html/2608.04003v1)、[PostTrainBench judge 结果处理](https://github.com/aisa-group/PostTrainBench/blob/3ed1d32ff1ec1f41282be6f8ebbcec07b19fc3d1/src/judges/README.md)。
+
+### 9.2 区分三种循环
+
+| 循环 | 谁决定 | 平台怎样处理 |
 | --- | --- | --- |
-| B0 契约与预检 | `BenchmarkProtocol`、版本固定、能力报告、两个 benchmark 的只读目录索引 | 无模型/无 Docker；公开/私有材料不混、缺能力拒绝、版本变化拒绝 |
-| B1 Harbor 单 trial | TB-Science 固定 CPU task 的原生 Harbor 启动、结果/轨迹导入 | 同配置原生命令与接入路径的 reward、产物和执行状态一致；取消后无任务容器残留 |
-| B2 ASI 双评分路径 | seed31415 本地评分与 seed42 produce-only/provenance 校验 | 本地分数标非官方；seed42 不读取私有答案；原生 bundle 校验结果一致 |
-| B3 Batch | 持久队列、Case/Trial/Attempt、限额与恢复、Web 列表 | 重启不重复执行已完成 trial；资源不足等待；失败原因和原生证据可追溯 |
-| B4 官方与 GPU | 授权的 draft 提交、外部状态同步；真实 GPU 指定卡测试 | 官方回执与本地结果分开；实测子容器仅可见已租 GPU；清理后租约释放 |
+| 单次 Trial 内训练/试验 | 原生协议与被测 Agent，如 PostTrainBench | 保留评估工具与同一总预算，不自动拆成无限新 trial |
+| 协议规定的跨 Episode 学习 | 原生 sequence runner，如 PAST | 遵守顺序、状态与配对规则；不额外注入外层优化反馈 |
+| 多次 Trial 之间改 Agent/方法 | 平台可选 OptimizationCampaign | 每次形成不可变候选，通过明确反馈视图和预算校验后运行 |
 
-B1/B2 的真实验收需另外明确任务、模型费用、CPU/GPU、运行时长和数据下载预算；本文没有执行这类运行。每阶段有独立任务记录与 PR；B0 的协议必须由生产者、Run/Resources/Records 消费者共同审查，后续可并行实现两个 adapter。
+外层流程为 `冻结基线 → 运行允许的开发评测 → 分析允许反馈 → 提出候选修订 → 确定性校验 → 新 trial → 按预设规则比较/停止 → 固定候选进行最终评测`。优化对象可以是 harness、prompt、skill、训练代码或超参数，但不能包括受保护 grader、数据切分、原生预算和测试答案。
 
-## 10. 本仓库当前起点
+`FeedbackPolicy` 指定可见字段/日志、接收者、释放时机、可查询次数与用途；`OptimizationPolicy` 指定允许修改范围、原生开发/验证/正式 split、总 trial/时间/GPU-hour/模型调用预算、并发上限、停止条件和候选选择规则。可以一次授权一个清晰范围，使 Agent 在范围内自行迭代，不要求每一步人工确认；已有 I 批的“冻结 Task 集合授权”需扩展为可校验的新候选范围。
 
-- 已有 `TaskDefinition`、安全可见视图、`import_asibench_workspace()` 和隔离评测 Python 内核，适合复用基础身份、材料和 Records 契约；ASI importer 的兼容性标记是 `indexed_only`。
-- `prepare_compiled_run()` 明确拒绝原生执行策略、缺失工具绑定和非空 evaluation；正式 Controller 目前只支持 Codex 无评测科研 Task。
-- `LocalRunController` 只有一个活动执行槽，没有 Batch 队列。GPU 已有本机诊断和租约设备映射，但原生 runner 的子容器强制限额尚未验证。
+不强加每个 bench 都有 train/dev/test：没有独立开发集时如实说明，使用自有代理任务的结果不能叫官方分数；原生允许在任务内查 eval 的情况也不擅自禁掉。正式结果不能默认重新注入优化循环；若原协议允许有限反馈，按其次数和可见性执行。报告保留所有规定尝试、随机种子、完整 pair/family、费用和置信信息（可估计时），不能只挑最高分冒充官方平均。
 
-相关既有设计：[Tasks 建模](task-model.md)、[Run/Environment 契约](run-environment-contract.md)、[项目状态](../project-status.md)。这些是接入层的基础，不是两个 benchmark 已通过官方刷榜验收的证据。
+模型费用还需 provider usage/计费数据或可拦截的调用预算。当前实现只有次数/时间/资源等边界，没有硬费用上限；不足以精确计费时标注 estimate/soft limit，并说明超额窗口，不把预算配置写成保证。
+
+## 10. 四个 adapter 如何落地
+
+| Adapter | 第一条可验收路径 | 特别验收 |
+| --- | --- | --- |
+| `asibench` | 原生 pull → produce-only → seed31415 scorer；seed42 另走 bundle/provenance 校验 | prompt level/seed 不变、本地/官网分开、Agent/sandbox 兼容、原生 GPU/清理能力 |
+| `harbor` + TB-Science profile | 固定数据集与 Harbor → 原生 trial → reward/trajectory 导入 | 独立 verifier、声明 artifacts、网络/资源、取消与残留对账 |
+| `posttrainbench` | 固定主分支的受支持隔离 HPC 路径；或明确标为实验性的固定 Harbor PR commit | 目标模型身份、GPU 型号/预算、完整 judges/聚合、权重交接、共享主机安全性 |
+| `pastbench` | 原生 family runner 管理配对序列 → episode/summary/comparison 导入 | fresh session 与状态保留分离、对照无跨组污染、原生顺序/失败计分与机制证据 |
+
+同一个 Harbor backend 可运行多个 bench，但 PostTrainBench 的 judges、模型约束和报告不是 TB-Science profile 的参数别名；需要自己的协议 adapter。PAST 已有特定 Agent runtime 适配，不能因为平台会运行 Codex 就声称 Codex 满足其 native memory/skill/history 契约；先验证已有原生 Agent，再单独做新的 Agent 桥接。
+
+## 11. 代码结构与兼容迁移
+
+建议按现有领域扩展，避免引入新的总管类：
+
+```text
+src/agent_infra/
+  benchmarks/
+    api.py                 # 协议对象与 adapter 接口
+    registry.py            # bootstrap 注册的可信适配器
+    asibench/              # 目录、计划、结果/提交规则
+    tb_science/            # Harbor task/profile 与原生评分规则
+    posttrainbench/        # 训练 + judges + 聚合
+    pastbench/             # family、条件与状态策略
+  runs/
+    benchmark_batch.py     # 分批实现，复用 Run/Attempt 与控制存储
+  environments/
+    execution_api.py       # handle/observe/cancel/reconcile；已有能力可桥接
+    native_process.py      # 受管进程与可追踪原生 runner
+    backends/              # 按需要加入 Harbor/HTCondor 等执行桥
+  projects/
+    benchmark_campaign.py  # 复用候选修订、授权与分析模式
+  resources/               # 扩展持久分配、设备能力与采样
+  records/                 # 扩展关联、状态/大产物清单与轨迹导入
+```
+
+上面是拟议修改入口，不能据目录名称推断已经存在。执行后端不理解分数/答案，原生语义模块不操作数据库或直接分配资源。拟议导入方向：`bootstrap → gateways → projects → runs → benchmarks → agents/tasks → environments/resources → records → contracts`；同行仍独立、跨模块只调用公共契约。实现 PR 需更新并验证 import-linter，注册由 bootstrap 显式完成；不把 manifest 里的字符串当任意插件代码执行。
+
+现有科研命令继续使用原流程。新入口建议为 `agent-infra benchmark inspect/plan/run/status/cancel/results`，Campaign 单独提供 `optimize`；**这些命令尚未实现**。inspect/plan 只生成固定预检报告和可审核计划；run 依据同一 plan digest 执行，参数/数据变更要求重新规划。最初 CLI 完整后再接 Web，HTTP/MCP 复用同一业务用例。
+
+## 12. 当前实现差距与修改顺序
+
+| 当前证据 | 距离通用目标的缺口 | 应修改的位置 |
+| --- | --- | --- |
+| `tasks/importers.py` 只做工作区索引；无四套原生 adapter | 没有协议执行/等价性 | `benchmarks` 与 Tasks 只读目录桥 |
+| `bootstrap/run_preflight.py` 限 Codex、无评测科研 Task | 不能提交原生协议、任意 Agent 或原生工具 | 按执行策略分流；保留拒绝未知能力，不能删 guard 就算接通 |
+| `runs/controller.py` 单活动槽；重启以中断/清理为主 | 无持久批量队列、远端 handle 恢复与顺序依赖 | Run 控制状态与 Batch；先本机顺序、再并发 |
+| `resources/local.py` 进程内租约，CPU/mem/GPU 单节点准入 | 无远端 allocator 映射、长作业租约、GPU 型号约束和完整逐 job 监测 | Resources 和 backend enforcement |
+| `environments/docker.py` 与既有阶段配方主要面向 Docker | 缺 Apptainer/HPC/服务端执行、原生清理隔离与 sequence 状态契约 | 公共 execution handle 与按需后端 |
+| Records 已有原始流/派生轨迹；HTTP 下载有大小边界 | 缺 family/condition/candidate 血缘、原生 memory 事件、大权重可靠传输 | 扩展现有 Records/存储，不建第二份总日志 |
+| `projects/iteration.py` 仅授权已冻结 Task；Planner 只在此集合中操作 | 无受控生成新候选和 benchmark feedback-aware Campaign | Projects 迭代服务 + adapter 策略校验 |
+| 当前 Web 是科研工作流与 Run 视图 | 缺 Batch、配对序列、模型产物、官方资格与反馈权限展示 | 在相同 Query API 上增加视图 |
+
+阶段统一使用 **BM 前缀**，替代上一版 B0–B4，避免与已经实现的科研规划 B01–B05 混淆：
+
+| 阶段 | 最小交付 | 可验证结果 |
+| --- | --- | --- |
+| BM00 协议与四类 fixtures | 固定来源、WorkUnit、Plan、state/feedback、能力矩阵 | 四种代表性协议都可表达；不允许把 family 展平/把公开 eval 隐藏；无模型运行 |
+| BM01 执行与恢复契约 | operation/handle、observe/cancel/reconcile、证据游标 | 提交丢响应不重复启动、重启查询/失联隔离、取消与清理顺序可测 |
+| BM02 两个首批 adapter | ASI CPU 本地评分 + TB-Science CPU 原生 trial | 同一产物评测/解析等价；真实 Agent 结果有随机性，不要求两个独立求解分数完全相同 |
+| BM03 序列验收 | PAST 一个完整 family/配对；先原生支持的 Agent | 顺序、fresh session、on/off state、机制事件和原生汇总均可核对 |
+| BM04 训练与产物验收 | PostTrainBench 一项训练的隔离后端、权重交接与完整 judges | 先有限预算工程 smoke 标为非标准条件，再按原生硬件/预算单独验收兼容性 |
+| BM05 资源与 Batch | 持久租约/队列、并发、逐 job 监测、阶段预算 | 在共享节点不越权、不超卖；外部调度分配可追溯；大产物中断可恢复 |
+| BM06 外层优化 | Candidate、FeedbackPolicy、预算/停止/选优、对照记录 | 至少两候选基于允许反馈迭代；不给 optimizer 隐藏评测；保留全部比较依据 |
+| BM07 交付与扩展 | Batch/Campaign Web、原生 submission bridge、适配器模板与兼容矩阵 | 无官方 API 时明确待外部确认；新 bench 不修改 Run 主状态机 |
+
+BM00/BM01 先定义 BM03/BM04 所需的状态和产物扩展；BM04 前落实实际 GPU 限额与清理范围，不能等 BM05 再补安全执行。BM05 才扩大并发。初期持久状态复用本地数据库和单调度进程，后续 Worker/Ray 作为独立阶段推进，不先引入完整分布式系统。
+
+每阶段分别记录结构/契约测试、替身测试、真实 backend 与真实模型验收。自造 fixtures 只证明平台语义，不能证明原生评分等价；采样的评分对照也不能证明全 benchmark 无差异。原生版本/工具变更触发相关兼容用例，缓存和已完成 trial 均按计划摘要识别。
+
+## 13. 接入验收与文档维护
+
+新 benchmark 至少提交固定 source/runner 版本、只读 catalog、支持矩阵、计划/可见性/状态/反馈声明、执行与结果适配、取消/失败证据及原生对照用例。黑盒托管也可成为初始能力，但界面必须显示监测与轨迹覆盖，不能自动升级成“完整可优化”。
+
+兼容等级分别表示：`indexed`、`runnable`、`scored`、`protocol_validated`；官方提交资格、恢复能力、资源 enforcement、轨迹 completeness、optimization 能力另列。没有官方上传入口时保留外部引用/人工状态，不虚构统一“自动上榜”API。最终官方是否接受由 benchmark 方决定，平台的验证矩阵不等于官方认证。
+
+本设计的依据版本：Agent Infra 文档修订基于 `7841d23`；PostTrainBench `3ed1d32ff1ec1f41282be6f8ebbcec07b19fc3d1`；PAST-Bench `f8223517ae7491e776b69793d9f11e9d074ab42e`。ASI/TB-Science 沿用前轮官方文档核对，正式实现时重新固定对应源码与数据版本。公开资料、PR 状态仅表示检查时的事实。
+
+关联阅读：[Tasks 建模](task-model.md)、[Run/Environment 契约](run-environment-contract.md)、[Records 设计](records-design.md)、[当前科研迭代](../reference/research-iteration.md)、[本任务记录](../changes/20260922-benchmark-layer-design-6a4d9e.md)。
