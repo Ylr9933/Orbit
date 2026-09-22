@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "backends": [{
+    "backend": "asibench-native-v1",
+    "features": [
+      "durable_operation",
+      "bounded_logs",
+      "process_group_cleanup",
+      "wall_timeout",
+      "native_evidence",
+      "public_native_score"
+    ]
+  }],
+  "agents": ["fixture"],
+  "combinations": [{
+    "adapter_id": "asi-bench",
+    "adapter_version": "0.1.0",
+    "suite_digest": "sha256:84673f5293379270fd5ad59fc36ff374da9298217c457273bcafddcc65e4b18c",
+    "runner_digest": "sha256:6234e04fec1648017bc7be3a1ea79856498dda6c8eb619f7e99a7d411085d113",
+    "profile": "seed31415-single-fixture-v1",
+    "agent": "fixture",
+    "agent_version": "1.0.0",
+    "model": "none",
+    "backend": "asibench-native-v1"
+  }]
+}

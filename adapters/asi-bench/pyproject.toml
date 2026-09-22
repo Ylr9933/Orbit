@@ -1,0 +1,15 @@
+[build-system]
+requires = ["uv_build==0.12.10"]
+build-backend = "uv_build"
+
+[project]
+name = "agent-infra-asi-bench"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "agent-infra==0.1.0",
+  "asibench[full] @ git+https://github.com/XuehaiWang/asi.git@38ab4b5364f1fde5515fef7e9210ff3c9db6a2ba",
+]
+
+[project.entry-points."agent_infra.benchmarks.v1"]
+asi-bench = "agent_infra_asi_bench:Adapter"

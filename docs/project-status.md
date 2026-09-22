@@ -1,10 +1,11 @@
 # 项目当前状态
 
-Updated at: 2026-09-22T19:01:06+08:00
+Updated at: 2026-09-22T20:31:40+08:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
-GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及本任务分支的 BM00 SDK/规划、BM01 受管执行、BM02-A Harbor/TB-Science 提议更新。
-BM00/BM01/BM02-A 尚未合并；具体合并与双远端同步事实以 Git 历史为准，
+GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及 BM00/BM01/BM02-A 基线与
+本任务分支的 BM02-B 提议更新。
+BM02-B 尚未合并；具体合并与双远端同步事实以 Git 历史为准，
 不表示已配置常驻部署。本机 GPU 诊断与容器计算已验收，完整 GPU Run 尚未验收。
 
 当前定位：本机、单管理员、小型 CPU 科研工作流已可试用。
@@ -30,8 +31,9 @@ BM00/BM01/BM02-A 尚未合并；具体合并与双远端同步事实以 Git 历�
   Python 执行内核支持求解与隔离评测；正式 Controller 提交仍限 Codex 和无评测科研 Task。
 - **G1/G2**：GPU 只读诊断、限定单卡的 CUDA smoke 命令与 Controller UUID 白名单；冻结 Task 的 GPU 请求复用既有资源租约和 Docker 设备映射。本机 Toolkit 1.20.1、CDI 指定卡 CUDA 计算和 DockerEnvironment 清理已验证；完整冻结 Task + Codex GPU Run 尚未验证。
 - **宿主机 Codex 采集**：项目目录发现候选会话、显式绑定真实 thread ID、原始 JSONL 与规范事件写入独立 Records Run，并支持轮次通知触发的断点续采；不启动模型或 Docker。
-- **BM00/BM01（本分支，待集成）**：版本化 SDK、独立包显式启用、规划/检查与命令冻结；一个原子单位的本机受管进程、持久 operation/handle、重启续查、取消及 Records 归档。独立 wheel 和短时真实 CPU 进程已有验证；其普通进程后端不承担容器/GPU 配额或评分。
-- **BM02-A（本分支，待集成）**：独立 TB-Science/Harbor 包、固定版本、独立 verifier、CPU/内存实际核验和 Records 原始证据。Oracle 单任务的原生同产物重评、重复提交、真实取消清理通过；不代表模型 Agent、整套任务、GPU 或正式榜单兼容。
+- **BM00/BM01（本地 `main`）**：版本化 SDK、独立包显式启用、规划/检查与命令冻结；一个原子单位的本机受管进程、持久 operation/handle、重启续查、取消及 Records 归档。独立 wheel 和短时真实 CPU 进程已有验证；其普通进程后端不承担容器/GPU 配额或评分。
+- **BM02-A（本地 `main`）**：独立 TB-Science/Harbor 包、固定版本、独立 verifier、CPU/内存实际核验和 Records 原始证据。Oracle 单任务的原生同产物重评、重复提交、真实取消清理通过；不代表模型 Agent、整套任务、GPU 或正式榜单兼容。
+- **BM02-B（本分支，待集成）**：独立 ASI-Bench 包固定 runner；公开 seed31415 单任务原生产出与 BenchFlow 本地评分已通过完整平台 CPU 验收。seed42 bundle 只做 provenance 校验与本地生成；未认证、上传或取得官方分数。
 - **W**：Web 兼容旧 catalog 和新工作区，支持初始化、研究方案查看、实验编译/预检/提交/取消、产物下载和分析展示。
 - **模块整理**：修复 Web-first 启动权限、统一状态目录/研究运行上下文，以及事件/产物/轨迹可见性；拆分 Records 内部实现并保留兼容 API。
   `make verify` 通过（272 项非 E2E）；18 项无模型真实 Docker 集成、两套浏览器流程和独立 wheel 安装通过。
@@ -47,7 +49,7 @@ BM00/BM01/BM02-A 尚未合并；具体合并与双远端同步事实以 Git 历�
 
 ## 下一步优先级
 
-1. 用户检查 BM02-A 后，按[Benchmark 顺序](development/benchmark-development-plan.md)进入 BM02-B：ASI-Bench 独立包；后续按各自 profile 验收模型 Agent、其他参考包、持久资源租约与队列。
+1. 用户检查 BM02-B 后，按[Benchmark 顺序](development/benchmark-development-plan.md)进入 BM05-A：先补长任务所需持久队列和租约对账，再接 PAST-Bench。
 2. 准备 CUDA 训练镜像，完成冻结 Task + Codex 单 GPU Run 验收；随后补长期科研环境 GPU 入口及大数据/权重入口。
 3. 确定长期状态目录，补齐安装诊断和启动/备份指南，用一个真实科研项目试用完整流程。
 
@@ -57,6 +59,7 @@ BM00/BM01/BM02-A 尚未合并；具体合并与双远端同步事实以 Git 历�
 
 ## 相关记录
 
+- [BM02-B 任务记录](changes/20260922-benchmark-asi-bm02b-4d2c81.md)、[ASI-Bench 操作说明](operations/asi-bench-native-trial.md)
 - [BM02-A 任务记录](changes/20260922-benchmark-tb-science-bm02a-6b91e3.md)、[TB-Science 操作说明](operations/tb-science-native-trial.md)
 - [BM00 SDK](changes/20260922-benchmark-sdk-bm00-c7e2a1.md)、[BM01 受管执行记录](changes/20260922-benchmark-execution-bm01-a4f8d2.md)、[执行使用参考](reference/benchmark-execution.md)
 - [本轮整理与验证](changes/20260920-integration-audit-r61c4e.md)、[代码检查与后续任务](development/20260920-integration-review.md)
