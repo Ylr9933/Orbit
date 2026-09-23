@@ -7,7 +7,16 @@ from typing import Any
 def add_benchmark_arguments(commands: Any) -> None:
     command = commands.add_parser("benchmark", help="Plan and execute enabled benchmark adapters")
     actions = command.add_subparsers(dest="benchmark_command", required=True)
-    for name in ("prepare", "run", "status", "cancel", "reconcile", "events", "artifacts"):
+    for name in (
+        "prepare",
+        "run",
+        "status",
+        "cancel",
+        "reconcile",
+        "queue",
+        "events",
+        "artifacts",
+    ):
         entry = actions.add_parser(name)
         if name in {"prepare", "run"}:
             entry.add_argument("--config", type=Path, required=True)
@@ -26,7 +35,7 @@ def add_benchmark_arguments(commands: Any) -> None:
             entry.add_argument("--capabilities", type=Path, required=True)
             entry.add_argument("--allow-host-process", action="store_true")
             entry.add_argument("--allow-native-runtime", action="store_true")
-        elif name not in {"prepare", "reconcile"}:
+        elif name not in {"prepare", "reconcile", "queue"}:
             entry.add_argument("run_id")
         if name == "events":
             entry.add_argument("--cursor")

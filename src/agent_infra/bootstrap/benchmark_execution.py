@@ -23,6 +23,7 @@ from agent_infra.environments.execution_api import ExecutionBackend
 from agent_infra.environments.managed_process import ManagedProcessBackend
 from agent_infra.records.api import EventQuery
 from agent_infra.records.local import LocalRecordsStore
+from agent_infra.resources.persistent import PersistentLeaseStore
 from agent_infra.runs.benchmark_execution import BenchmarkExecutionService
 from agent_infra.runs.control_store import RunControlStore
 
@@ -68,6 +69,24 @@ def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dic
     root = state_root(args.state_dir) / "benchmarks"
     store = RunControlStore(root)
     records = LocalRecordsStore(root / "records")
+    leases = PersistentLeaseStore(root / "leases")
+
+    if action == "queue":
+
+        def lease_document(value: Any) -> dict[str, Any]:
+            document = asdict(value)
+            document["state"] = value.state.value
+            document["created_at"] = value.created_at.isoformat()
+            document["updated_at"] = value.updated_at.isoformat()
+            return document
+
+        return {
+            "queued": [
+                {key: value for key, value in item.items() if key != "request"}
+                for item in store.queued()
+            ],
+            "leases": [lease_document(item) for item in leases.list()],
+        }
 
     def service_for(execution: PreparedExecution) -> BenchmarkExecutionService:
         backend: ExecutionBackend
@@ -76,7 +95,9 @@ def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dic
                 raise ValueError("review the command and pass --allow-host-process")
             backend = ManagedProcessBackend(root / "native")
             validate_backend(execution, backend.backend_id, backend.features)
-            return BenchmarkExecutionService(store, records, backend, root / "workspaces")
+            return BenchmarkExecutionService(
+                store, records, backend, root / "workspaces", leases=leases
+            )
         if action == "run" and not args.allow_native_runtime:
             raise ValueError("review native containers/resources and pass --allow-native-runtime")
         runtime = cast(
@@ -100,6 +121,7 @@ def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dic
             root / "workspaces",
             validate_native=validate,
             interpret=runtime.interpret,
+            leases=leases,
         )
 
     def existing(run: dict[str, Any]) -> BenchmarkExecutionService:

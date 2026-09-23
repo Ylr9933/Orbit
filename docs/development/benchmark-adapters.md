@@ -1,6 +1,6 @@
 # 新 benchmark 适配包开发指南
 
-状态：SDK 1.0 / BM00 规划与 BM01 受管执行扩展 1.0 已在任务分支实现；结果解释扩展尚未实现。
+状态：SDK 1.0、BM00 规划与 BM01 受管执行扩展 1.0 已实现；结果解释扩展尚未实现。
 把本文件、[SDK 参考](../reference/benchmark-sdk.md)、benchmark 固定仓库版本交给开发者或 Agent，
 即可开始独立包开发。原生规则不清楚时先调查并记录，不能为了填 schema 自行发明 benchmark 规则。
 

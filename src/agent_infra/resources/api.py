@@ -176,3 +176,74 @@ class ResourceManager(Protocol):
     def try_allocate(self, request: ResourceRequest) -> AllocationDecision: ...
 
     def release(self, lease_id: str) -> bool: ...
+
+
+@dataclass(frozen=True, slots=True)
+class LeaseCapacity:
+    """Operator-authorized BM05-A envelope; None means slot-only admission."""
+
+    max_concurrent: int = 1
+    cpu_cores: float | None = None
+    memory_bytes: int | None = None
+    gpu_count: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_concurrent <= 0:
+            raise ValueError("max_concurrent must be positive")
+        if self.cpu_cores is not None and (not isfinite(self.cpu_cores) or self.cpu_cores <= 0):
+            raise ValueError("lease capacity CPU must be positive")
+        if self.memory_bytes is not None and self.memory_bytes <= 0:
+            raise ValueError("lease capacity memory must be positive")
+        if self.gpu_count is not None and self.gpu_count < 0:
+            raise ValueError("lease capacity GPU count must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceClaim:
+    request_id: str
+    owner_id: str
+    backend: str
+    cpu_cores: float | None = None
+    memory_bytes: int | None = None
+    gpu_count: int | None = None
+    allocator: str = "unspecified"
+
+    def __post_init__(self) -> None:
+        if not self.request_id or not self.owner_id or not self.backend:
+            raise ValueError("claim request, owner, and backend IDs are required")
+        if self.cpu_cores is not None and (not isfinite(self.cpu_cores) or self.cpu_cores <= 0):
+            raise ValueError("claimed CPU must be positive")
+        if self.memory_bytes is not None and self.memory_bytes <= 0:
+            raise ValueError("claimed memory must be positive")
+        if self.gpu_count is not None and self.gpu_count < 0:
+            raise ValueError("claimed GPU count must be non-negative")
+
+
+class PersistentLeaseState(StrEnum):
+    ALLOCATED = "allocated"
+    ACTIVE = "active"
+    RECONCILING = "reconciling"
+    RELEASED = "released"
+
+
+@dataclass(frozen=True, slots=True)
+class PersistentResourceLease:
+    lease_id: str
+    claim: ResourceClaim
+    owner_epoch: int
+    state: PersistentLeaseState
+    native_id: str | None
+    cleanup_confirmed: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PersistentLeaseDecision:
+    status: AllocationStatus
+    lease: PersistentResourceLease | None = None
+    shortages: tuple[ResourceShortage, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (self.status is AllocationStatus.GRANTED) != (self.lease is not None):
+            raise ValueError("only a granted persistent decision may contain a lease")

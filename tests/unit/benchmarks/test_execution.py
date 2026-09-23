@@ -17,6 +17,7 @@ from agent_infra.benchmarks.execution import (
     validate_backend,
     write_execution,
 )
+from agent_infra.benchmarks.execution_api import NativeInvocation
 from agent_infra.benchmarks.planning import freeze_plan
 from agent_infra.benchmarks.registry import AdapterError, LoadedAdapter
 from agent_infra.bootstrap.benchmark_execution import execution_action
@@ -138,6 +139,40 @@ def test_output_paths_are_validated_before_launch(prepared, tmp_path, change):
     with pytest.raises(ValueError, match="credential"):
         ExecutionSpec.model_validate_json(
             spec.model_copy(update={"command": command}).model_dump_json()
+        )
+
+
+def test_adapter_can_raise_bounded_capture_limits(prepared, tmp_path):
+    execution, _, _ = prepared
+    invocation = NativeInvocation(
+        command=execution.invocation.command,
+        outputs=execution.invocation.outputs,
+        max_log_bytes=12 * 1024**2,
+        max_artifact_bytes=48 * 1024**2,
+    )
+    expanded = execution.model_copy(update={"invocation": invocation})
+    spec = execution_spec(expanded, "run", "attempt", tmp_path / "work")
+
+    assert spec.max_log_bytes == 12 * 1024**2
+    assert spec.max_artifact_bytes == 48 * 1024**2
+    defaults = NativeInvocation(command=execution.invocation.command)
+    assert "max_log_bytes" not in defaults.model_dump(mode="json")
+    assert "max_artifact_bytes" not in defaults.model_dump(mode="json")
+
+
+def test_external_backend_can_declare_multi_day_timeout(prepared, tmp_path):
+    execution, _, _ = prepared
+    command = replace(execution.invocation.command, timeout_seconds=3 * 86400)
+    invocation = NativeInvocation(command=command, outputs=execution.invocation.outputs)
+    expanded = execution.model_copy(update={"invocation": invocation})
+
+    assert execution_spec(expanded, "run", "attempt", tmp_path / "work").command == command
+    invalid = replace(command, timeout_seconds=8 * 86400)
+    with pytest.raises(ValueError, match="604800"):
+        ExecutionSpec.model_validate_json(
+            execution_spec(expanded, "run", "attempt", tmp_path / "other")
+            .model_copy(update={"command": invalid})
+            .model_dump_json()
         )
 
 

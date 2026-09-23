@@ -16,8 +16,9 @@ uv run --locked python scripts/acceptance/benchmark_execution.py
 ```
 
 The script builds this wheel, installs both wheels outside the checkout, and tests
-plan/check/prepare/run, fresh CLI processes, duplicate operation IDs, Records bytes and
-artifacts, and explicit host-execution opt-in. It cleans only its temporary operation.
+plan/check/prepare/run, two-operation FIFO admission, persistent leases, fresh CLI processes,
+duplicate operation IDs, Records bytes and artifacts, and explicit host-execution opt-in. It
+cleans only its temporary operations and state.
 
 For manual commands, limitations and recovery behavior, see
 [BM01 reference](../../docs/reference/benchmark-execution.md).
