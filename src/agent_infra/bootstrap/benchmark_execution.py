@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from agent_infra.benchmarks.api import CapabilityProfile
+from agent_infra.benchmarks.campaign_api import CampaignPolicy
 from agent_infra.benchmarks.execution import (
     PreparedExecution,
     execution_spec,
@@ -23,6 +24,7 @@ from agent_infra.benchmarks.registry import AdapterRegistry
 from agent_infra.bootstrap.paths import state_root
 from agent_infra.environments.execution_api import ExecutionBackend
 from agent_infra.environments.managed_process import ManagedProcessBackend
+from agent_infra.projects.benchmark_campaign import BenchmarkCampaignService, BenchmarkCampaignStore
 from agent_infra.records.api import EventQuery
 from agent_infra.records.local import LocalRecordsStore
 from agent_infra.resources.api import LeaseCapacity
@@ -30,6 +32,24 @@ from agent_infra.resources.persistent import PersistentLeaseStore
 from agent_infra.runs.benchmark_budget import budget_view
 from agent_infra.runs.benchmark_execution import BenchmarkExecutionService
 from agent_infra.runs.control_store import RunControlStore
+
+
+def _validate_submission(
+    prepared: PreparedExecution, args: argparse.Namespace, registry: AdapterRegistry
+) -> None:
+    is_host = prepared.frozen_plan.plan.phases[0].backend == ManagedProcessBackend.backend_id
+    if is_host and not args.allow_host_process:
+        raise ValueError("host execution requires --allow-host-process")
+    if not is_host and not args.allow_native_runtime:
+        raise ValueError("native execution requires --allow-native-runtime")
+    loaded = registry.load_identity(prepared.frozen_plan.adapter)
+    if prepare_execution(prepared.frozen_plan, loaded) != prepared:
+        raise ValueError("adapter invocation changed since execution was prepared")
+    profile = CapabilityProfile.model_validate_json(args.capabilities.read_bytes())
+    issues = check_plan(prepared.frozen_plan, loaded, profile)
+    errors = [issue.message for issue in issues if issue.severity == "error"]
+    if errors:
+        raise ValueError("incompatible declarations: " + "; ".join(errors))
 
 
 def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dict[str, Any]:
@@ -56,20 +76,7 @@ def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dic
                 "review execution and pass --allow-host-process or --allow-native-runtime"
             )
         prepared = read_execution(args.execution)
-        is_host = prepared.frozen_plan.plan.phases[0].backend == ManagedProcessBackend.backend_id
-        if is_host and not args.allow_host_process:
-            raise ValueError("host execution requires --allow-host-process")
-        if not is_host and not getattr(args, "allow_native_runtime", False):
-            raise ValueError("native execution requires --allow-native-runtime")
-        loaded = registry.load_identity(prepared.frozen_plan.adapter)
-        # All source and invocation checks happen before creating state or starting a process.
-        if prepare_execution(prepared.frozen_plan, loaded) != prepared:
-            raise ValueError("adapter invocation changed since execution was prepared")
-        profile = CapabilityProfile.model_validate_json(args.capabilities.read_bytes())
-        issues = check_plan(prepared.frozen_plan, loaded, profile)
-        errors = [issue.message for issue in issues if issue.severity == "error"]
-        if errors:
-            raise ValueError("incompatible declarations: " + "; ".join(errors))
+        _validate_submission(prepared, args, registry)
     root = state_root(args.state_dir) / "benchmarks"
     store = RunControlStore(root)
     records = LocalRecordsStore(root / "records")
@@ -148,6 +155,33 @@ def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dic
         return service_for(
             PreparedExecution.model_validate_json(json.dumps(run["request"]["execution"]))
         )
+
+    if action == "campaign":
+        campaign = BenchmarkCampaignService(BenchmarkCampaignStore(root / "campaigns"))
+        operation = args.campaign_command
+        if operation == "create":
+            policy = CampaignPolicy.model_validate_json(args.policy.read_bytes())
+            if policy.campaign_id != args.campaign_id:
+                raise ValueError("campaign ID must match policy file")
+            return campaign.create(policy, read_execution(args.execution))
+        if operation == "propose":
+            return campaign.propose(args.campaign_id, args.parent, read_execution(args.execution))
+        if operation == "submit":
+
+            def submit_candidate(
+                value: PreparedExecution, operation_id: str, group: str, limit: float
+            ) -> dict[str, Any]:
+                _validate_submission(value, args, registry)
+                return service_for(value).submit(
+                    operation_id, value, budget_group=group, budget_wall_seconds=limit
+                )
+
+            return campaign.submit(args.campaign_id, args.candidate_id, submit_candidate)
+        if operation == "status":
+            return campaign.refresh(
+                args.campaign_id, lambda run_id: existing(store.get(run_id)).status(run_id)
+            )
+        return campaign.stop(args.campaign_id)
 
     if action == "run":
         assert prepared is not None

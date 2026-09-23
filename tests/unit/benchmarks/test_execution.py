@@ -21,6 +21,7 @@ from agent_infra.benchmarks.execution_api import NativeInvocation
 from agent_infra.benchmarks.planning import freeze_plan
 from agent_infra.benchmarks.registry import AdapterError, LoadedAdapter
 from agent_infra.bootstrap.benchmark_execution import execution_action
+from agent_infra.bootstrap.benchmarks import benchmark_action
 from agent_infra.environments.execution_api import ExecutionSpec
 from agent_infra.environments.managed_process import ManagedProcessBackend
 
@@ -164,7 +165,7 @@ def test_benchmark_capacity_command_persists_and_rejects_unknown_fields(tmp_path
     file = tmp_path / "capacity.json"
     file.write_text('{"max_concurrent": 2, "cpu_cores": 4, "memory_bytes": 8589934592}')
     args = argparse.Namespace(
-        benchmark_command="capacity", state_dir=str(tmp_path / "state"), file=file
+        benchmark_command="capacity", state_dir=str(tmp_path / "state"), file=file, config=None
     )
     configured = execution_action(args, None)
     assert configured["capacity"]["max_concurrent"] == 2
@@ -172,6 +173,7 @@ def test_benchmark_capacity_command_persists_and_rejects_unknown_fields(tmp_path
         argparse.Namespace(benchmark_command="queue", state_dir=str(tmp_path / "state")), None
     )
     assert queued["capacity"] == configured["capacity"]
+    assert benchmark_action(args)["capacity"] == configured["capacity"]
     file.write_text('{"max_concurrent": 3, "unexpected": true}')
     with pytest.raises(ValueError, match="unsupported fields"):
         execution_action(args, None)
