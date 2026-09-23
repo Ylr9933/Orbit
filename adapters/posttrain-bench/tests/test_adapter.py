@@ -173,7 +173,9 @@ def _native_result(path: Path) -> None:
     (path / "judgement_ptb_lookup.json").write_text('{"disallowed_ptb_lookup": false}')
 
 
-def test_condor_backend_owns_native_id_cleanup_and_external_handoff(checkout: Path, tmp_path: Path):
+def test_condor_backend_owns_native_id_cleanup_and_external_handoff(
+    checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     results = tmp_path / "results"
     store = tmp_path / "models"
     bins = tmp_path / "bin"
@@ -265,3 +267,21 @@ def test_condor_backend_owns_native_id_cleanup_and_external_handoff(checkout: Pa
     cancelled = backend.submit("cancel-operation", spec.model_copy(update={"run_id": "cancel"}))
     assert backend.cancel(cancelled).complete is True
     assert backend.observe(cancelled).status == "cancelled"
+
+    # A lost submit reply cannot prove that HTCondor did not launch the job.
+    # Leave the durable intent in place and refuse a second automatic submit.
+    calls = 0
+    monkeypatch.setattr(backend, "_receipt", lambda *_: None)
+
+    def ambiguous_submit(*_args: object) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+    monkeypatch.setattr(backend, "_run", ambiguous_submit)
+    ambiguous = spec.model_copy(update={"run_id": "ambiguous"})
+    with pytest.raises(RuntimeError, match="did not return a native job ID"):
+        backend.submit("ambiguous-operation", ambiguous)
+    with pytest.raises(RuntimeError, match="native submit outcome is unknown"):
+        backend.submit("ambiguous-operation", ambiguous)
+    assert calls == 1

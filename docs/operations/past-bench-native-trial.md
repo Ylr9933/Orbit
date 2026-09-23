@@ -1,6 +1,6 @@
 # PAST-Bench BM03 试运行
 
-状态：BM03 任务分支；工程 profile 已实现。命令适用于 Linux 单管理员环境，固定上游 revision
+状态：BM03 已实现；工程 profile 已验收。命令适用于 Linux 单管理员环境，固定上游 revision
 `f8223517ae7491e776b69793d9f11e9d074ab42e`。它不会提交榜单。
 
 ## 无模型工程验收

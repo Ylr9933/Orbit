@@ -1,6 +1,6 @@
 # BM04 PostTrainBench 实现说明
 
-状态：BM04 任务分支实现，固定 PostTrainBench
+状态：BM04 已实现，固定 PostTrainBench
 `3ed1d32ff1ec1f41282be6f8ebbcec07b19fc3d1`。工程 profile 已验收；真实 H100、HTCondor、
 Apptainer、Agent 和 judges 尚未运行，不能视为官方兼容认证。
 
@@ -33,7 +33,8 @@ Agent、模型、GPU、Apptainer 或 judge 服务，结果始终 `official=false
 1. 提交前持久化 operation intent 和完整 `ExecutionSpec`。
 2. submit description 写入唯一 `AgentInfraOperationId` 和 spec digest ClassAd。
 3. `condor_submit -terse` 返回的 `ClusterId.ProcId` 绑定到持久资源租约。
-4. 恢复时先用该 ClassAd 或 job ID 查询 `condor_q`/`condor_history`，不会因响应丢失重复提交。
+4. 恢复时先用该 ClassAd 或 job ID 查询 `condor_q`/`condor_history`。若已写入提交文件却
+   查不到 job ID，保留未知状态并停止自动重提；调度器查询为空不能证明前一次提交未生效。
 5. 日志按游标有界采集；取消只对已核验的 job ID 调用 `condor_rm`。
 6. job 离开活动队列且 history 显示 completed/removed 后，才确认 scheduler cleanup 并释放租约。
 

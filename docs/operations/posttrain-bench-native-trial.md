@@ -1,6 +1,6 @@
 # PostTrainBench BM04 试运行
 
-状态：BM04 任务分支。无模型工程 profile 已实现；本手册中的真实模式是待集群验收入口，不代表已在
+状态：BM04 已实现。无模型工程 profile 已验收；本手册中的真实模式是待集群验收入口，不代表已在
 本机或官方环境运行。固定上游 revision 为
 `3ed1d32ff1ec1f41282be6f8ebbcec07b19fc3d1`。
 
@@ -80,6 +80,10 @@ Records 会保存路径引用，不保存 `.env` 或 auth 内容。
 完成 `inspect → plan → check → prepare` 后，人工检查冻结命令、资源和路径，再使用
 `--allow-native-runtime` 提交。运行期间用 `benchmark status/events/queue` 查看平台状态，同时以集群
 工具核对 native job ID。取消必须使用平台 `benchmark cancel`，不要按进程名或 GPU 全局清理。
+
+如果提交响应丢失且 `condor_q`/`condor_history` 暂时查不到 job，平台会保留提交意图并报告
+`unknown`，不会自动再次 `condor_submit`。管理员应按 operation 的 ClassAd、冻结 spec 摘要、
+HTCondor 日志及集群历史确认该 job 是否存在，再处理对账；不要通过重复提交同一 operation 试探。
 
 ## 结果判定
 

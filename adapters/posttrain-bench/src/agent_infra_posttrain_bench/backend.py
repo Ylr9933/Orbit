@@ -32,7 +32,6 @@ JOB_ID = re.compile(r"^(?P<cluster>[0-9]+)\.(?P<process>[0-9]+)$")
 RUNNING = {1, 2, 6, 7}
 REMOVED = 3
 COMPLETED = 4
-HELD = 5
 
 
 class _EngineeringBackend(ManagedProcessBackend):
@@ -232,8 +231,12 @@ class PostTrainBackend:
             receipt = self._receipt(root, request, tag)
             if receipt is None:
                 submit_file = root / "job.condor"
-                if not submit_file.exists():
-                    submit_file = self._submit_file(root, spec, request, tag)
+                if submit_file.exists():
+                    raise RuntimeError(
+                        "native submit outcome is unknown; reconcile the durable intent "
+                        "with HTCondor before retrying"
+                    )
+                submit_file = self._submit_file(root, spec, request, tag)
                 submitted = self._run(request, "condor_submit", "-terse", str(submit_file))
                 if submitted.returncode:
                     raise RuntimeError("condor_submit failed after durable intent")
@@ -318,7 +321,7 @@ class PostTrainBackend:
             return ("completed" if code == 0 else "failed"), code
         if status == REMOVED:
             return "cancelled", None
-        return ("unknown", None) if status == HELD else ("unknown", None)
+        return "unknown", None
 
     def _sync_logs(
         self, root: Path, spec: ExecutionSpec, request: Request, job_id: str, tag: str
