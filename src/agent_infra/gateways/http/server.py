@@ -5,13 +5,17 @@ import json
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from agent_infra.gateways.http.workflow import WorkflowGateway
 from agent_infra.projects.api import ProjectConflict, ProjectNotFound
 from agent_infra.records.catalog import CatalogConflict
 from agent_infra.runs.console import ConsoleService
+
+
+class BenchmarkView(Protocol):
+    def snapshot(self) -> dict[str, Any]: ...
 
 
 def create_server(
@@ -21,6 +25,7 @@ def create_server(
     port: int = 8765,
     *,
     workflow: WorkflowGateway | None = None,
+    benchmark: BenchmarkView | None = None,
 ) -> ThreadingHTTPServer:
     if len(token) < 32:
         raise ValueError("console token must have at least 32 characters")
@@ -116,6 +121,10 @@ def create_server(
                 if not isinstance(body, dict):
                     raise ValueError("expected object")
             parts = path.removeprefix("/api/v1/").split("/")
+            if method == "GET" and path == "/api/v1/benchmarks":
+                if benchmark is None:
+                    raise KeyError(path)
+                return benchmark.snapshot()
             if workflow is not None and (
                 parts[0] in {"execution", "capabilities"}
                 or (parts[0] == "projects" and (method == "GET" or len(parts) > 1))

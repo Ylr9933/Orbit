@@ -1,6 +1,6 @@
 # 新 benchmark 适配包开发指南
 
-状态：SDK 1.0、BM00 规划与 BM01 受管执行扩展 1.0 已实现；结果解释扩展尚未实现。
+状态：SDK 1.0、BM00 规划、BM01 受管执行、BM02 原生结果解释与 BM07 可选提交交接已实现。
 把本文件、[SDK 参考](../reference/benchmark-sdk.md)、benchmark 固定仓库版本交给开发者或 Agent，
 即可开始独立包开发。原生规则不清楚时先调查并记录，不能为了填 schema 自行发明 benchmark 规则。
 
@@ -58,6 +58,8 @@ Docker、数据库、核心 registry 私有实现；需要新能力时声明 req
    可以先让 check 报告缺失执行能力，不能把缺失项删掉来得到通过。
 7. **执行验收**：声明并连接受支持的通用 backend；再测取消、失联、清理、资源限额、轨迹覆盖与原生产物评分对照。
    完成证据前只报告 planning/indexed，不宣称 runnable/scored/protocol_validated。
+8. **发布兼容证据**：按 adapter/runner/profile/Agent/backend 的精确元组发布矩阵；
+   `run:` 本地引用由平台核对，外部证据由管理员核查。命令和级别见[BM07 使用参考](../reference/benchmark-delivery.md)。
 
 conformance 只验证结构、目录保真、规划稳定性，不审查原生评分逻辑。对于原生重复/失败规则、
 PAST fresh-session 和真实 state 使用、PostTrain 的模型来源/judges、ASI 正式提交资格等，必须有各自真实对照证据。
@@ -72,6 +74,11 @@ PAST fresh-session 和真实 state 使用、PostTrain 的模型来源/judges、A
 可独立安装的实现见 [examples/benchmark-execution](../../examples/benchmark-execution/)；命令冻结、
 opt-in、能力限制和验收脚本见[执行参考](../reference/benchmark-execution.md)。当前 backend 只处理
 可信协作式进程，不接管 Docker/HPC 子作业；不能用包装原生 CLI 的方式绕过清理或资源要求。
+
+正式提交由原生 benchmark 协议决定。需要时，适配包可实现 `prepare_submission` 和
+`send_submission`，使用 `agent_infra.benchmarks.submission_api` 的类型；管理员显式确认后才发送。
+普通规划/执行无需这两个 hook。平台的已发送回执不等于官方接受或评分，未知结果不自动重发。
+新增包的隔离 wheel 演练见[BM07 使用参考](../reference/benchmark-delivery.md)。
 
 ## BM00 四类样例代表什么
 

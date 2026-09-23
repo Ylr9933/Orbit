@@ -9,6 +9,8 @@ def add_benchmark_arguments(commands: Any) -> None:
     actions = command.add_subparsers(dest="benchmark_command", required=True)
     for name in (
         "campaign",
+        "compatibility",
+        "handoff",
         "prepare",
         "run",
         "status",
@@ -21,6 +23,25 @@ def add_benchmark_arguments(commands: Any) -> None:
         "artifacts",
     ):
         entry = actions.add_parser(name)
+        if name == "handoff":
+            commands = entry.add_subparsers(dest="handoff_command", required=True)
+            for operation in ("prepare", "status", "send"):
+                item = commands.add_parser(operation)
+                item.add_argument("run_id")
+                item.add_argument("--state-dir")
+                item.add_argument("--config", type=Path, required=operation != "status")
+                if operation == "send":
+                    item.add_argument("--confirm-native-submit", action="store_true")
+            continue
+        if name == "compatibility":
+            commands = entry.add_subparsers(dest="compatibility_command", required=True)
+            for operation in ("publish", "show"):
+                item = commands.add_parser(operation)
+                item.add_argument("--state-dir")
+                item.add_argument("--config", type=Path)
+                if operation == "publish":
+                    item.add_argument("--file", type=Path, required=True)
+            continue
         if name == "campaign":
             campaign = entry.add_subparsers(dest="campaign_command", required=True)
             for operation in ("create", "propose", "submit", "status", "stop"):

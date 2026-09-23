@@ -20,8 +20,8 @@ from agent_infra.benchmarks.execution import (
 from agent_infra.benchmarks.execution_api import NativeInvocation
 from agent_infra.benchmarks.planning import freeze_plan
 from agent_infra.benchmarks.registry import AdapterError, LoadedAdapter
-from agent_infra.bootstrap.benchmarks import benchmark_action
 from agent_infra.bootstrap.benchmark_execution import execution_action
+from agent_infra.bootstrap.benchmarks import benchmark_action
 from agent_infra.environments.execution_api import ExecutionSpec
 from agent_infra.environments.managed_process import ManagedProcessBackend
 
