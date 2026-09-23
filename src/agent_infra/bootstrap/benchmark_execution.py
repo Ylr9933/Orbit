@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import math
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
@@ -23,7 +25,9 @@ from agent_infra.environments.execution_api import ExecutionBackend
 from agent_infra.environments.managed_process import ManagedProcessBackend
 from agent_infra.records.api import EventQuery
 from agent_infra.records.local import LocalRecordsStore
+from agent_infra.resources.api import LeaseCapacity
 from agent_infra.resources.persistent import PersistentLeaseStore
+from agent_infra.runs.benchmark_budget import budget_view
 from agent_infra.runs.benchmark_execution import BenchmarkExecutionService
 from agent_infra.runs.control_store import RunControlStore
 
@@ -71,6 +75,17 @@ def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dic
     records = LocalRecordsStore(root / "records")
     leases = PersistentLeaseStore(root / "leases")
 
+    if action == "capacity":
+        declared = json.loads(args.file.read_text(encoding="utf-8"))
+        if not isinstance(declared, dict) or set(declared) - {
+            "max_concurrent",
+            "cpu_cores",
+            "memory_bytes",
+            "gpu_count",
+        }:
+            raise ValueError("capacity file has unsupported fields")
+        return {"capacity": asdict(leases.configure(LeaseCapacity(**declared)))}
+
     if action == "queue":
 
         def lease_document(value: Any) -> dict[str, Any]:
@@ -80,9 +95,14 @@ def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dic
             document["updated_at"] = value.updated_at.isoformat()
             return document
 
+        ordered = store.ordered()
         return {
+            "capacity": asdict(leases.capacity),
             "queued": [
-                {key: value for key, value in item.items() if key != "request"}
+                {
+                    **{key: value for key, value in item.items() if key != "request"},
+                    "budget": budget_view(item, ordered),
+                }
                 for item in store.queued()
             ],
             "leases": [lease_document(item) for item in leases.list()],
@@ -131,16 +151,43 @@ def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dic
 
     if action == "run":
         assert prepared is not None
-        run = service_for(prepared).submit(args.operation_id, prepared)
+        run = service_for(prepared).submit(
+            args.operation_id,
+            prepared,
+            budget_group=args.budget_group,
+            budget_wall_seconds=args.budget_wall_seconds,
+        )
         return {key: value for key, value in run.items() if key != "request"}
+
+    def advance_pending() -> list[dict[str, Any]]:
+        return [
+            {key: value for key, value in run.items() if key != "request"}
+            for pending in store.unfinished()
+            for run in [existing(pending).status(pending["run_id"])]
+        ]
+
     if action == "reconcile":
-        return {
-            "runs": [
-                {key: value for key, value in run.items() if key != "request"}
-                for pending in store.unfinished()
-                for run in [existing(pending).status(pending["run_id"])]
-            ]
-        }
+        return {"runs": advance_pending()}
+    if action == "worker":
+        if not math.isfinite(args.poll_seconds) or not 0.1 <= args.poll_seconds <= 60:
+            raise ValueError("worker poll interval must be 0.1–60 seconds")
+        if args.max_seconds is not None and (
+            not math.isfinite(args.max_seconds) or not 0 < args.max_seconds <= 604800
+        ):
+            raise ValueError("worker max seconds must be positive and within seven days")
+        deadline = time.monotonic() + args.max_seconds if args.max_seconds else None
+        completed = 0
+        try:
+            while True:
+                completed += sum(item["state"] == "finished" for item in advance_pending())
+                pending = len(store.unfinished())
+                if (args.until_empty and not pending) or (
+                    deadline is not None and time.monotonic() >= deadline
+                ):
+                    return {"pending": pending, "completed_observations": completed}
+                time.sleep(args.poll_seconds)
+        except KeyboardInterrupt:
+            return {"pending": len(store.unfinished()), "completed_observations": completed}
     run = existing(store.get(args.run_id)).status(args.run_id, cancel=action == "cancel")
     if action == "events":
         page = records.read_events(EventQuery(run_id=args.run_id, limit=200), args.cursor)

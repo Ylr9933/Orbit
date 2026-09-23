@@ -13,7 +13,9 @@ def add_benchmark_arguments(commands: Any) -> None:
         "status",
         "cancel",
         "reconcile",
+        "worker",
         "queue",
+        "capacity",
         "events",
         "artifacts",
     ):
@@ -35,8 +37,16 @@ def add_benchmark_arguments(commands: Any) -> None:
             entry.add_argument("--capabilities", type=Path, required=True)
             entry.add_argument("--allow-host-process", action="store_true")
             entry.add_argument("--allow-native-runtime", action="store_true")
-        elif name not in {"prepare", "reconcile", "queue"}:
+            entry.add_argument("--budget-group", help="Shared wall-time budget name")
+            entry.add_argument("--budget-wall-seconds", type=float, help="Shared wall-time limit")
+        elif name == "capacity":
+            entry.add_argument("--file", type=Path, required=True, help="Authorized capacity JSON")
+        elif name not in {"prepare", "reconcile", "queue", "worker"}:
             entry.add_argument("run_id")
+        if name == "worker":
+            entry.add_argument("--poll-seconds", type=float, default=1.0)
+            entry.add_argument("--max-seconds", type=float)
+            entry.add_argument("--until-empty", action="store_true")
         if name == "events":
             entry.add_argument("--cursor")
     for name in ("adapters", "inspect", "plan", "check"):

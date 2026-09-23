@@ -160,6 +160,37 @@ def test_adapter_can_raise_bounded_capture_limits(prepared, tmp_path):
     assert "max_artifact_bytes" not in defaults.model_dump(mode="json")
 
 
+def test_benchmark_capacity_command_persists_and_rejects_unknown_fields(tmp_path):
+    file = tmp_path / "capacity.json"
+    file.write_text('{"max_concurrent": 2, "cpu_cores": 4, "memory_bytes": 8589934592}')
+    args = argparse.Namespace(
+        benchmark_command="capacity", state_dir=str(tmp_path / "state"), file=file
+    )
+    configured = execution_action(args, None)
+    assert configured["capacity"]["max_concurrent"] == 2
+    queued = execution_action(
+        argparse.Namespace(benchmark_command="queue", state_dir=str(tmp_path / "state")), None
+    )
+    assert queued["capacity"] == configured["capacity"]
+    file.write_text('{"max_concurrent": 3, "unexpected": true}')
+    with pytest.raises(ValueError, match="unsupported fields"):
+        execution_action(args, None)
+
+
+def test_empty_worker_exits_and_rejects_unbounded_poll_interval(tmp_path):
+    args = argparse.Namespace(
+        benchmark_command="worker",
+        state_dir=str(tmp_path / "state"),
+        poll_seconds=0.1,
+        max_seconds=1,
+        until_empty=True,
+    )
+    assert execution_action(args, None)["pending"] == 0
+    args.poll_seconds = 0
+    with pytest.raises(ValueError, match="poll interval"):
+        execution_action(args, None)
+
+
 def test_external_backend_can_declare_multi_day_timeout(prepared, tmp_path):
     execution, _, _ = prepared
     command = replace(execution.invocation.command, timeout_seconds=3 * 86400)

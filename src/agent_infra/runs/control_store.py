@@ -152,6 +152,12 @@ class RunControlStore:
             rows = db.execute("SELECT document FROM commands ORDER BY rowid").fetchall()
         return [item for row in rows if (item := json.loads(row[0]))["state"] != "finished"]
 
+    def ordered(self) -> list[dict[str, Any]]:
+        """All commands in durable admission order, including completed budget charges."""
+        with closing(self._connect()) as db:
+            rows = db.execute("SELECT document FROM commands ORDER BY rowid").fetchall()
+        return [json.loads(row[0]) for row in rows]
+
     def queue_position(self, run_id: str) -> int | None:
         """One-based FIFO position among launch-authorized queued commands."""
         queued = [

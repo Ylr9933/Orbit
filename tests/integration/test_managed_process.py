@@ -202,3 +202,37 @@ while True: time.sleep(.1)
     result = wait(backend, handle)
     assert result.status == "cancelled"
     assert (backend.collect(handle).root / "outputs/closed").read_text() == "confirmed"
+
+
+def test_collection_resumes_interrupted_copy_and_reports_measured_usage(tmp_path, monkeypatch):
+    backend = ManagedProcessBackend(tmp_path / "native")
+    handle = backend.submit(
+        "large-output",
+        spec(
+            tmp_path,
+            "from pathlib import Path; Path('large').write_bytes(b'x' * (2 * 1024 * 1024))",
+            outputs=("large",),
+        ),
+    )
+    finished = wait(backend, handle)
+    assert finished.usage is not None
+    assert finished.usage.elapsed_seconds > 0
+    assert finished.usage.cpu_seconds is not None
+    from agent_infra.environments import managed_process
+
+    original = managed_process.resume_copy_file
+
+    def interrupted(source, target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes()[:1024])
+        raise OSError("collection interrupted")
+
+    monkeypatch.setattr(managed_process, "resume_copy_file", interrupted)
+    with pytest.raises(OSError, match="collection interrupted"):
+        backend.collect(handle)
+    partial = backend._path("large-output") / "collecting/outputs/large"
+    assert partial.stat().st_size == 1024
+    monkeypatch.setattr(managed_process, "resume_copy_file", original)
+    restored = ManagedProcessBackend(tmp_path / "native").collect(handle)
+    assert (restored.root / "outputs/large").stat().st_size == 2 * 1024**2
+    assert backend.collect(handle) == restored

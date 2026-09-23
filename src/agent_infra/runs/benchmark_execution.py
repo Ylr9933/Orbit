@@ -1,10 +1,11 @@
 """FIFO-admitted atomic benchmark execution using durable leases and Records.
 
-There are no benchmark-specific branches or scoring rules here. The deliberately small BM05-A
-scheduler keeps a lease until cleanup and evidence collection both succeed.
+There are no benchmark-specific branches or scoring rules here. A lease is held until cleanup
+and evidence collection both succeed.
 """
 
 import json
+import math
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import datetime
@@ -28,6 +29,7 @@ from agent_infra.records.api import (
 )
 from agent_infra.resources.api import AllocationStatus, ResourceClaim
 from agent_infra.resources.persistent import PersistentLeaseStore
+from agent_infra.runs.benchmark_budget import budget_view
 from agent_infra.runs.control_store import RunControlStore
 
 
@@ -56,9 +58,24 @@ class BenchmarkExecutionService:
         )
         self.leases = leases or PersistentLeaseStore(store.path.parent / "leases")
 
-    def submit(self, operation_id: str, execution: PreparedExecution) -> dict[str, Any]:
+    def submit(
+        self,
+        operation_id: str,
+        execution: PreparedExecution,
+        *,
+        budget_group: str | None = None,
+        budget_wall_seconds: float | None = None,
+    ) -> dict[str, Any]:
         if not operation_id or len(operation_id) > 128:
             raise ValueError("operation_id must contain 1–128 characters")
+        if (budget_group is None) != (budget_wall_seconds is None):
+            raise ValueError("budget group and wall limit must be supplied together")
+        if budget_group is not None and (not budget_group.strip() or len(budget_group) > 128):
+            raise ValueError("budget group must contain 1–128 characters")
+        if budget_wall_seconds is not None and (
+            not math.isfinite(budget_wall_seconds) or budget_wall_seconds <= 0
+        ):
+            raise ValueError("budget wall limit must be positive and finite")
         validate_backend(
             execution,
             self.backend.backend_id,
@@ -67,8 +84,21 @@ class BenchmarkExecutionService:
         )
         if self.validate_native is not None:
             self.validate_native(execution)
-        payload = {"kind": "benchmark", "execution": execution.model_dump(mode="json")}
+        payload: dict[str, Any] = {
+            "kind": "benchmark",
+            "execution": execution.model_dump(mode="json"),
+        }
+        if budget_group is not None:
+            payload.update(budget_group=budget_group, budget_wall_seconds=budget_wall_seconds)
         with self.store.exclusive():
+            if budget_group is not None:
+                for existing in self.store.ordered():
+                    request = existing["request"]
+                    if (
+                        request.get("budget_group") == budget_group
+                        and float(request["budget_wall_seconds"]) != budget_wall_seconds
+                    ):
+                        raise ValueError("budget group has conflicting limits")
             run = self.store.lookup(operation_id, payload)
             if run is None:
                 run = self.store.create(
@@ -193,6 +223,18 @@ class BenchmarkExecutionService:
     def _shortages(decision: Any) -> list[dict[str, Any]]:
         return [asdict(item) for item in decision.shortages]
 
+    @staticmethod
+    def _accounting(run: dict[str, Any], execution: PreparedExecution) -> dict[str, Any]:
+        requested = execution.frozen_plan.plan.phases[0].resources.model_dump(mode="json")
+        return {
+            "requested": requested,
+            "authorized": requested if run.get("lease_id") else None,
+            "lease_id": run.get("lease_id"),
+            "actual_allocation": run.get("allocation"),
+            "actual_allocation_status": "attested" if run.get("allocation") else "not_attested",
+            "usage": run.get("usage"),
+        }
+
     def _release_lease(self, run: dict[str, Any]) -> None:
         lease_id = run.get("lease_id")
         epoch = run.get("lease_owner_epoch")
@@ -220,6 +262,24 @@ class BenchmarkExecutionService:
                     False,
                     (),
                     "never_launched",
+                )
+            budget = budget_view(run, self.store.ordered())
+            if budget is not None and not budget["admissible"]:
+                return self._finish(
+                    run,
+                    self._sink(run, execution),
+                    "failed",
+                    None,
+                    None,
+                    False,
+                    (),
+                    "never_launched",
+                    {
+                        "evaluation": "not_applicable",
+                        "protocol": "valid",
+                        "reason": "budget group wall-time limit exhausted",
+                        "budget": budget,
+                    },
                 )
             position = self.store.queue_position(run["run_id"])
             if position != 1:
@@ -353,6 +413,14 @@ class BenchmarkExecutionService:
         cursor = run.get("cursor", 0)
         while True:
             observation = self.backend.observe(handle, cursor)
+            if observation.allocation is not None:
+                attested = asdict(observation.allocation)
+                if attested != run.get("allocation"):
+                    run = self.store.update(run["run_id"], allocation=attested)
+            if observation.usage is not None:
+                measured = asdict(observation.usage)
+                if measured != run.get("usage"):
+                    run = self.store.update(run["run_id"], usage=measured)
             if observation.data:
                 sink.append_stream(run["attempt_id"] + ":combined", observation.data, cursor)
                 cursor = observation.next_cursor
@@ -446,6 +514,13 @@ class BenchmarkExecutionService:
             "missing_outputs": list(missing),
             "artifact_id": artifact_id,
             "stream": asdict(stream),
+        }
+        execution = PreparedExecution.model_validate_json(json.dumps(run["request"]["execution"]))
+        result["resource_accounting"] = self._accounting(run, execution)
+        result["budget"] = {
+            "planned_wall_seconds": execution.frozen_plan.plan.phases[0].budget.wall_seconds,
+            "measured_elapsed_seconds": (run.get("usage") or {}).get("elapsed_seconds"),
+            "group": budget_view(run, self.store.ordered()),
         }
         if native_result is not None:
             result["native_result"] = native_result

@@ -1,10 +1,11 @@
 # 项目当前状态
 
-Updated at: 2026-09-23T09:56:38+08:00
+Updated at: 2026-09-23T10:22:58+08:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
 GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及 BM00/BM01/BM02-A/BM02-B、
-BM05-A、BM03、BM04。集成与远端同步事实以 Git 历史为准，不表示已配置常驻部署。
+BM05-A、BM03、BM04；本分支提出 BM05-B 能力，合并后才成为 `main` 事实。集成与远端同步
+事实以 Git 历史为准，不表示已配置常驻部署。
 本机 GPU 诊断与容器计算已验收，完整 GPU Run 尚未验收。
 
 当前定位：本机、单管理员、小型 CPU 科研工作流已可试用。
@@ -18,7 +19,7 @@ BM05-A、BM03、BM04。集成与远端同步事实以 Git 历史为准，不表�
 | S1：模块契约与任务样例 | `in_progress` | 核心契约已有实现；ToolBinding、稳定任务目录与原生 benchmark 等价性未完成。 |
 | S2：完整单节点工作流 | `in_progress` | CPU 科研两条路径已有证据；GPU 容器基础链通过，完整 GPU Run 与完整 benchmark 套件等价性仍缺。 |
 | S3：两节点执行与故障处理 | `not_started` | Worker/Ray、节点加入、远程记录与故障恢复未实现。 |
-| S4：Web 与批量评测 | `in_progress` | 科研项目、实验提交/取消、结果与分析已有页面；批量评测未实现。 |
+| S4：Web 与批量评测 | `in_progress` | 科研页面已有基础；BM05-A 持久排队已集成，BM05-B 有界并发在本分支，完整批量评测仍未验收。 |
 
 ## 已有能力与验证范围
 
@@ -34,6 +35,7 @@ BM05-A、BM03、BM04。集成与远端同步事实以 Git 历史为准，不表�
 - **BM02-A（本地 `main`）**：独立 TB-Science/Harbor 包、固定版本、独立 verifier、CPU/内存实际核验和 Records 原始证据。Oracle 单任务的原生同产物重评、重复提交、真实取消清理通过；不代表模型 Agent、整套任务、GPU 或正式榜单兼容。
 - **BM02-B（本地 `main`）**：独立 ASI-Bench 包固定 runner；公开 seed31415 单任务原生产出与 BenchFlow 本地评分已通过完整平台 CPU 验收。seed42 bundle 只做 provenance 校验与本地生成；未认证、上传或取得官方分数。
 - **BM05-A**：Benchmark 请求可持久 FIFO 排队；Resources 保存幂等租约、owner epoch、原生 job ID、对账和释放历史。崩溃窗口、等待取消、清理后续跑以及独立 wheel 双任务验收通过；当前默认单活动租约，不代表 CPU/GPU 硬隔离或后台自动调度。
+- **BM05-B（本分支，待集成）**：同一状态目录可配置并持久保存并发容量、运行轮询 worker 与墙钟预算组；受管进程采样 CPU/内存/I/O，结果区分申请、准入、实际分配证明及测量；本地产物支持中断续传与完整校验。默认仍为单槽，租约不实施硬限额。
 - **BM03**：独立 PAST-Bench 包固定 v1.0.0 revision，把完整 family 的 persistence on/off 配对作为原子任务；冻结 episode 顺序、fresh session、history/state 策略和原生 runner，归档原生 evidence 与聚合结果。无模型 SM01 工程 profile 通过独立 wheel 验收；尚未运行真实 Agent/judge，不代表 Docker sandbox、官方复现或榜单提交。
 - **BM04**：独立 PostTrainBench 包将一个训练 trial 保持为原子 HTCondor job，持久绑定 native job ID；真实模式声明 H100/CPU/内存/磁盘和 GPU 可见性隔离，按 job ID 查询/取消。提交响应不确定时暂停自动重试，等待原生身份对账。final model 进入文件级校验的内容寻址私有存储，Records 保存 handoff manifest、指标、judge 和有界轨迹。无模型 wheel 与模拟 scheduler 生命周期通过；未进行真实 H100/Apptainer/Agent/judge 集群验收。
 - **W**：Web 兼容旧 catalog 和新工作区，支持初始化、研究方案查看、实验编译/预检/提交/取消、产物下载和分析展示。
@@ -46,12 +48,12 @@ BM05-A、BM03、BM04。集成与远端同步事实以 Git 历史为准，不表�
 - **科研训练**：长期科研环境的 GPU 入口、CUDA/系统依赖模板、外部不可变数据与大权重传输；当前 HTTP 下载上限 16 MiB。真实 GPU 训练及完整冻结 Task 验收仍缺。
 - **执行与任务**：其他 provider 的完整容器链、ToolBinding、科研 Controller 的持久等待队列与训练 checkpoint 接续。Benchmark 已有最小持久队列，但尚未推广到所有执行入口；PAST 真实 Agent/runtime 与 PostTrainBench H100/HTCondor/Apptainer/Agent/judge 组合仍待验收。
 - **自动研究**：仅能在冻结 Task 授权集合内迭代；自动新任务授权和科学真实性判断未实现。
-- **记录和界面**：其他 Agent 的平台外轨迹仍依赖显式导入；Codex 格式兼容需随 CLI 版本维护，尚无 Web 专门会话列表；BM01 仅有本机进程 spool，缺跨节点传输/远端备份/token-logprob。Web 未覆盖 H/E/I 全部控制或 benchmark 新命令，HTTP/TypeScript 契约仍手工维护。
+- **记录和界面**：其他 Agent 的平台外轨迹仍依赖显式导入；Codex 格式兼容需随 CLI 版本维护，尚无 Web 专门会话列表；benchmark 本地大文件可恢复，但缺跨节点传输/远端备份/token-logprob。Web 未覆盖 H/E/I 全部控制或 benchmark 新命令，HTTP/TypeScript 契约仍手工维护。
 - **运维和扩展**：Web 资产需单独提供；单管理员服务未产品化为安装即用部署；无 Worker/Ray、多节点或多人在线权限。
 
 ## 下一步优先级
 
-1. 按[Benchmark 顺序](development/benchmark-development-plan.md)规划 BM05-B 的公平并发、资源实测和大文件恢复，并安排 BM03/BM04 真实环境验收。
+1. 合并并试用 BM05-B 的有界批量能力；随后推进 BM06 聚合与优化循环，并安排 BM03/BM04 真实环境验收。
 2. 准备 CUDA 训练镜像，完成冻结 Task + Codex 单 GPU Run 验收；随后补长期科研环境 GPU 入口及大数据/权重入口。
 3. 确定长期状态目录，补齐安装诊断和启动/备份指南，用一个真实科研项目试用完整流程。
 
@@ -64,7 +66,7 @@ BM05-A、BM03、BM04。集成与远端同步事实以 Git 历史为准，不表�
 - [BM04 任务记录](changes/20260923-benchmark-posttrain-bm04-7b2e91.md)、[PostTrainBench 操作说明](operations/posttrain-bench-native-trial.md)
 - [Benchmark 集成整理](changes/20260923-benchmark-integration-cleanup-4e9b62.md)
 - [BM03 任务记录](changes/20260922-benchmark-past-bm03-5e8a2d.md)、[PAST-Bench 操作说明](operations/past-bench-native-trial.md)
-- [BM05-A 任务记录](changes/20260922-benchmark-reliability-bm05a-91d7c4.md)、[队列操作说明](operations/benchmark-queue.md)
+- [BM05-A 任务记录](changes/20260922-benchmark-reliability-bm05a-91d7c4.md)、[BM05-B 任务记录](changes/20260923-benchmark-batch-bm05b-6c2f91.md)、[队列操作说明](operations/benchmark-queue.md)
 - [BM02-B 任务记录](changes/20260922-benchmark-asi-bm02b-4d2c81.md)、[ASI-Bench 操作说明](operations/asi-bench-native-trial.md)
 - [BM02-A 任务记录](changes/20260922-benchmark-tb-science-bm02a-6b91e3.md)、[TB-Science 操作说明](operations/tb-science-native-trial.md)
 - [BM00 SDK](changes/20260922-benchmark-sdk-bm00-c7e2a1.md)、[BM01 受管执行记录](changes/20260922-benchmark-execution-bm01-a4f8d2.md)、[执行使用参考](reference/benchmark-execution.md)

@@ -1,6 +1,6 @@
-# BM01 / BM05-A：Benchmark 受管执行与持久排队
+# BM01 / BM05：Benchmark 受管执行与持久排队
 
-状态：执行扩展 **1.0**，基于 SDK **1.0**；BM01 与 BM05-A 已实现，
+状态：执行扩展 **1.0**，基于 SDK **1.0**；BM01 与 BM05-A 已集成，BM05-B 在任务分支实现，
 集成状态以 Git 为准。
 适用于 Linux、单管理员、同一状态目录下的一个可信本机进程任务。真实短时 CPU 进程和独立 wheel
 已验收；本文描述 BM01 通用进程后端。TB-Science 的新增原生容器入口见
@@ -21,7 +21,7 @@ BM00 负责描述和检查协议；BM01 增加“冻结具体命令 → 持久�
 | 后端 | `managed-process-v1`，独立监督进程管理协作式本机命令 |
 | 凭据与输入 | 不继承宿主机完整环境变量；stdin 和显式环境注入暂不支持。适配器通过非敏感 argv/固定路径描述输入 |
 | 超时 | 支持命令墙钟超时；协议声明了预算时必须是 `process_start`，且与命令 timeout 一致 |
-| 资源 | BM05-A 使用持久准入租约，默认同一状态目录最多一个活动任务；普通进程后端仍没有 CPU/内存/GPU 硬限额，不能把准入租约当成 cgroup 或设备隔离 |
+| 资源 | BM05 用持久租约按槽位和显式 CPU/内存/GPU 总额准入，默认单槽；普通进程后端仍没有 CPU/内存/GPU 硬限额，不能把准入租约当成 cgroup 或设备隔离 |
 | 隔离 | 同 UID、本机权限；不是沙箱。含不允许 solver 读取的材料会拒绝；不能运行不可信 Agent 或秘密 grader |
 | 清理 | 本次监督进程拥有的进程组。子进程必须遵守该范围；脱离会话的 daemon、Docker 子容器不属于已支持能力 |
 | 重试 | 同 operation ID 查询/续采，不再启动。新试验需新 ID；平台拥有的协议重试尚不支持 |
@@ -75,11 +75,12 @@ agent-infra benchmark artifacts RUN_ID --state-dir "$INFRA_BENCH_STATE"
 agent-infra benchmark cancel RUN_ID --state-dir "$INFRA_BENCH_STATE"
 agent-infra benchmark reconcile --state-dir "$INFRA_BENCH_STATE"
 agent-infra benchmark queue --state-dir "$INFRA_BENCH_STATE"
+agent-infra benchmark worker --state-dir "$INFRA_BENCH_STATE" --poll-seconds 2
 ```
 
 上述大写 ID 是替换位置，不是 literal 参数。`events --cursor CURSOR` 可续读；当前页上限 200。
 `status/cancel/reconcile/events/artifacts` 不重新加载适配包；即使源目录暂时不可读，也可查询和收尾。
-`queue` 只列出等待项及持久租约；其他状态命令会同步日志、对账状态并尝试归档，因此不是纯只读查询。没有自动轮询守护服务，停止查询时
+`queue` 只列出等待项、容量及持久租约；其他状态命令会同步日志、对账状态并尝试归档，因此不是纯只读查询。`worker` 提供显式轮询进程，停止查询或 worker 时
 监督器仍会执行超时/清理并保存原始 spool；后续 `status` 或 `reconcile` 再将证据归入 Records。
 
 退出码 `0` 表示控制命令成功，不表示实验成功；检查 `state` 和 `result.execution`。
@@ -111,8 +112,9 @@ BM05-A 在 `STATE/benchmarks/leases/leases.sqlite3` 保存租约、申请、owne
 `reconciling`，不会给下一项复用。只有后端确认清理且 Records 收尾完成后才释放。
 
 这一租约是单状态目录内的准入账本。多个状态目录之间尚无全局配额协调，也不进入现有科研
-Controller 的调度槽；普通进程后端不会据此设置 cgroup/GPU。BM05-B 才增加公平性、并发扩展、
-实际用量采样、预算累计和远端调度。
+Controller 的调度槽；普通进程后端不会据此设置 cgroup/GPU。BM05-B 增加可配置有界并发、
+FIFO 队列推进、墙钟组预算及本机进程用量采样；远端调度仍待实现。具体操作见
+[队列说明](../operations/benchmark-queue.md)。
 
 ## 日志和产物在哪里
 
@@ -126,14 +128,17 @@ STATE/benchmarks/
     owner.json           # 原生进程身份
     combined.log         # 合并 stdout/stderr 原始字节
     result.json          # 执行/清理收据
+    collecting/          # 可恢复的未完成输出副本，不能当作正式产物
     collected/           # 冻结输出副本和 execution-receipt.json
   workspaces/<run_id>/    # 命令的可写工作区
   records/               # 复用现有 Records：事件、原始流、内容寻址产物
 ```
 
-默认原始日志保留前 8 MiB，超出继续排空进程管道，并标记 `truncated`；声明输出总量上限 16 MiB。
+默认原始日志保留前 8 MiB，超出继续排空进程管道，并标记 `truncated`；声明输出默认总量上限 16 MiB，
+适配器可将单次上限提高至 1 TiB，仍需部署者保证磁盘空间。
 仅收集 `NativeInvocation.outputs` 声明的相对路径，拒绝越界、符号链接和特殊文件；缺失输出记录
-`missing_outputs`/`capture=partial`，不捏造成功材料。大模型权重和断点传输尚不在此版本能力范围。
+`missing_outputs`/`capture=partial`，不捏造成功材料。受管输出与本地 Records blob 可在同一状态目录
+断点续传；跨节点/远端对象存储传输尚不在此版本能力范围。
 本轮不会自动删除原始 spool、工作区或快照；备份/回收时应在 finished 后一并处理这套状态。
 
 `result.stream.blob` 是原始流引用，`artifact_id` 对应一个 `native-submission` 产物。

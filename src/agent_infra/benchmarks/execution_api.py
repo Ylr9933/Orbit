@@ -25,7 +25,7 @@ class NativeInvocation(Contract):
     max_artifact_bytes: int = Field(
         default=16 * 1024**2,
         gt=0,
-        le=64 * 1024**2,
+        le=1024**4,
         exclude_if=lambda value: value == 16 * 1024**2,
     )
 
