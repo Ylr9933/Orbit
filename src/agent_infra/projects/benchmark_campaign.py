@@ -103,9 +103,16 @@ def _compare_execution(
 class BenchmarkCampaignStore:
     """One SQLite document per campaign; a file lock serializes external Run submission intent."""
 
-    def __init__(self, root: Path) -> None:
-        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    def __init__(self, root: Path, *, read_only: bool = False) -> None:
+        self.read_only = read_only
+        if read_only:
+            if not (root / "campaigns.sqlite3").is_file():
+                raise ValueError("read-only campaign store requires an existing database")
+        else:
+            root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path = root / "campaigns.sqlite3"
+        if read_only:
+            return
         with closing(self._connect()) as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS campaigns "
@@ -115,9 +122,14 @@ class BenchmarkCampaignStore:
         self.path.chmod(0o600)
 
     def _connect(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.path, timeout=15)
+        db = (
+            sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=15)
+            if self.read_only
+            else sqlite3.connect(self.path, timeout=15)
+        )
         db.row_factory = sqlite3.Row
-        db.execute("PRAGMA synchronous=FULL")
+        if not self.read_only:
+            db.execute("PRAGMA synchronous=FULL")
         return db
 
     @contextmanager
@@ -137,6 +149,15 @@ class BenchmarkCampaignStore:
         if row is None:
             raise KeyError(campaign_id)
         return dict(json.loads(row[0]))
+
+    def list_campaigns(self, limit: int = 50) -> list[dict[str, Any]]:
+        if not 1 <= limit <= 100:
+            raise ValueError("invalid campaign page size")
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT document FROM campaigns ORDER BY rowid DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(json.loads(row[0])) for row in rows]
 
     def create(self, campaign_id: str, document: dict[str, Any]) -> None:
         with closing(self._connect()) as db:
@@ -159,6 +180,9 @@ class BenchmarkCampaignStore:
 class BenchmarkCampaignService:
     def __init__(self, store: BenchmarkCampaignStore) -> None:
         self.store = store
+
+    def list_campaigns(self, limit: int = 50) -> list[dict[str, Any]]:
+        return [self._view(item) for item in self.store.list_campaigns(limit)]
 
     def create(self, policy: CampaignPolicy, baseline: PreparedExecution) -> dict[str, Any]:
         _released_metrics(baseline, policy)

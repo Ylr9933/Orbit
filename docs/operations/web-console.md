@@ -84,6 +84,8 @@ H/E/I 的 Run 与 Job 状态可查看；长期环境关闭、环境构建取消�
 
 资源页保留真实 CPU/内存/NVIDIA 监控、过期提示和短期趋势；它不是 Controller 的授权剩余额度。
 Agents 只探测已安装/认证状态，缓存 60 秒。任务页只显示 `--task` 注册的可见描述，编译任务在项目详情选取。
+Benchmark 页读取同一 `--state-dir` 的等待队列、租约、近期运行、Campaign 候选和兼容矩阵；
+仅供管理员查看，不提供提交/取消或原生私有评测正文。操作与证据级别见[BM07 参考](../reference/benchmark-delivery.md)。
 
 ## 读取与安全边界
 
@@ -116,6 +118,7 @@ Agents 只探测已安装/认证状态，缓存 60 秒。任务页只显示 `--t
 | `GET /execution/runs/{id}/events?cursor=...` | 过滤后的事件页 |
 | `GET /execution/runs/{id}/artifacts` | 可见产物索引 |
 | `GET /execution/runs/{id}/artifacts/{artifact_id}?member=...` | 无 member 返回文件索引；有 member 返回 base64 内容 |
+| `GET /benchmarks` | 只读 benchmark 排队、租约、近期 Run、Campaign 和兼容矩阵摘要 |
 
 参数问题 400，鉴权失败 401，Host 不符 403，记录不存在 404，项目冲突 409，内部不可用 503。
 Controller 拒绝信息通过 Web 的 400 返回具体原因；能力探测失败提供禁用提示。

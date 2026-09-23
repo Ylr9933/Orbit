@@ -9,6 +9,7 @@ from time import monotonic
 from typing import Any
 
 from agent_infra.agents import AgentRegistry
+from agent_infra.bootstrap.benchmark_console import BenchmarkConsole
 from agent_infra.bootstrap.paths import prepare_controller_root, state_root
 from agent_infra.bootstrap.research import project_runs
 from agent_infra.gateways.cli.runs import ControllerClient
@@ -109,7 +110,9 @@ def serve_console(
         ),
     )
     token = secrets.token_urlsafe(32)
-    server = create_server(service, web_root, token, port, workflow=workflow)
+    server = create_server(
+        service, web_root, token, port, workflow=workflow, benchmark=BenchmarkConsole(state)
+    )
     sampler.start()
     print(f"Local console: http://127.0.0.1:{server.server_port}/#token={token}", flush=True)
     print("仅本机管理员访问；令牌随服务重启失效。Ctrl+C 退出。", flush=True)

@@ -9,6 +9,7 @@ import {
   useData,
 } from "./api/console";
 import { Badge, Empty, Notice, Panel } from "./components/common";
+import { BenchmarksPage } from "./features/benchmarks";
 import { ExecutionDetail } from "./features/execution";
 import { ProjectDetailPage } from "./features/project-detail";
 import { ProjectsPage } from "./features/projects";
@@ -20,6 +21,7 @@ const navigation = [
   ["projects", "科研项目", "◇"],
   ["tasks", "任务", "▤"],
   ["runs", "运行", "▷"],
+  ["benchmarks", "Benchmark", "▣"],
   ["resources", "资源", "▥"],
   ["agents", "Agents", "⌘"],
   ["records", "记录", "≡"],
@@ -293,6 +295,7 @@ export function App() {
             />
           )}
           {page === "resources" && <ResourcesPage token={token} />}
+          {page === "benchmarks" && <BenchmarksPage token={token} />}
           {page === "tasks" && <TasksPage token={token} />}
           {page === "agents" && <AgentsPage token={token} />}
           {(page === "runs" || page === "records") && (

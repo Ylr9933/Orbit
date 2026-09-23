@@ -34,9 +34,21 @@ class PersistentLeaseStore:
     them; otherwise the ledger claims slots, not cgroups or physical GPU allocations.
     """
 
-    def __init__(self, root: Path, capacity: LeaseCapacity | None = None) -> None:
-        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    def __init__(
+        self, root: Path, capacity: LeaseCapacity | None = None, *, read_only: bool = False
+    ) -> None:
+        self.read_only = read_only
+        if read_only:
+            if capacity is not None or not (root / "leases.sqlite3").is_file():
+                raise ValueError("read-only lease store requires an existing database")
+        else:
+            root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path = root / "leases.sqlite3"
+        if read_only:
+            with closing(self._connect()) as db:
+                if db.execute("PRAGMA user_version").fetchone()[0] != 1:
+                    raise ValueError("unsupported persistent lease schema")
+            return
         with closing(self._connect()) as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version not in (0, 1):
@@ -77,6 +89,8 @@ class PersistentLeaseStore:
 
     def configure(self, capacity: LeaseCapacity) -> LeaseCapacity:
         """Change authorized capacity only when every prior lease is released."""
+        if self.read_only:
+            raise ValueError("read-only lease store")
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             active = db.execute(
@@ -101,9 +115,14 @@ class PersistentLeaseStore:
         return LeaseCapacity(**json.loads(row[0]))
 
     def _connect(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.path, timeout=15)
+        db = (
+            sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=15)
+            if self.read_only
+            else sqlite3.connect(self.path, timeout=15)
+        )
         db.row_factory = sqlite3.Row
-        db.execute("PRAGMA synchronous=FULL")
+        if not self.read_only:
+            db.execute("PRAGMA synchronous=FULL")
         return db
 
     @staticmethod

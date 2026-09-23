@@ -22,6 +22,8 @@ def benchmark_action(args: argparse.Namespace) -> dict[str, object]:
         "prepare",
         "run",
         "campaign",
+        "compatibility",
+        "handoff",
         "status",
         "cancel",
         "reconcile",
