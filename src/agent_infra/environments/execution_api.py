@@ -46,8 +46,8 @@ class ExecutionSpec(BaseModel):
             or sum(map(len, command.argv)) > 65536
         ):
             raise ValueError("command requires 1–128 arguments, no NUL, at most 64 KiB")
-        if not math.isfinite(command.timeout_seconds) or not 0 < command.timeout_seconds <= 86400:
-            raise ValueError("timeout must be finite and within 0–86400 seconds")
+        if not math.isfinite(command.timeout_seconds) or not 0 < command.timeout_seconds <= 604800:
+            raise ValueError("timeout must be finite and within 0–604800 seconds")
         if command.stdin_text is not None:
             raise ValueError("managed process stdin is disabled; use explicit input files")
         if command.environment:

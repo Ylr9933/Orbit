@@ -1,6 +1,6 @@
 # Benchmark 接入层：通用执行、资源调度、轨迹与迭代优化
 
-状态：**设计 v0.4；BM00/BM01/BM02-A/BM02-B 已进入本地 `main`，BM05-A 与 BM03 在叠加任务分支实现，PostTrainBench 仍为提案**。2026-09-22 修订，覆盖 ASI-Bench、Terminal-Bench-Science、PostTrainBench、PAST-Bench。已实现部分见 [SDK 参考](../reference/benchmark-sdk.md)、[执行参考](../reference/benchmark-execution.md)与各适配器操作说明，集成状态以[项目状态](../project-status.md)和 Git 为准。TB-Science 与 ASI-Bench 已有有限 CPU 原生证据；PAST-Bench 已完成无模型协议工程验收，尚未运行真实 Agent。主要取舍见[协议与执行分离 ADR](../adr/20260922-benchmark-protocol-execution.md)。
+状态：**设计 v0.5；BM00/BM01/BM02-A/BM02-B 已进入本地 `main`，BM05-A、BM03、BM04 在叠加任务分支实现**。2026-09-23 修订，覆盖 ASI-Bench、Terminal-Bench-Science、PostTrainBench、PAST-Bench。已实现部分见 [SDK 参考](../reference/benchmark-sdk.md)、[执行参考](../reference/benchmark-execution.md)与各适配器操作说明，集成状态以[项目状态](../project-status.md)和 Git 为准。TB-Science 与 ASI-Bench 已有有限 CPU 原生证据；PAST-Bench 与 PostTrainBench 已完成无模型协议工程验收，尚未运行真实 Agent，PostTrainBench 的 H100/HTCondor/Apptainer 路径也尚未做真实集群验收。主要取舍见[协议与执行分离 ADR](../adr/20260922-benchmark-protocol-execution.md)。
 
 ## 1. 结论与通用性的边界
 

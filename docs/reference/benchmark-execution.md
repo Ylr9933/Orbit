@@ -6,7 +6,8 @@
 已验收；本文描述 BM01 通用进程后端。TB-Science 的新增原生容器入口见
 [BM02-A 操作说明](../operations/tb-science-native-trial.md)，ASI-Bench 的范围见
 [BM02-B 操作说明](../operations/asi-bench-native-trial.md)。PAST-Bench 的 BM03 独立 runtime 见
-[操作说明](../operations/past-bench-native-trial.md)；PostTrainBench 尚未接入。
+[操作说明](../operations/past-bench-native-trial.md)；PostTrainBench 的 BM04 入口见
+[操作说明](../operations/posttrain-bench-native-trial.md)。
 
 BM00 负责描述和检查协议；BM01 增加“冻结具体命令 → 持久提交 → 查询/取消 → 归档”。
 原生评分、容器资源控制、大规模公平调度、Web 页面及外层优化仍按

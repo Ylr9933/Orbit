@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "backends": [{
+    "backend": "posttrain-htcondor-v1",
+    "features": [
+      "durable_operation",
+      "bounded_logs",
+      "native_evidence",
+      "immutable_model_handoff",
+      "large_artifact_reference"
+    ]
+  }],
+  "agents": ["protocol-fixture"],
+  "combinations": [{
+    "adapter_id": "posttrain-bench",
+    "adapter_version": "0.1.0",
+    "suite_digest": "sha256:4021ca1d8a2ffd765331c1c4d44d16c0352cde507ab910a7d12d56329ed6f1d8",
+    "runner_digest": "sha256:7f809490b5edf1aa9a15ed8337170a8fa72baea3bec995e2c584e808b141e763",
+    "profile": "training-trial-native-v1",
+    "agent": "protocol-fixture",
+    "agent_version": "1.0.0",
+    "model": "none",
+    "backend": "posttrain-htcondor-v1"
+  }]
+}

@@ -160,6 +160,22 @@ def test_adapter_can_raise_bounded_capture_limits(prepared, tmp_path):
     assert "max_artifact_bytes" not in defaults.model_dump(mode="json")
 
 
+def test_external_backend_can_declare_multi_day_timeout(prepared, tmp_path):
+    execution, _, _ = prepared
+    command = replace(execution.invocation.command, timeout_seconds=3 * 86400)
+    invocation = NativeInvocation(command=command, outputs=execution.invocation.outputs)
+    expanded = execution.model_copy(update={"invocation": invocation})
+
+    assert execution_spec(expanded, "run", "attempt", tmp_path / "work").command == command
+    invalid = replace(command, timeout_seconds=8 * 86400)
+    with pytest.raises(ValueError, match="604800"):
+        ExecutionSpec.model_validate_json(
+            execution_spec(expanded, "run", "attempt", tmp_path / "other")
+            .model_copy(update={"command": invalid})
+            .model_dump_json()
+        )
+
+
 def test_cli_requires_opt_in_before_import_or_state_creation(tmp_path):
     class Registry:
         def load_identity(self, identity):

@@ -1,11 +1,11 @@
 # 项目当前状态
 
-Updated at: 2026-09-22T22:58:20+08:00
+Updated at: 2026-09-23T09:30:51+08:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
 GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及已集成的 BM00/BM01/BM02-A/BM02-B
-基线、父任务分支的 BM05-A 与本任务分支的 BM03 提议更新。
-BM05-A、BM03 尚未合并；具体合并与远端同步事实以 Git 历史为准，
+基线，以及叠加任务分支中的 BM05-A、BM03、BM04 提议更新。
+BM05-A、BM03、BM04 尚未合并；具体合并与远端同步事实以 Git 历史为准，
 不表示已配置常驻部署。本机 GPU 诊断与容器计算已验收，完整 GPU Run 尚未验收。
 
 当前定位：本机、单管理员、小型 CPU 科研工作流已可试用。
@@ -35,7 +35,8 @@ BM05-A、BM03 尚未合并；具体合并与远端同步事实以 Git 历史为�
 - **BM02-A（本地 `main`）**：独立 TB-Science/Harbor 包、固定版本、独立 verifier、CPU/内存实际核验和 Records 原始证据。Oracle 单任务的原生同产物重评、重复提交、真实取消清理通过；不代表模型 Agent、整套任务、GPU 或正式榜单兼容。
 - **BM02-B（本地 `main`）**：独立 ASI-Bench 包固定 runner；公开 seed31415 单任务原生产出与 BenchFlow 本地评分已通过完整平台 CPU 验收。seed42 bundle 只做 provenance 校验与本地生成；未认证、上传或取得官方分数。
 - **BM05-A（父任务分支，待集成）**：Benchmark 请求可持久 FIFO 排队；Resources 保存幂等租约、owner epoch、原生 job ID、对账和释放历史。崩溃窗口、等待取消、清理后续跑以及独立 wheel 双任务验收通过；当前默认单活动租约，不代表 CPU/GPU 硬隔离或后台自动调度。
-- **BM03（本任务分支，待集成）**：独立 PAST-Bench 包固定 v1.0.0 revision，把完整 family 的 persistence on/off 配对作为原子任务；冻结 episode 顺序、fresh session、history/state 策略和原生 runner，归档原生 evidence 与聚合结果。无模型 SM01 工程 profile 通过独立 wheel 验收；尚未运行真实 Agent/judge，不代表 Docker sandbox、官方复现或榜单提交。
+- **BM03（父任务分支，待集成）**：独立 PAST-Bench 包固定 v1.0.0 revision，把完整 family 的 persistence on/off 配对作为原子任务；冻结 episode 顺序、fresh session、history/state 策略和原生 runner，归档原生 evidence 与聚合结果。无模型 SM01 工程 profile 通过独立 wheel 验收；尚未运行真实 Agent/judge，不代表 Docker sandbox、官方复现或榜单提交。
+- **BM04（本任务分支，待集成）**：独立 PostTrainBench 包将一个训练 trial 保持为原子 HTCondor job，持久绑定 native job ID；真实模式声明 H100/CPU/内存/磁盘和 GPU 可见性隔离，按 job ID 查询/取消。final model 进入文件级校验的内容寻址私有存储，Records 保存 handoff manifest、指标、judge 和有界轨迹。无模型 wheel 与模拟 scheduler 生命周期通过；未进行真实 H100/Apptainer/Agent/judge 集群验收。
 - **W**：Web 兼容旧 catalog 和新工作区，支持初始化、研究方案查看、实验编译/预检/提交/取消、产物下载和分析展示。
 - **模块整理**：修复 Web-first 启动权限、统一状态目录/研究运行上下文，以及事件/产物/轨迹可见性；拆分 Records 内部实现并保留兼容 API。
   `make verify` 通过（272 项非 E2E）；18 项无模型真实 Docker 集成、两套浏览器流程和独立 wheel 安装通过。
@@ -44,23 +45,24 @@ BM05-A、BM03 尚未合并；具体合并与远端同步事实以 Git 历史为�
 ## 主要缺口
 
 - **科研训练**：长期科研环境的 GPU 入口、CUDA/系统依赖模板、外部不可变数据与大权重传输；当前 HTTP 下载上限 16 MiB。真实 GPU 训练及完整冻结 Task 验收仍缺。
-- **执行与任务**：其他 provider 的完整容器链、ToolBinding、PostTrainBench 与完整套件评分等价、科研 Controller 的持久等待队列与训练 checkpoint 接续。Benchmark 已有最小持久队列，但尚未推广到所有执行入口；PAST 真实 Agent/runtime 组合与 Docker sandbox 仍待验收。
+- **执行与任务**：其他 provider 的完整容器链、ToolBinding、科研 Controller 的持久等待队列与训练 checkpoint 接续。Benchmark 已有最小持久队列，但尚未推广到所有执行入口；PAST 真实 Agent/runtime 与 PostTrainBench H100/HTCondor/Apptainer/Agent/judge 组合仍待验收。
 - **自动研究**：仅能在冻结 Task 授权集合内迭代；自动新任务授权和科学真实性判断未实现。
 - **记录和界面**：其他 Agent 的平台外轨迹仍依赖显式导入；Codex 格式兼容需随 CLI 版本维护，尚无 Web 专门会话列表；BM01 仅有本机进程 spool，缺跨节点传输/远端备份/token-logprob。Web 未覆盖 H/E/I 全部控制或 benchmark 新命令，HTTP/TypeScript 契约仍手工维护。
 - **运维和扩展**：Web 资产需单独提供；单管理员服务未产品化为安装即用部署；无 Worker/Ray、多节点或多人在线权限。
 
 ## 下一步优先级
 
-1. 用户检查并按依赖顺序集成 BM05-A、BM03；随后按[Benchmark 顺序](development/benchmark-development-plan.md)规划 BM04，接入 PostTrainBench 前先落实 GPU 限额与大权重可靠交接。
+1. 用户检查并按依赖顺序集成 BM05-A、BM03、BM04；随后按[Benchmark 顺序](development/benchmark-development-plan.md)规划 BM05-B 的公平并发、资源实测和大文件恢复。
 2. 准备 CUDA 训练镜像，完成冻结 Task + Codex 单 GPU Run 验收；随后补长期科研环境 GPU 入口及大数据/权重入口。
 3. 确定长期状态目录，补齐安装诊断和启动/备份指南，用一个真实科研项目试用完整流程。
 
 ## 项目级阻塞与限制
 
-纯代码开发无外部阻塞。真实模型、完整 GPU 任务、两节点分别需要凭据与费用预算、训练镜像及明确资源范围、第二台节点和网络。当前 Controller 已有实例独占主机锁，本轮未重启它或执行真实 Codex GPU Run。HTTP 仅限本机管理员；托管 CI/分支保护尚需平台核实，License 尚未确定。
+纯代码开发无外部阻塞。真实模型、完整 GPU 任务、两节点分别需要凭据与费用预算、训练镜像及明确资源范围、第二台节点和网络。BM04 原生验收还需要满足 GPU 可见性隔离的 HTCondor H100 队列、共享存储、Apptainer 镜像和 judge 认证；当前机器不能代替该集群条件。当前 Controller 已有实例独占主机锁，本轮未重启它或执行真实 Codex GPU Run。HTTP 仅限本机管理员；托管 CI/分支保护尚需平台核实，License 尚未确定。
 
 ## 相关记录
 
+- [BM04 任务记录](changes/20260923-benchmark-posttrain-bm04-7b2e91.md)、[PostTrainBench 操作说明](operations/posttrain-bench-native-trial.md)
 - [BM03 任务记录](changes/20260922-benchmark-past-bm03-5e8a2d.md)、[PAST-Bench 操作说明](operations/past-bench-native-trial.md)
 - [BM05-A 任务记录](changes/20260922-benchmark-reliability-bm05a-91d7c4.md)、[队列操作说明](operations/benchmark-queue.md)
 - [BM02-B 任务记录](changes/20260922-benchmark-asi-bm02b-4d2c81.md)、[ASI-Bench 操作说明](operations/asi-bench-native-trial.md)
