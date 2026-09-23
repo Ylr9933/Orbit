@@ -77,6 +77,11 @@ def test_compatibility_matrix_requires_evidence_and_exact_enabled_identity(tmp_p
     assert execution_action(args, registry)["entries"] == 1
     args.compatibility_command = "show"
     assert execution_action(args, registry)["entries"][0]["evidence"] == ["doc:fixture"]
+    empty = tmp_path / "untouched"
+    args.state_dir = str(empty)
+    assert execution_action(args, registry) == {"schema_version": 1, "entries": []}
+    assert not empty.exists()
+    args.state_dir = str(tmp_path / "state")
     wrong = CompatibilityMatrix(
         entries=(CompatibilityEntry(**{**body, "adapter_id": "other"}, evidence=("run:x",)),)
     )

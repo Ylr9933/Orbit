@@ -1,7 +1,8 @@
 # BM07：Benchmark 使用、兼容矩阵与原生提交交接
 
-状态：BM07 在任务分支实现；以 Git 集成及[任务记录](../changes/20260923-benchmark-delivery-bm07-8c6e41.md)
-为准。适用范围是单机、单管理员，沿用同一 `--state-dir` 中 BM05/BM06 的持久状态。
+状态：BM07 已经 PR #8 集成；具体范围与证据见
+[任务记录](../changes/20260923-benchmark-delivery-bm07-8c6e41.md)。适用范围是单机、单管理员，
+沿用同一 `--state-dir` 中 BM05/BM06 的持久状态。
 
 ## 页面
 
