@@ -1,6 +1,7 @@
 """Durability, idempotency, query, stream, and artifact tests for local Records."""
 
 import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
@@ -15,6 +16,7 @@ from agent_infra.records import (
     RecordContext,
     RunManifest,
 )
+from agent_infra.records.api import BlobRef
 from agent_infra.records.local import LocalRecordsStore
 
 
@@ -96,6 +98,42 @@ def test_streams_retry_offsets_and_artifacts_use_content_addressing(tmp_path):
     assert store.list_artifacts("attempt-1") == (artifact,)
     with store.open_blob(artifact.manifest_blob) as source:
         assert b"records.artifact_manifest.v1" in source.read()
+
+
+def test_large_blob_import_resumes_partial_copy_without_publishing_it(tmp_path, monkeypatch):
+    store = configured_store(tmp_path)
+    sink = store.scoped_sink(RecordContext("run-1", "attempt-1", "run", ProducerKind.RUN))
+    source = tmp_path / "large.bin"
+    with source.open("wb") as output:
+        output.truncate(65 * 1024**2)
+        output.seek(65 * 1024**2 - 4)
+        output.write(b"end!")
+    with source.open("rb") as stream:
+        hexadecimal = hashlib.file_digest(stream, "sha256").hexdigest()
+    partial = store.blob_root / hexadecimal[:2] / hexadecimal[2:4] / (hexadecimal + ".part")
+    from agent_infra.records import local as records_local
+
+    original = records_local.resume_copy_file
+
+    def interrupted(path, target):
+        with path.open("rb") as input_file, target.open("wb") as output:
+            output.write(input_file.read(2 * 1024**2))
+        raise OSError("transfer interrupted")
+
+    monkeypatch.setattr(records_local, "resume_copy_file", interrupted)
+    with pytest.raises(OSError, match="transfer interrupted"):
+        sink.commit_artifact(source, name="large")
+    assert partial.stat().st_size == 2 * 1024**2
+    assert store.list_artifacts("attempt-1") == ()
+    monkeypatch.setattr(records_local, "resume_copy_file", original)
+    reopened = LocalRecordsStore(tmp_path / "records")
+    artifact = reopened.scoped_sink(sink.context).commit_artifact(source, name="large")
+    assert artifact.size_bytes == 65 * 1024**2 and not partial.exists()
+    with reopened.open_blob(artifact.manifest_blob) as stream:
+        entry = json.load(stream)["files"][0]
+    with reopened.open_blob(BlobRef(**entry["blob"])) as stream:
+        assert stream.seek(-4, 2) == 65 * 1024**2 - 4
+        assert stream.read() == b"end!"
 
 
 @pytest.mark.parametrize("resume_append", [True, False])

@@ -5,6 +5,7 @@ Only this live group leader signals group members, with PID identity checks.
 """
 
 import os
+import resource
 import selectors
 import signal
 import subprocess
@@ -16,6 +17,7 @@ from agent_infra.contracts.files import resolve_material
 from agent_infra.environments._process_state import (
     boot_id,
     group_members,
+    group_usage,
     locked,
     process_identity,
     signal_members,
@@ -41,6 +43,10 @@ def supervise(root: Path) -> None:
         process: subprocess.Popen[bytes] | None = None
         status, exit_code, truncated = "failed", None, False
         unclosed_pipe = False
+        peak_memory = 0
+        read_bytes: int | None = None
+        write_bytes: int | None = None
+        next_sample = 0.0
         try:
             if (root / "cancel.json").exists():
                 status = "cancelled"
@@ -76,6 +82,15 @@ def supervise(root: Path) -> None:
                 with (root / "combined.log").open("wb") as output:
                     while True:
                         now = time.monotonic()
+                        if now >= next_sample:
+                            sample = group_usage(pid)
+                            if sample is not None:
+                                peak_memory = max(peak_memory, sample[1])
+                                if sample[2] is not None:
+                                    read_bytes = max(read_bytes or 0, sample[2])
+                                if sample[3] is not None:
+                                    write_bytes = max(write_bytes or 0, sample[3])
+                            next_sample = now + 0.25
                         if stop_at is None and (
                             (root / "cancel.json").exists()
                             or now - started >= spec.command.timeout_seconds
@@ -135,6 +150,15 @@ def supervise(root: Path) -> None:
                     "cleanup_complete": not unclosed_pipe and not group_members(pid),
                     "scope": "process_group",
                     "elapsed_seconds": time.monotonic() - started,
+                    "cpu_seconds": (
+                        resource.getrusage(resource.RUSAGE_CHILDREN).ru_utime
+                        + resource.getrusage(resource.RUSAGE_CHILDREN).ru_stime
+                    ),
+                    "memory_peak_bytes": max(
+                        peak_memory, resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * 1024
+                    ),
+                    "read_bytes": read_bytes,
+                    "write_bytes": write_bytes,
                 },
             )
 

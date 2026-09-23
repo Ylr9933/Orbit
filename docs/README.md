@@ -74,7 +74,7 @@
 - [Run / Environment 契约](architecture/run-environment-contract.md)：仅求解与隔离评测设计。
 - [Benchmark 接入层设计](architecture/benchmark-integration-layer.md)：四类协议/执行适配、调度、状态轨迹与外层优化；BM00–BM04 和 BM05-A 的实现范围与验收边界见项目状态。
 - [Benchmark SDK 与命令](reference/benchmark-sdk.md)：独立适配包、显式启用、规划冻结和兼容性检查。
-- [BM01/BM05-A 受管执行](reference/benchmark-execution.md)、[执行实现说明](implementation/benchmark-execution.md)、[队列操作说明](operations/benchmark-queue.md)：可信本机进程、持久提交、FIFO 排队、租约恢复、取消和 Records。
+- [BM01/BM05-A/BM05-B 受管执行](reference/benchmark-execution.md)、[执行实现说明](implementation/benchmark-execution.md)、[BM05-B 实现](implementation/benchmark-batch-bm05b.md)、[队列操作说明](operations/benchmark-queue.md)：可信本机进程、持久提交、公平排队、授权容量、预算、资源观测与可恢复产物。
 - [BM02-A TB-Science 试运行](operations/tb-science-native-trial.md)、[Harbor 实现](implementation/benchmark-harbor.md)：独立适配包、原生容器 trial 与工程验收边界。
 - [BM02-B ASI-Bench 试运行](operations/asi-bench-native-trial.md)、[实现路径](implementation/benchmark-asi-bench.md)：公开 seed31415 原生产出/评分及 seed42 外部提交边界。
 - [BM03 PAST-Bench 试运行](operations/past-bench-native-trial.md)、[实现路径](implementation/benchmark-past-bench.md)：完整 family 配对序列、session/state 隔离、原生聚合及工程验收边界。

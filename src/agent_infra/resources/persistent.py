@@ -1,4 +1,4 @@
-"""SQLite-backed low-concurrency leases for recoverable benchmark execution."""
+"""SQLite-backed bounded leases for recoverable benchmark execution."""
 
 from __future__ import annotations
 
@@ -30,14 +30,13 @@ def _now() -> datetime:
 class PersistentLeaseStore:
     """Idempotent claims with fencing epochs and retained release history.
 
-    BM05-A intentionally defaults to one active lease. Numeric limits are enforced only when an
-    operator supplies them; otherwise the ledger claims exclusive-slot admission, not cgroups.
+    Defaults to one active lease. Numeric limits are enforced only when an operator supplies
+    them; otherwise the ledger claims slots, not cgroups or physical GPU allocations.
     """
 
     def __init__(self, root: Path, capacity: LeaseCapacity | None = None) -> None:
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path = root / "leases.sqlite3"
-        self.capacity = capacity or LeaseCapacity()
         with closing(self._connect()) as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version not in (0, 1):
@@ -61,15 +60,45 @@ class PersistentLeaseStore:
                     updated_at TEXT NOT NULL
                 )"""
             )
-            encoded = json.dumps(asdict(self.capacity), sort_keys=True)
             row = db.execute("SELECT value FROM settings WHERE key='capacity'").fetchone()
             if row is None:
+                initial_capacity = capacity or LeaseCapacity()
+                encoded = json.dumps(asdict(initial_capacity), sort_keys=True)
                 db.execute("INSERT INTO settings VALUES ('capacity', ?)", (encoded,))
-            elif row[0] != encoded:
-                raise ValueError("lease capacity differs from persisted scheduler configuration")
+            else:
+                persisted = LeaseCapacity(**json.loads(row[0]))
+                if capacity is not None and capacity != persisted:
+                    raise ValueError(
+                        "lease capacity differs from persisted scheduler configuration"
+                    )
             db.execute("PRAGMA user_version=1")
             db.commit()
         self.path.chmod(0o600)
+
+    def configure(self, capacity: LeaseCapacity) -> LeaseCapacity:
+        """Change authorized capacity only when every prior lease is released."""
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            active = db.execute(
+                "SELECT COUNT(*) FROM leases WHERE state != ?",
+                (PersistentLeaseState.RELEASED.value,),
+            ).fetchone()[0]
+            if active:
+                raise ValueError("drain and reconcile all benchmark leases before capacity change")
+            db.execute(
+                "UPDATE settings SET value=? WHERE key='capacity'",
+                (json.dumps(asdict(capacity), sort_keys=True),),
+            )
+            db.commit()
+        return capacity
+
+    @property
+    def capacity(self) -> LeaseCapacity:
+        """Read the current setting so long-lived workers see administrator updates."""
+        with closing(self._connect()) as db:
+            row = db.execute("SELECT value FROM settings WHERE key='capacity'").fetchone()
+        assert row is not None
+        return LeaseCapacity(**json.loads(row[0]))
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=15)
@@ -98,6 +127,9 @@ class PersistentLeaseStore:
         payload = self._claim_payload(claim)
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
+            capacity_row = db.execute("SELECT value FROM settings WHERE key='capacity'").fetchone()
+            assert capacity_row is not None
+            capacity = LeaseCapacity(**json.loads(capacity_row[0]))
             existing = db.execute(
                 "SELECT * FROM leases WHERE request_id=? OR owner_id=?",
                 (claim.request_id, claim.owner_id),
@@ -108,7 +140,7 @@ class PersistentLeaseStore:
                 db.commit()
                 return PersistentLeaseDecision(AllocationStatus.GRANTED, self._lease(existing))
 
-            impossible = self._capacity_shortages(claim)
+            impossible = self._capacity_shortages(claim, capacity)
             if impossible:
                 db.commit()
                 return PersistentLeaseDecision(AllocationStatus.UNSATISFIABLE, shortages=impossible)
@@ -116,7 +148,7 @@ class PersistentLeaseStore:
                 "SELECT * FROM leases WHERE state != ? ORDER BY created_at, lease_id",
                 (PersistentLeaseState.RELEASED.value,),
             ).fetchall()
-            temporary = self._temporary_shortages(claim, active)
+            temporary = self._temporary_shortages(claim, active, capacity)
             if temporary:
                 db.commit()
                 return PersistentLeaseDecision(AllocationStatus.WAITING, shortages=temporary)
@@ -219,12 +251,15 @@ class PersistentLeaseStore:
             raise ValueError("stale lease owner epoch")
         return cast(sqlite3.Row, row)
 
-    def _capacity_shortages(self, claim: ResourceClaim) -> tuple[ResourceShortage, ...]:
+    @staticmethod
+    def _capacity_shortages(
+        claim: ResourceClaim, capacity: LeaseCapacity
+    ) -> tuple[ResourceShortage, ...]:
         shortages = []
         for name, requested, available in (
-            ("cpu_cores", claim.cpu_cores, self.capacity.cpu_cores),
-            ("memory_bytes", claim.memory_bytes, self.capacity.memory_bytes),
-            ("gpus", claim.gpu_count, self.capacity.gpu_count),
+            ("cpu_cores", claim.cpu_cores, capacity.cpu_cores),
+            ("memory_bytes", claim.memory_bytes, capacity.memory_bytes),
+            ("gpus", claim.gpu_count, capacity.gpu_count),
         ):
             if requested is not None and available is not None and requested > available:
                 shortages.append(
@@ -237,10 +272,11 @@ class PersistentLeaseStore:
                 )
         return tuple(shortages)
 
+    @staticmethod
     def _temporary_shortages(
-        self, claim: ResourceClaim, active: Sequence[sqlite3.Row]
+        claim: ResourceClaim, active: Sequence[sqlite3.Row], capacity: LeaseCapacity
     ) -> tuple[ResourceShortage, ...]:
-        if len(active) >= self.capacity.max_concurrent:
+        if len(active) >= capacity.max_concurrent:
             return (
                 ResourceShortage(
                     "concurrency_slots",
@@ -252,9 +288,9 @@ class PersistentLeaseStore:
         shortages = []
         claims = [ResourceClaim(**json.loads(row["claim"])) for row in active]
         for name, requested, available in (
-            ("cpu_cores", claim.cpu_cores, self.capacity.cpu_cores),
-            ("memory_bytes", claim.memory_bytes, self.capacity.memory_bytes),
-            ("gpus", claim.gpu_count, self.capacity.gpu_count),
+            ("cpu_cores", claim.cpu_cores, capacity.cpu_cores),
+            ("memory_bytes", claim.memory_bytes, capacity.memory_bytes),
+            ("gpus", claim.gpu_count, capacity.gpu_count),
         ):
             if requested is None or available is None:
                 continue

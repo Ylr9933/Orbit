@@ -1,6 +1,6 @@
-# BM01 / BM05-A 实现逻辑
+# BM01 / BM05 执行实现逻辑
 
-状态：BM01 与 BM05-A 已实现；公共命令和边界见
+状态：BM01 与 BM05-A 已集成，BM05-B 在任务分支实现；公共命令和边界见
 [使用参考](../reference/benchmark-execution.md)。BM05-A 沿用原执行与事件格式，增加持久租约账本和
 控制库中的 FIFO 等待语义，没有另建评分状态机。
 
@@ -86,7 +86,7 @@ CPU/GPU 物理限制或实际用量证明。
 - 本机命令的 capability 不代表能管理其创建的 Docker/Slurm/Harbor 作业。首次出现这些后端时，
   先补原生 job ID、资源和清理证据，再复用 Run 编排；不能只套一层 subprocess 就宣布支持。
 - 后续接入原生轨迹解释和 Outcome 时保留原始文件、协议预算/可见性，复用当前 Records 引用。
-- BM05-B 的公平/并发调度、任务级资源采样、大文件恢复，以及剩余原生参考包、评分和优化循环仍分别实施。
+- BM05-B 的受控并发、资源采样、预算和本地大文件恢复见[实现说明](benchmark-batch-bm05b.md)；远端调度、原生评分和优化循环仍分别实施。
 
 验证入口：[BM01 任务记录](../changes/20260922-benchmark-execution-bm01-a4f8d2.md)和
 [BM05-A 任务记录](../changes/20260922-benchmark-reliability-bm05a-91d7c4.md)。

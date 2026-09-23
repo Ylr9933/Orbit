@@ -317,11 +317,12 @@ class _LocalRecordSink:
         for relative, item in candidates:
             if item.is_symlink() or not item.resolve().is_relative_to(parent):
                 raise ValueError("artifact contains an unsupported path")
-            data = item.read_bytes()
             item_media_type = media_type if kind == "file" else "application/octet-stream"
-            blob = self.put_blob(data, media_type=item_media_type)
-            total += len(data)
-            files.append({"path": relative, "size_bytes": len(data), "blob": asdict(blob)})
+            blob = self._store._put_blob_file(item, item_media_type)
+            total += blob.size_bytes
+            files.append({"path": relative, "size_bytes": blob.size_bytes, "blob": asdict(blob)})
+        if content_digest(path) != digest:
+            raise ValueError("artifact source changed during durable transfer")
         manifest_data = _dumps(
             {
                 "schema_version": "records.artifact_manifest.v1",

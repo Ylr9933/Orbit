@@ -19,6 +19,8 @@ from agent_infra.environments.execution_api import (
 from agent_infra.environments.managed_process import ManagedProcessBackend
 from agent_infra.records.api import EventQuery
 from agent_infra.records.local import LocalRecordsStore
+from agent_infra.resources.api import LeaseCapacity
+from agent_infra.resources.persistent import PersistentLeaseStore
 from agent_infra.runs.benchmark_execution import BenchmarkExecutionService
 from agent_infra.runs.control_store import RunControlStore
 
@@ -273,3 +275,55 @@ def test_operation_conflict_and_runtime_capabilities_fail_closed(context):
         service(context).submit("one", changed)
     with pytest.raises(ValueError, match="capabilities"):
         validate_backend(execution, backend.backend_id, ())
+
+
+def test_configured_two_slot_fifo_and_shared_budget_survive_restart(context):
+    execution, store, records, backend, workspace = context
+    capacity = PersistentLeaseStore(store.path.parent / "leases")
+    capacity.configure(LeaseCapacity(max_concurrent=2))
+    backend.clean = False
+    first = service(context).submit("one", execution, budget_group="trial", budget_wall_seconds=60)
+    second = service(context).submit("two", execution, budget_group="trial", budget_wall_seconds=60)
+    third = service(context).submit(
+        "three", execution, budget_group="trial", budget_wall_seconds=60
+    )
+    assert first["state"] == second["state"] == "quarantined"
+    assert backend.calls == 2
+    assert third["state"] == "finished"
+    assert third["result"]["native_result"]["reason"] == "budget group wall-time limit exhausted"
+    assert len([item for item in capacity.list() if item.state.value != "released"]) == 2
+    backend.clean = True
+    restarted = BenchmarkExecutionService(store, records, backend, workspace)
+    assert restarted.status(first["run_id"])["state"] == "finished"
+    assert restarted.status(second["run_id"])["state"] == "finished"
+    assert backend.calls == 2
+
+
+def test_conflicting_budget_group_limit_rejected_before_persisting(context):
+    execution, store, _, _, _ = context
+    service(context).submit("one", execution, budget_group="trial", budget_wall_seconds=60)
+    with pytest.raises(ValueError, match="conflicting limits"):
+        service(context).submit("two", execution, budget_group="trial", budget_wall_seconds=30)
+    assert len(store.ordered()) == 1
+
+
+def test_three_jobs_admit_in_fifo_order_at_two_authorized_slots(context):
+    execution, store, records, backend, workspace = context
+    leases = PersistentLeaseStore(store.path.parent / "leases")
+    leases.configure(LeaseCapacity(max_concurrent=2))
+    backend.clean = False
+    first = service(context).submit("one", execution)
+    second = service(context).submit("two", execution)
+    third = service(context).submit("three", execution)
+    assert [first["state"], second["state"], third["state"]] == [
+        "quarantined",
+        "quarantined",
+        "queued",
+    ]
+    assert third["queue_position"] == 1 and backend.calls == 2
+    backend.clean = True
+    restarted = BenchmarkExecutionService(store, records, backend, workspace)
+    assert restarted.status(first["run_id"])["state"] == "finished"
+    done = restarted.status(third["run_id"])
+    assert done["state"] == "finished" and backend.calls == 3
+    assert restarted.status(second["run_id"])["state"] == "finished"

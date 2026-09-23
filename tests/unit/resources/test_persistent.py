@@ -1,3 +1,5 @@
+import pytest
+
 from agent_infra.resources.api import (
     AllocationStatus,
     LeaseCapacity,
@@ -77,3 +79,27 @@ def test_reconciling_or_unconfirmed_cleanup_never_releases_capacity(tmp_path):
     else:
         raise AssertionError("unconfirmed cleanup released a lease")
     assert store.acquire(claim("two")).status is AllocationStatus.WAITING
+
+
+def test_configured_concurrency_survives_restart_and_never_exceeds_numeric_capacity(tmp_path):
+    store = PersistentLeaseStore(tmp_path)
+    capacity = LeaseCapacity(max_concurrent=3, cpu_cores=2, memory_bytes=4096, gpu_count=0)
+    store.configure(capacity)
+    restarted = PersistentLeaseStore(tmp_path)
+    assert restarted.capacity == capacity
+    assert store.capacity == capacity
+    first = restarted.acquire(claim("one", cpu=1)).lease
+    second = restarted.acquire(claim("two", cpu=1)).lease
+    assert first is not None and second is not None
+    waiting = restarted.acquire(claim("three", cpu=1))
+    assert waiting.status is AllocationStatus.WAITING
+    assert waiting.shortages[0].resource == "cpu_cores"
+    with pytest.raises(ValueError, match="drain"):
+        restarted.configure(LeaseCapacity(max_concurrent=4))
+    restarted.release(first.lease_id, first.owner_epoch, cleanup_confirmed=True)
+    restarted.release(second.lease_id, second.owner_epoch, cleanup_confirmed=True)
+    assert restarted.configure(LeaseCapacity(max_concurrent=2)) == LeaseCapacity(max_concurrent=2)
+    assert store.capacity == LeaseCapacity(max_concurrent=2)
+    assert store.acquire(claim("later-one")).status is AllocationStatus.GRANTED
+    assert store.acquire(claim("later-two")).status is AllocationStatus.GRANTED
+    assert store.acquire(claim("later-three")).status is AllocationStatus.WAITING

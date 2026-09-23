@@ -3,21 +3,21 @@
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
-from agent_infra.contracts.files import content_digest, resolve_material
-from agent_infra.environments._process_state import boot_id, locked, process_identity
+from agent_infra.contracts.files import content_digest, resolve_material, resume_copy_file
+from agent_infra.environments._process_state import boot_id, group_usage, locked, process_identity
 from agent_infra.environments.api import CleanupResult, Submission
 from agent_infra.environments.execution_api import (
     ExecutionHandle,
     ExecutionObservation,
     ExecutionSpec,
     Reconciliation,
+    ResourceUsage,
 )
 from agent_infra.environments.recovery import write_ownership
 
@@ -136,6 +136,23 @@ class ManagedProcessBackend:
             with path.open("rb") as stream:
                 stream.seek(cursor)
                 data = stream.read(65536)
+        usage = None
+        owner_path = root / "owner.json"
+        if owner_path.is_file():
+            owner = json.loads(owner_path.read_text())
+            if owner["boot"] == boot_id():
+                elapsed = float(result.get("elapsed_seconds", time.monotonic() - owner["started"]))
+                sample = group_usage(int(owner["pid"])) if not result else None
+                usage = ResourceUsage(
+                    elapsed_seconds=elapsed,
+                    cpu_seconds=result.get("cpu_seconds", sample[0] if sample else None),
+                    memory_peak_bytes=result.get(
+                        "memory_peak_bytes", sample[1] if sample else None
+                    ),
+                    read_bytes=result.get("read_bytes", sample[2] if sample else None),
+                    write_bytes=result.get("write_bytes", sample[3] if sample else None),
+                    source="process-rusage" if result else "linux-process-group-sample",
+                )
         return ExecutionObservation(
             result.get("status", "running" if reconciliation.state == "known" else "unknown"),
             result.get("exit_code"),
@@ -144,6 +161,7 @@ class ManagedProcessBackend:
             bool(result) and cursor + len(data) == size,
             bool(result.get("logs_truncated", False)),
             self.cleanup(handle),
+            usage,
         )
 
     def cancel(self, handle: ExecutionHandle) -> CleanupResult:
@@ -170,12 +188,15 @@ class ManagedProcessBackend:
             raise RuntimeError("cannot freeze outputs until process-group cleanup is confirmed")
         spec = ExecutionSpec.model_validate_json((root / "spec.json").read_bytes())
         destination = root / "collected"
-        if not destination.exists():
-            with tempfile.TemporaryDirectory(dir=root, prefix=".collect-") as temporary:
-                staging = Path(temporary) / "bundle"
-                staging.mkdir()
+        with locked(root / "collect.lock"):
+            if not destination.exists():
+                staging = root / "collecting"
+                if staging.is_symlink():
+                    raise ValueError("unsafe collection staging directory")
+                staging.mkdir(exist_ok=True, mode=0o700)
                 used = 0
                 missing = []
+                expected: set[Path] = set()
                 for name in spec.outputs:
                     source = resolve_material(Path(spec.workspace), name)
                     if not source.exists():
@@ -193,19 +214,30 @@ class ManagedProcessBackend:
                     if used > spec.max_artifact_bytes:
                         raise ValueError("declared outputs exceed collection budget")
                     target = staging / "outputs" / name
-                    target.parent.mkdir(parents=True, exist_ok=True)
                     if source.is_dir():
-                        shutil.copytree(source, target)
+                        target.mkdir(parents=True, exist_ok=True, mode=0o700)
+                        for item in sorted(source.rglob("*")):
+                            relative = item.relative_to(source)
+                            child = target / relative
+                            if item.is_dir():
+                                child.mkdir(parents=True, exist_ok=True, mode=0o700)
+                            else:
+                                expected.add(child)
+                                resume_copy_file(item, child)
                     else:
-                        shutil.copyfile(source, target)
-                result = json.loads((root / "result.json").read_text())
-                (staging / "execution-receipt.json").write_text(
-                    json.dumps(result | {"missing_outputs": missing})
+                        expected.add(target)
+                        resume_copy_file(source, target)
+                present = (
+                    {item for item in (staging / "outputs").rglob("*") if item.is_file()}
+                    if (staging / "outputs").exists()
+                    else set()
                 )
-                for item in staging.rglob("*"):
-                    if item.is_file():
-                        with item.open("rb") as stream:
-                            os.fsync(stream.fileno())
+                if present != expected:
+                    raise ValueError("collection staging contains unexpected or missing files")
+                result = json.loads((root / "result.json").read_text())
+                write_ownership(
+                    staging / "execution-receipt.json", result | {"missing_outputs": missing}
+                )
                 staging.replace(destination)
                 descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
                 try:

@@ -119,6 +119,12 @@ def main() -> None:
             assert run["state"] == "finished", run
             assert run["result"]["execution"] == "completed" and not run["slot_held"]
             assert run["result"]["evaluation"] == "not_interpreted"
+            accounting = run["result"]["resource_accounting"]
+            assert accounting["lease_id"] and accounting["authorized"]
+            assert accounting["actual_allocation"] is None
+            assert accounting["usage"]["elapsed_seconds"] > 0
+            assert accounting["usage"]["cpu_seconds"] is not None
+            assert run["result"]["budget"]["measured_elapsed_seconds"] > 0
             assert run["handle"]["native_id"]
             assert len(cli("artifacts", run_id, *state)["items"]) == 1
             events = cli("events", run_id, *state)["items"]

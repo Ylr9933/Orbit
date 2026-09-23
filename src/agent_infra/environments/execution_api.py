@@ -1,5 +1,7 @@
 """Durable execution contracts. No benchmark, scheduler or database implementation imports."""
 
+from __future__ import annotations
+
 import hashlib
 import math
 from dataclasses import dataclass
@@ -28,7 +30,7 @@ class ExecutionSpec(BaseModel):
         default=0.25, ge=0.25, le=120, exclude_if=lambda value: value == 0.25
     )
     max_log_bytes: Annotated[int, Field(gt=0, le=64 * 1024**2)] = 8 * 1024**2
-    max_artifact_bytes: Annotated[int, Field(gt=0, le=64 * 1024**2)] = 16 * 1024**2
+    max_artifact_bytes: Annotated[int, Field(gt=0, le=1024**4)] = 16 * 1024**2
 
     @model_validator(mode="after")
     def valid(self) -> Self:
@@ -88,6 +90,31 @@ class ExecutionObservation:
     eof: bool
     logs_truncated: bool
     cleanup: CleanupResult
+    usage: ResourceUsage | None = None
+    allocation: ResourceAllocation | None = None
+
+
+@dataclass(frozen=True)
+class ResourceUsage:
+    """Measured task usage; absent fields were not observed by this backend."""
+
+    elapsed_seconds: float
+    cpu_seconds: float | None = None
+    memory_peak_bytes: int | None = None
+    read_bytes: int | None = None
+    write_bytes: int | None = None
+    gpu_memory_peak_bytes: int | None = None
+    source: str = "unknown"
+
+
+@dataclass(frozen=True)
+class ResourceAllocation:
+    """Physical limits observed by a backend, distinct from the scheduler lease."""
+
+    cpu_cores: float | None
+    memory_bytes: int | None
+    gpu_count: int | None
+    source: str
 
 
 class ExecutionBackend(Protocol):

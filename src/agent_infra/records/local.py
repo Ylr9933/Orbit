@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -15,6 +16,7 @@ from pathlib import Path
 from threading import RLock
 from typing import BinaryIO, cast
 
+from agent_infra.contracts.files import resume_copy_file
 from agent_infra.records._local_sink import _LocalRecordSink
 from agent_infra.records._serialization import _dumps, _mapping, _now, _strings
 from agent_infra.records.api import (
@@ -448,6 +450,70 @@ class LocalRecordsStore:
                 connection.commit()
                 stored_media_type = str(row["media_type"]) if row is not None else media_type
         return BlobRef(digest, len(data), stored_media_type)
+
+    def _put_blob_file(self, source: Path, media_type: str) -> BlobRef:
+        """Import a large file with durable partial bytes and bounded memory."""
+        if source.is_symlink() or not source.is_file() or not media_type.strip():
+            raise ValueError("blob source must be a regular file with a media type")
+        with source.open("rb") as stream:
+            hexadecimal = hashlib.file_digest(stream, "sha256").hexdigest()
+        size = source.stat().st_size
+        path = self.blob_root / hexadecimal[:2] / hexadecimal[2:4] / hexadecimal
+        digest = "sha256:" + hexadecimal
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        lock = path.with_suffix(".lock")
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            with self._lock:
+                if path.is_symlink():
+                    raise RuntimeError("stored blob path is a symlink")
+                if not path.exists():
+                    partial = path.with_suffix(".part")
+                    if partial.exists():
+                        if partial.is_symlink() or not partial.is_file():
+                            raise RuntimeError("stored partial blob is not a regular file")
+                        partial.chmod(0o600)
+                    resume_copy_file(source, partial)
+                    with partial.open("rb") as stream:
+                        if hashlib.file_digest(stream, "sha256").hexdigest() != hexadecimal:
+                            raise ValueError("blob source changed during transfer")
+                    partial.chmod(0o400)
+                    partial.replace(path)
+                    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        os.fsync(directory)
+                    finally:
+                        os.close(directory)
+                else:
+                    with path.open("rb") as stream:
+                        if hashlib.file_digest(stream, "sha256").hexdigest() != hexadecimal:
+                            raise RuntimeError("stored content-addressed blob changed")
+                if path.stat().st_size != size:
+                    raise RuntimeError("stored blob size differs from source")
+                with closing(self._connect()) as connection:
+                    row = connection.execute(
+                        "SELECT size_bytes,media_type FROM blobs WHERE digest=?", (digest,)
+                    ).fetchone()
+                    if row is not None and int(row["size_bytes"]) != size:
+                        raise RuntimeError("stored blob metadata mismatch")
+                    connection.execute(
+                        """INSERT OR IGNORE INTO blobs(
+                               digest,size_bytes,media_type,relative_path,created_at
+                           ) VALUES (?,?,?,?,?)""",
+                        (
+                            digest,
+                            size,
+                            media_type,
+                            path.relative_to(self.root).as_posix(),
+                            _now().isoformat(),
+                        ),
+                    )
+                    connection.commit()
+                    stored_media = str(row["media_type"]) if row is not None else media_type
+        finally:
+            os.close(fd)
+        return BlobRef(digest, size, stored_media)
 
     def _decode_run_manifest(self, encoded: str) -> RunManifest:
         data = _mapping(encoded)
