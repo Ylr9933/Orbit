@@ -21,10 +21,13 @@ def benchmark_action(args: argparse.Namespace) -> dict[str, object]:
     if action in {
         "prepare",
         "run",
+        "campaign",
         "status",
         "cancel",
         "reconcile",
         "queue",
+        "capacity",
+        "worker",
         "events",
         "artifacts",
     }:

@@ -8,6 +8,7 @@ def add_benchmark_arguments(commands: Any) -> None:
     command = commands.add_parser("benchmark", help="Plan and execute enabled benchmark adapters")
     actions = command.add_subparsers(dest="benchmark_command", required=True)
     for name in (
+        "campaign",
         "prepare",
         "run",
         "status",
@@ -20,6 +21,28 @@ def add_benchmark_arguments(commands: Any) -> None:
         "artifacts",
     ):
         entry = actions.add_parser(name)
+        if name == "campaign":
+            campaign = entry.add_subparsers(dest="campaign_command", required=True)
+            for operation in ("create", "propose", "submit", "status", "stop"):
+                item = campaign.add_parser(operation)
+                item.add_argument("campaign_id")
+                item.add_argument("--state-dir")
+                if operation in {"create", "propose", "submit"}:
+                    item.add_argument("--config", type=Path, required=True)
+                else:
+                    item.add_argument("--config", type=Path)
+                if operation == "create":
+                    item.add_argument("--policy", type=Path, required=True)
+                    item.add_argument("--execution", type=Path, required=True)
+                elif operation == "propose":
+                    item.add_argument("--parent", required=True)
+                    item.add_argument("--execution", type=Path, required=True)
+                elif operation == "submit":
+                    item.add_argument("candidate_id")
+                    item.add_argument("--capabilities", type=Path, required=True)
+                    item.add_argument("--allow-host-process", action="store_true")
+                    item.add_argument("--allow-native-runtime", action="store_true")
+            continue
         if name in {"prepare", "run"}:
             entry.add_argument("--config", type=Path, required=True)
         else:

@@ -1,8 +1,8 @@
 # Benchmark 分阶段实现计划
 
 状态：BM00、BM01、BM02-A、BM02-B、BM05-A、BM03 与 BM04 已实现并完成各自范围内的
-工程验收；BM05-B 在独立任务分支实现并验证。真实模型和集群验收范围见对应操作说明。
-BM06 及以后未开启。2026-09-23。
+工程验收；BM05-B 已在本地前置分支实现，BM06 在其上建立独立任务分支并进行工程验收。
+真实模型和集群验收范围见对应操作说明。BM07 未开启。2026-09-23。
 
 目标：新 bench 使用独立适配包接入；已有执行能力足够时，不修改核心注册表、Run 状态机或通用 CLI。
 第一次遇到新的执行形态时，补通用 backend，并单独验收。兼容不等于官方认证，也不保证所有 bench
@@ -49,3 +49,6 @@ BM04 将一个 PostTrainBench 训练 trial 作为原子 HTCondor job，持久记
 BM05-B 的单状态目录授权并发、预算组、进程组资源取样与可续传 Records blob 见
 [实现说明](../implementation/benchmark-batch-bm05b.md)。它不声明普通进程具有 cgroup 隔离，
 也不把没有原生监测证据的 GPU 用量写成数值。
+BM06 的不可变候选、反馈投影、预算/停止/选优入口见[使用参考](../reference/benchmark-campaign.md)
+和[实现导读](../implementation/benchmark-campaign.md)。合成两候选用例检验外层语义；四个参考
+适配器尚未声明可供 optimizer 使用的公开试验指标，不把管理员/原生内部反馈自动开放。
