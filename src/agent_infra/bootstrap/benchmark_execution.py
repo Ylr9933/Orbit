@@ -3,16 +3,13 @@
 import argparse
 import json
 import math
-import os
 import time
-import uuid
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 
-from agent_infra.benchmarks.api import AdapterIdentity, CapabilityProfile
+from agent_infra.benchmarks.api import CapabilityProfile
 from agent_infra.benchmarks.campaign_api import CampaignPolicy
-from agent_infra.benchmarks.compatibility import read_matrix
 from agent_infra.benchmarks.execution import (
     PreparedExecution,
     execution_spec,
@@ -24,7 +21,7 @@ from agent_infra.benchmarks.execution import (
 from agent_infra.benchmarks.execution_api import NativeRuntimeAdapter
 from agent_infra.benchmarks.planning import check_plan, read_plan
 from agent_infra.benchmarks.registry import AdapterRegistry
-from agent_infra.benchmarks.submission_api import NativeSubmissionAdapter
+from agent_infra.bootstrap.benchmark_delivery import benchmark_delivery_action
 from agent_infra.bootstrap.paths import state_root
 from agent_infra.environments.execution_api import ExecutionBackend
 from agent_infra.environments.managed_process import ManagedProcessBackend
@@ -35,7 +32,6 @@ from agent_infra.resources.api import LeaseCapacity
 from agent_infra.resources.persistent import PersistentLeaseStore
 from agent_infra.runs.benchmark_budget import budget_view
 from agent_infra.runs.benchmark_execution import BenchmarkExecutionService
-from agent_infra.runs.benchmark_submission import BenchmarkSubmissionService
 from agent_infra.runs.control_store import RunControlStore
 
 
@@ -83,118 +79,11 @@ def execution_action(args: argparse.Namespace, registry: AdapterRegistry) -> dic
         prepared = read_execution(args.execution)
         _validate_submission(prepared, args, registry)
     root = state_root(args.state_dir) / "benchmarks"
+    if action in {"handoff", "compatibility"}:
+        return benchmark_delivery_action(args, registry, root)
     store = RunControlStore(root)
     records = LocalRecordsStore(root / "records")
     leases = PersistentLeaseStore(root / "leases")
-
-    if action == "handoff":
-        handoff = BenchmarkSubmissionService(root / "submissions", records)
-        if args.handoff_command == "status":
-            return handoff.status(args.run_id)
-        if args.config is None:
-            raise ValueError("native handoff requires --config")
-        if args.handoff_command == "prepare":
-            run = store.get(args.run_id)
-            frozen = run["request"]["execution"]["frozen_plan"]
-            identity = AdapterIdentity.model_validate_json(json.dumps(frozen["adapter"]))
-            loaded = registry.load_identity(identity)
-            adapter = cast(NativeSubmissionAdapter, loaded.implementation)
-            if not callable(getattr(adapter, "prepare_submission", None)):
-                raise ValueError("adapter has no native submission handoff extension")
-            return handoff.prepare(run, identity, adapter.prepare_submission)
-        if not args.confirm_native_submit:
-            raise ValueError("native submission requires --confirm-native-submit")
-        current = handoff.status(args.run_id)
-        identity = AdapterIdentity.model_validate_json(json.dumps(current["handoff"]["adapter"]))
-        adapter = cast(NativeSubmissionAdapter, registry.load_identity(identity).implementation)
-        if not callable(getattr(adapter, "send_submission", None)):
-            raise ValueError("adapter has no native submission sender")
-        return handoff.send(args.run_id, adapter.send_submission)
-
-    if action == "compatibility":
-        path = root / "compatibility.json"
-        if args.compatibility_command == "show":
-            return (
-                read_matrix(path).model_dump(mode="json")
-                if path.is_file()
-                else {"schema_version": 1, "entries": []}
-            )
-        if args.config is None:
-            raise ValueError("publishing compatibility claims requires --config")
-        if args.file.stat().st_size > 1024 * 1024:
-            raise ValueError("compatibility matrix exceeds 1 MiB")
-        matrix = read_matrix(args.file)
-        checked_runs = 0
-        for item in matrix.entries:
-            loaded = registry.load(item.alias)
-            identity = loaded.identity
-            if (
-                identity.adapter_id != item.adapter_id
-                or identity.distribution != item.distribution
-                or identity.version != item.adapter_version
-            ):
-                raise ValueError(f"matrix entry {item.alias} differs from enabled adapter identity")
-            if item.official_submission == "native" and not all(
-                callable(getattr(loaded.implementation, name, None))
-                for name in ("prepare_submission", "send_submission")
-            ):
-                raise ValueError(f"matrix entry {item.alias} has no native submission extension")
-            for reference in item.evidence:
-                if not reference.startswith("run:"):
-                    # External references are operator claims, not locally verified.
-                    continue
-                run = store.get(reference.removeprefix("run:"))
-                frozen = run["request"]["execution"]["frozen_plan"]
-                plan = frozen["plan"]
-                candidate = plan["request"]["candidate"]
-                if (
-                    frozen["adapter"]["adapter_id"] != item.adapter_id
-                    or frozen["adapter"]["distribution"] != item.distribution
-                    or frozen["adapter"]["version"] != item.adapter_version
-                    or plan["suite"]["source"]["digest"] != item.suite_digest
-                    or plan["suite"]["runner"]["digest"] != item.runner_digest
-                    or plan["suite"]["profile"] != item.profile
-                    or plan["phases"][0]["backend"] != item.backend
-                    or candidate["agent"] != item.agent
-                    or candidate["agent_version"] != item.agent_version
-                    or candidate["model"] != item.model
-                ):
-                    raise ValueError(f"matrix run evidence differs from {item.alias} tuple")
-                result = run.get("result") or {}
-                if item.level in {"runnable", "scored", "protocol_validated"} and (
-                    run["state"] != "finished" or result.get("execution") != "completed"
-                ):
-                    raise ValueError("runnable claim requires a completed local run")
-                if (
-                    item.level in {"scored", "protocol_validated"}
-                    and result.get("evaluation") != "scored"
-                ):
-                    raise ValueError("scored claim requires a scored local run")
-                if item.level == "protocol_validated" and result.get("protocol") != "valid":
-                    raise ValueError("validated claim requires a protocol-valid local run")
-                checked_runs += 1
-        temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-                output.write(matrix.model_dump_json(indent=2) + "\n")
-                output.flush()
-                os.fsync(output.fileno())
-            if path.is_symlink():
-                raise ValueError("compatibility destination must not be a symlink")
-            temporary.replace(path)
-            directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-        finally:
-            temporary.unlink(missing_ok=True)
-        return {
-            "published": str(path),
-            "entries": len(matrix.entries),
-            "local_runs_checked": checked_runs,
-        }
 
     if action == "capacity":
         declared = json.loads(args.file.read_text(encoding="utf-8"))

@@ -116,7 +116,7 @@ class PersistentLeaseStore:
 
     def _connect(self) -> sqlite3.Connection:
         db = (
-            sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=15)
+            sqlite3.connect(self.path.absolute().as_uri() + "?mode=ro", uri=True, timeout=15)
             if self.read_only
             else sqlite3.connect(self.path, timeout=15)
         )

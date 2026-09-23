@@ -36,9 +36,13 @@ interface Campaign {
 interface Compatibility {
   adapter_id: string;
   adapter_version: string;
+  suite_digest: string;
+  runner_digest: string;
   profile: string;
   backend: string;
   agent: string;
+  agent_version: string;
+  model: string;
   level: string;
   official_submission: string;
   evidence: string[];
@@ -188,7 +192,7 @@ export function BenchmarksPage({ token }: { token: string }) {
                   <tbody>
                     {data.compatibility.map((entry) => (
                       <tr
-                        key={`${entry.adapter_id}:${entry.profile}:${entry.agent}:${entry.backend}`}
+                        key={`${entry.adapter_id}:${entry.adapter_version}:${entry.suite_digest}:${entry.runner_digest}:${entry.profile}:${entry.agent}:${entry.agent_version}:${entry.model}:${entry.backend}`}
                       >
                         <td>
                           {entry.adapter_id} {entry.adapter_version}
@@ -196,7 +200,9 @@ export function BenchmarksPage({ token }: { token: string }) {
                         </td>
                         <td>
                           {entry.agent}
-                          <small>{entry.backend}</small>
+                          <small>
+                            {entry.model} · {entry.backend}
+                          </small>
                         </td>
                         <td>{entry.level}</td>
                         <td>{entry.official_submission}</td>

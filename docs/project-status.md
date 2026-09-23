@@ -1,10 +1,10 @@
 # 项目当前状态
 
-Updated at: 2026-09-23T11:12:10+08:00
+Updated at: 2026-09-23T11:25:26+08:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
-GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及 BM00/BM01/BM02-A/BM02-B、
-BM05-A、BM03、BM04；本分支所含 BM05-B/BM06/BM07 能力合并后才成为 `main` 事实。集成与远端同步
+GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及 BM00–BM07 的各工程阶段。
+BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并；本分支仅做集成后的代码维护。集成与远端同步
 事实以 Git 历史为准，不表示已配置常驻部署。
 本机 GPU 诊断与容器计算已验收，完整 GPU Run 尚未验收。
 
@@ -35,9 +35,9 @@ BM05-A、BM03、BM04；本分支所含 BM05-B/BM06/BM07 能力合并后才成为
 - **BM02-A（本地 `main`）**：独立 TB-Science/Harbor 包、固定版本、独立 verifier、CPU/内存实际核验和 Records 原始证据。Oracle 单任务的原生同产物重评、重复提交、真实取消清理通过；不代表模型 Agent、整套任务、GPU 或正式榜单兼容。
 - **BM02-B（本地 `main`）**：独立 ASI-Bench 包固定 runner；公开 seed31415 单任务原生产出与 BenchFlow 本地评分已通过完整平台 CPU 验收。seed42 bundle 只做 provenance 校验与本地生成；未认证、上传或取得官方分数。
 - **BM05-A**：Benchmark 请求可持久 FIFO 排队；Resources 保存幂等租约、owner epoch、原生 job ID、对账和释放历史。崩溃窗口、等待取消、清理后续跑以及独立 wheel 双任务验收通过；当前默认单活动租约，不代表 CPU/GPU 硬隔离或后台自动调度。
-- **BM05-B（本分支，待集成）**：同一状态目录可配置并持久保存并发容量、运行轮询 worker 与墙钟预算组；受管进程采样 CPU/内存/I/O，结果区分申请、准入、实际分配证明及测量；本地产物支持中断续传与完整校验。默认仍为单槽，租约不实施硬限额。
-- **BM06（本分支，待集成）**：不可变候选、授权修改范围、公开指标投影、父子血缘、确定性提交、累计试验/墙钟预算和停止/选优。两候选合成结果通过工程测试；四个原生参考适配器尚未开放 optimizer 反馈，不等于已能自动优化官方成绩。
-- **BM07（本分支，待集成）**：Benchmark 只读页面、精确元组及本地运行证据核对的兼容矩阵、可选原生提交交接和一次性发送保护；独立新包在隔离 venv 中复用现有 backend 完成 CPU 演练。未进行官方提交或真实模型/GPU 验收。
+- **BM05-B**：同一状态目录可配置并持久保存并发容量、运行轮询 worker 与墙钟预算组；受管进程采样 CPU/内存/I/O，结果区分申请、准入、实际分配证明及测量；本地产物支持中断续传与完整校验。默认仍为单槽，租约不实施硬限额。
+- **BM06**：不可变候选、授权修改范围、公开指标投影、父子血缘、确定性提交、累计试验/墙钟预算和停止/选优。两候选合成结果通过工程测试；四个原生参考适配器尚未开放 optimizer 反馈，不等于已能自动优化官方成绩。
+- **BM07**：Benchmark 只读页面、精确元组及本地运行证据核对的兼容矩阵、可选原生提交交接和一次性发送保护；独立新包在隔离 venv 中复用现有 backend 完成 CPU 演练。未进行官方提交或真实模型/GPU 验收。
 - **BM03**：独立 PAST-Bench 包固定 v1.0.0 revision，把完整 family 的 persistence on/off 配对作为原子任务；冻结 episode 顺序、fresh session、history/state 策略和原生 runner，归档原生 evidence 与聚合结果。无模型 SM01 工程 profile 通过独立 wheel 验收；尚未运行真实 Agent/judge，不代表 Docker sandbox、官方复现或榜单提交。
 - **BM04**：独立 PostTrainBench 包将一个训练 trial 保持为原子 HTCondor job，持久绑定 native job ID；真实模式声明 H100/CPU/内存/磁盘和 GPU 可见性隔离，按 job ID 查询/取消。提交响应不确定时暂停自动重试，等待原生身份对账。final model 进入文件级校验的内容寻址私有存储，Records 保存 handoff manifest、指标、judge 和有界轨迹。无模型 wheel 与模拟 scheduler 生命周期通过；未进行真实 H100/Apptainer/Agent/judge 集群验收。
 - **W**：Web 兼容旧 catalog 和新工作区，支持初始化、研究方案查看、实验编译/预检/提交/取消、产物下载和分析展示。
@@ -55,7 +55,7 @@ BM05-A、BM03、BM04；本分支所含 BM05-B/BM06/BM07 能力合并后才成为
 
 ## 下一步优先级
 
-1. 评审并集成 BM05-B/BM06/BM07，给一个原生参考适配器增加合规开发反馈后试用两候选，并取得评分等价证据。
+1. 给一个原生参考适配器增加合规开发反馈，在允许范围内试用两候选，并取得原生评分等价证据。
 2. 准备 CUDA 训练镜像，完成冻结 Task + Codex 单 GPU Run 验收；随后补长期科研环境 GPU 入口及大数据/权重入口。
 3. 确定长期状态目录，补齐安装诊断和启动/备份指南，用一个真实科研项目试用完整流程。
 
@@ -71,6 +71,7 @@ BM05-A、BM03、BM04；本分支所含 BM05-B/BM06/BM07 能力合并后才成为
 - [BM05-A 任务记录](changes/20260922-benchmark-reliability-bm05a-91d7c4.md)、[BM05-B 任务记录](changes/20260923-benchmark-batch-bm05b-6c2f91.md)、[队列操作说明](operations/benchmark-queue.md)
 - [BM06 任务记录](changes/20260923-benchmark-campaign-bm06-7a31d9.md)、[Campaign 参考](reference/benchmark-campaign.md)
 - [BM07 任务记录](changes/20260923-benchmark-delivery-bm07-8c6e41.md)、[使用与扩展验收](reference/benchmark-delivery.md)
+- [BM07 集成维护](changes/20260923-benchmark-integration-maintenance-35a9d2.md)
 - [BM02-B 任务记录](changes/20260922-benchmark-asi-bm02b-4d2c81.md)、[ASI-Bench 操作说明](operations/asi-bench-native-trial.md)
 - [BM02-A 任务记录](changes/20260922-benchmark-tb-science-bm02a-6b91e3.md)、[TB-Science 操作说明](operations/tb-science-native-trial.md)
 - [BM00 SDK](changes/20260922-benchmark-sdk-bm00-c7e2a1.md)、[BM01 受管执行记录](changes/20260922-benchmark-execution-bm01-a4f8d2.md)、[执行使用参考](reference/benchmark-execution.md)
