@@ -1,6 +1,9 @@
 # 资源管理、Docker 限额与 Ray 多节点设计
 
-状态：本地资源请求、宿主机观测和单节点租约已实现；Docker enforcement、Ray backend 和多节点部署命令仍是后续实现。
+状态：本地资源请求、宿主机观测、单节点租约及 Docker CPU/内存/GPU 约束链已实现；
+完整 GPU 科研 Run 尚未验收，Ray backend 和多节点部署命令仍未实现。当前能力范围见
+[项目状态](../project-status.md)，当前框架及 Ray 接入边界见
+[当前实现框架与 Ray 多节点定位](current-framework-and-ray-role.md)。
 
 ## 1. 要解决的问题
 
@@ -143,4 +146,6 @@ Ray 能执行任意 Python 代码，Dashboard、Jobs 和 Ray Client 等端口不
 | R2：Ray 两节点 | 固定 Ray 版本、Ray backend、节点服务和状态恢复 | 两节点 CPU/GPU 派发、排队、节点失联、actor 失败和残留容器核对 |
 | R3：部署自动化 | plan/apply/verify/drain、token、私网/TLS 接入指南 | 干净节点重复执行不重复部署；认证失败、端口失败和版本漂移有明确诊断 |
 
-当前代码没有启动 Ray 或 Docker，也没有声明多节点已经可用。它建立的是后续两个 backend 共用的输入、观测和分配语义，使单机验证稳定后可以替换调度后端而不修改 Task、Agent 或 Run 的资源请求格式。
+当前代码已经由 Local backend 启动和管理本机 Docker，但没有启动 Ray，也没有声明多节点已经
+可用。公共输入、观测、分配和租约语义继续作为 Local 与未来 Ray backend 的边界，使后续替换
+调度和派发方式时不必修改 Task、Agent 或 Run 的资源请求格式。
