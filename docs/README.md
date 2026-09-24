@@ -50,6 +50,7 @@
 
 ## 当前代码检查
 
+- [当前代码结构、可用能力与目标差距](implementation/current-code-and-capability-review.md)：以 `main` 源码和分项验收为依据，梳理两条科研执行路径、benchmark 接入、Records/Web、验证边界与后续差距。
 - [模块衔接检查与下一步计划](development/20260920-integration-review.md)：实际调用链、已修复问题、维护入口、功能缺口与分步验收。
 - [科研与榜单基础设施六项优化计划](development/infra-six-optimizations-plan.md)：当前不足与三项故障复现，执行内核、持久调度、原生协议、大产物、雇主 Agent 和实验比较的实施步骤、迁移及验收；属于待实施计划。
 

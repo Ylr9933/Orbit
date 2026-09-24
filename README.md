@@ -130,6 +130,7 @@ require an ownership check and mode `0700` before startup.
 - [Resource management, Docker and Ray design](docs/architecture/resource-management.md)
 - [Environment, cluster, trace and execution-mode questions](docs/architecture/environment-operations-qa.md)
 - [Development sequence](docs/development/development-sequence.md)
+- [Current implementation and capability review](docs/implementation/current-code-and-capability-review.md)
 - [S0 plan and acceptance](docs/development/s0-engineering-foundation.md)
 - [Four-person collaboration plan](docs/development/four-person-collaboration.md)
 - [Agent rules](AGENTS.md), mirrored in [CLAUDE.md](CLAUDE.md)

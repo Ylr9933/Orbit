@@ -1,10 +1,10 @@
 # 项目当前状态
 
-Updated at: 2026-09-23T11:25:26+08:00
+Updated at: 2026-09-24T13:52:03+08:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
 GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及 BM00–BM07 的各工程阶段。
-BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并；本分支仅做集成后的代码维护。集成与远端同步
+BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。集成与远端同步
 事实以 Git 历史为准，不表示已配置常驻部署。
 本机 GPU 诊断与容器计算已验收，完整 GPU Run 尚未验收。
 
@@ -72,6 +72,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并；本分支仅做集成后的代�
 - [BM06 任务记录](changes/20260923-benchmark-campaign-bm06-7a31d9.md)、[Campaign 参考](reference/benchmark-campaign.md)
 - [BM07 任务记录](changes/20260923-benchmark-delivery-bm07-8c6e41.md)、[使用与扩展验收](reference/benchmark-delivery.md)
 - [BM07 集成维护](changes/20260923-benchmark-integration-maintenance-35a9d2.md)
+- [当前代码与能力审阅](implementation/current-code-and-capability-review.md)
 - [BM02-B 任务记录](changes/20260922-benchmark-asi-bm02b-4d2c81.md)、[ASI-Bench 操作说明](operations/asi-bench-native-trial.md)
 - [BM02-A 任务记录](changes/20260922-benchmark-tb-science-bm02a-6b91e3.md)、[TB-Science 操作说明](operations/tb-science-native-trial.md)
 - [BM00 SDK](changes/20260922-benchmark-sdk-bm00-c7e2a1.md)、[BM01 受管执行记录](changes/20260922-benchmark-execution-bm01-a4f8d2.md)、[执行使用参考](reference/benchmark-execution.md)
