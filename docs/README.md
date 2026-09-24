@@ -41,10 +41,11 @@
 10. [初期检查和复盘](architecture/初期检查和复盘.md)：明确 Agent 操作 Docker 内任务的边界、HTTP/CLI/MCP 分工、产品用途、当前可用能力与后续打通顺序。
 11. [0917 设计微调](architecture/0917设计微调.md)：详细设计从一句研究目标到 Project 初始化、研究规划、自动环境、实验分析和迭代的主线，并明确代码与 Skill 分工。
 12. [资源管理、Docker 与 Ray 多节点](architecture/resource-management.md)：资源 YAML、宿主机实时观测、资源不足、Docker 限额、Ray 调度和集群认证方案。
-13. [Tasks 建模与 benchmark 转换](architecture/task-model.md)、[Tasks API 与命令](reference/tasks.md)：完整目标与首批实现范围；任务契约、可见视图、草稿和索引导入已落地，自动工作流、工具运行与原生评测等价仍待接入。
-14. [Agent 实现解读](implementation/agent-implementation-guide.md)、[Resources 实现解读](implementation/resource-implementation-guide.md)：沿当前源码理解公共对象、调用链、关键判断、失败路径和未实现边界。
-15. [Records 模块详细设计](architecture/records-design.md)：原始证据、规范事件、产物与评测、宿主机/容器采集、存储查询，以及面向轨迹分析和 Agentic RL 的派生数据设计。
-16. [Records API 与命令](reference/records.md)、[Records 实现解读](implementation/records-implementation-guide.md)：查看已实现的本地存储、Run 接入、轨迹派生、查询命令和当前限制。
+13. [当前实现框架与 Ray 多节点定位](architecture/current-framework-and-ray-role.md)：对照当前代码说明单机调用链、Ray 后续职责、与初始方案的符合程度及两节点验收顺序。
+14. [Tasks 建模与 benchmark 转换](architecture/task-model.md)、[Tasks API 与命令](reference/tasks.md)：完整目标与首批实现范围；任务契约、可见视图、草稿和索引导入已落地，自动工作流、工具运行与原生评测等价仍待接入。
+15. [Agent 实现解读](implementation/agent-implementation-guide.md)、[Resources 实现解读](implementation/resource-implementation-guide.md)：沿当前源码理解公共对象、调用链、关键判断、失败路径和未实现边界。
+16. [Records 模块详细设计](architecture/records-design.md)：原始证据、规范事件、产物与评测、宿主机/容器采集、存储查询，以及面向轨迹分析和 Agentic RL 的派生数据设计。
+17. [Records API 与命令](reference/records.md)、[Records 实现解读](implementation/records-implementation-guide.md)：查看已实现的本地存储、Run 接入、轨迹派生、查询命令和当前限制。
 
 `AGENTS.md` 与 `CLAUDE.md` 中的简表用于快速定位；具体归档示例与阅读导航在本文件维护。更新规则时同步两个根规则文件。
 
