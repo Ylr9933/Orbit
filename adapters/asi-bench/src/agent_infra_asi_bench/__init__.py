@@ -89,6 +89,17 @@ class Adapter:
     descriptor = AdapterDescriptor(
         adapter_id="asi-bench", description="Pinned ASI-Bench public produce and score"
     )
+    profile = "seed31415-single-fixture-v1"
+    mode = "fixture"
+    required_features = FEATURES
+    resources = ResourceRequirements(gpu_count=0, allocator="local")
+    allowed_parameters = frozenset({"prompt_level", "tasks_dir", "timeout_seconds"})
+    limitations = (
+        "Engineering fixture only; no model call, GPU, or leaderboard claim",
+        "Public seed31415 local score is explicitly non-official",
+        "Official seed42 scoring remains ASI-Bench authenticated external evaluation",
+        "Host observes CPU/memory; this profile does not claim cgroup limits",
+    )
 
     def discover(self, source: Path) -> Catalog:
         source = source.resolve()
@@ -100,7 +111,7 @@ class Adapter:
         return Catalog(
             suite=SuiteRef(
                 benchmark="ASI-Bench",
-                profile="seed31415-single-fixture-v1",
+                profile=self.profile,
                 source=PinnedSource(
                     uri=source.as_uri(), revision=ASI_REVISION, digest=content_digest(source)
                 ),
@@ -126,8 +137,8 @@ class Adapter:
                     kind="evaluate",
                     owner="native",
                     backend=BACKEND,
-                    required_capabilities=FEATURES,
-                    resources=ResourceRequirements(gpu_count=0, allocator="local"),
+                    required_capabilities=self.required_features,
+                    resources=self.resources,
                     budget=Budget(wall_seconds=timeout + 120, clock="outer_wall_clock"),
                     materials=(
                         Material(
@@ -160,23 +171,42 @@ class Adapter:
                 ),
             ),
             retry=RetryPolicy(owner="none", max_attempts=1),
-            limitations=(
-                "Engineering fixture only; no model call, GPU, or leaderboard claim",
-                "Public seed31415 local score is explicitly non-official",
-                "Official seed42 scoring remains ASI-Bench authenticated external evaluation",
-                "Host observes CPU/memory; this profile does not claim cgroup limits",
-            ),
+            limitations=self.limitations,
+        )
+
+    def _validate_candidate(self, plan: ExecutionPlan, params: dict[str, str]) -> None:
+        if plan.request.candidate.agent != "fixture" or plan.request.candidate.model != "none":
+            raise ValueError("BM02-B admits only the model-free fixture agent")
+
+    def _native_request(
+        self, plan: ExecutionPlan, source: Path, tasks: Path, prompt: str, timeout: int
+    ) -> Request:
+        task_id = source.name.removesuffix("__seed31415")
+        return Request(
+            instance_dir=str(source),
+            instance_digest=plan.suite.source.digest,
+            tasks_dir=str(tasks.resolve()),
+            tasks_digest=content_digest(tasks / Path(*task_id.split("."))),
+            scorer_policy_digest=content_digest(tasks.parent / "config" / "public_scorers.json"),
+            task_id=task_id,
+            instance_id=source.name,
+            prompt_level=prompt,
+            timeout_seconds=timeout,
+            mode=self.mode,
+            model=plan.request.candidate.model,
+            effort=_parameters(plan.request).get("effort", "medium"),
+            proxy_url=_parameters(plan.request).get("proxy_url", ""),
+            docker_network=_parameters(plan.request).get("docker_network", "bridge"),
         )
 
     def validate(self, plan: ExecutionPlan) -> tuple[Issue, ...]:
         try:
             params = _parameters(plan.request)
-            if set(params) - {"prompt_level", "tasks_dir", "timeout_seconds"}:
+            if set(params) - self.allowed_parameters:
                 raise ValueError("unsupported parameter for ASI-Bench engineering profile")
             if len(plan.units) != 1 or plan.units[0].unit_id != plan.units[0].native_id:
                 raise ValueError("exactly one unchanged native instance is required")
-            if plan.request.candidate.agent != "fixture" or plan.request.candidate.model != "none":
-                raise ValueError("BM02-B admits only the model-free fixture agent")
+            self._validate_candidate(plan, params)
             source = _source_path(plan)
             _require_pinned_clean(source)
             if source.name != plan.units[0].native_id or not source.name.endswith("__seed31415"):
@@ -198,17 +228,7 @@ class Adapter:
                 raise ValueError("public scorer policy is unavailable")
             _require_pinned_clean(scorer_policy)
             timeout = int(params.get("timeout_seconds", "300"))
-            Request(
-                instance_dir=str(source),
-                instance_digest=plan.suite.source.digest,
-                tasks_dir=str(tasks.resolve()),
-                tasks_digest=content_digest(task_dir),
-                scorer_policy_digest=content_digest(scorer_policy),
-                task_id=task_id,
-                instance_id=source.name,
-                prompt_level=prompt,
-                timeout_seconds=timeout,
-            )
+            self._native_request(plan, source, tasks, prompt, timeout)
             if _runner_source().digest != plan.suite.runner.digest:
                 raise ValueError("installed ASI-Bench implementation changed")
         except (OSError, ValueError, KeyError) as error:
@@ -222,19 +242,12 @@ class Adapter:
         params = _parameters(plan.request)
         source = _source_path(plan)
         tasks = Path(params["tasks_dir"]).resolve()
-        task_id = source.name.removesuffix("__seed31415")
-        task_dir = tasks / Path(*task_id.split("."))
-        scorer_policy = tasks.parent / "config" / "public_scorers.json"
-        request = Request(
-            instance_dir=str(source),
-            instance_digest=plan.suite.source.digest,
-            tasks_dir=str(tasks),
-            tasks_digest=content_digest(task_dir),
-            scorer_policy_digest=content_digest(scorer_policy),
-            task_id=task_id,
-            instance_id=source.name,
-            prompt_level=params.get("prompt_level", "b1"),
-            timeout_seconds=int(params.get("timeout_seconds", "300")),
+        request = self._native_request(
+            plan,
+            source,
+            tasks,
+            params.get("prompt_level", "b1"),
+            int(params.get("timeout_seconds", "300")),
         )
         base = f"{request.instance_id}__{request.prompt_level}"
         return NativeInvocation(
@@ -251,9 +264,17 @@ class Adapter:
                 "benchflow_manifest.json",
                 "benchflow_score.json",
                 "native-result.json",
-            ),
+            )
+            + self._extra_outputs(),
             cancellation_grace_seconds=15,
+            max_artifact_bytes=self._artifact_limit(),
         )
+
+    def _extra_outputs(self) -> tuple[str, ...]:
+        return ()
+
+    def _artifact_limit(self) -> int:
+        return 16 * 1024**2
 
     def execution_backend(self, root: Path) -> AsiBenchBackend:
         return AsiBenchBackend(root)
@@ -282,8 +303,13 @@ class Adapter:
             "instance_id": data.get("instance_id"),
             "prompt_level": data.get("prompt_level"),
             "attempt_status": data.get("attempt_status"),
+            "failure_reason": data.get("failure_reason"),
             "official_score": None,
             "submission": "not_requested",
-            "profile": "seed31415-single-fixture-v1",
+            "profile": self.profile,
             "source": "outputs/benchflow_score.json",
+            **self._interpret_evidence(root),
         }
+
+    def _interpret_evidence(self, root: Path) -> dict:
+        return {}

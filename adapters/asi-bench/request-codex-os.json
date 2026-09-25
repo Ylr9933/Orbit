@@ -1,0 +1,16 @@
+{
+  "selection": ["math.sigma_linear_diophantine__seed31415"],
+  "candidate": {
+    "candidate_id": "codex-os-public-trial",
+    "agent": "codex_cli",
+    "agent_version": "asibench-0.1.5",
+    "model": "gpt-5.6-sol",
+    "configuration_digest": "sha256:77a54009373a151cd5178717491a542a87b66dda30390d6c0da7b90cd82341d3"
+  },
+  "parameters": [
+    {"key": "prompt_level", "value": "b1"},
+    {"key": "tasks_dir", "value": "/path/to/ASI-Bench/tasks"},
+    {"key": "timeout_seconds", "value": "300"},
+    {"key": "effort", "value": "medium"}
+  ]
+}

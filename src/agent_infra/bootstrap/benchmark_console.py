@@ -1,11 +1,14 @@
 """Read-only benchmark projection for the local administrator console."""
 
+import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from agent_infra.benchmarks.compatibility import read_matrix
 from agent_infra.projects.benchmark_campaign import BenchmarkCampaignService, BenchmarkCampaignStore
+from agent_infra.records.api import BlobRef
+from agent_infra.records.local import LocalRecordsStore
 from agent_infra.resources.persistent import PersistentLeaseStore
 from agent_infra.runs.control_store import RunControlStore
 
@@ -86,3 +89,59 @@ class BenchmarkConsole:
             "campaigns": campaigns,
             "compatibility": matrix,
         }
+
+    def trajectory(self, run_id: str, *, cursor: int = 0, limit: int = 50) -> dict[str, Any]:
+        """Read a bounded ASI native view from the run's own immutable Records artifact."""
+        if not 0 <= cursor <= 100000 or not 1 <= limit <= 100:
+            raise ValueError("invalid trajectory page")
+        run = RunControlStore(self.root, read_only=True).get(run_id)
+        plan = run["request"]["execution"]["frozen_plan"]["plan"]
+        if plan["suite"]["benchmark"] != "ASI-Bench":
+            raise ValueError("this trajectory view supports ASI-Bench runs only")
+        result = run.get("result") or {}
+        native = result.get("native_result") or {}
+        evidence = native.get("evidence") or {}
+        identity = {
+            "run_id": run_id,
+            "attempt_id": run["attempt_id"],
+            "instance_id": native.get("instance_id") or plan["units"][0]["native_id"],
+            "prompt_level": native.get("prompt_level"),
+            "session_id": (evidence.get("trajectory") or {}).get("session_id"),
+        }
+        base = {
+            **identity,
+            "capture_status": evidence.get("capture_status", "unavailable"),
+            "trajectory": evidence.get("trajectory") or {"capture_status": "unavailable"},
+            "docker": evidence.get("docker") or {},
+            "files": evidence.get("files") or {},
+            "calls": evidence.get("calls") or {},
+            "steps": [],
+            "next_cursor": None,
+        }
+        artifact_id = result.get("artifact_id")
+        if not artifact_id or not evidence:
+            return base
+        records_path = self.root / "records" / "records.sqlite3"
+        if not records_path.is_file():
+            return base
+        records = LocalRecordsStore(self.root / "records")
+        artifacts = {item.artifact_id: item for item in records.list_artifacts(run["attempt_id"])}
+        artifact = artifacts.get(artifact_id)
+        if artifact is None or artifact.name != "native-submission":
+            return base
+        with records.open_blob(artifact.manifest_blob) as stream:
+            manifest = json.load(stream)
+        member = (evidence.get("trajectory") or {}).get("member")
+        if member != "outputs/evidence/trajectory-view.json":
+            return base
+        file = next((item for item in manifest["files"] if item["path"] == member), None)
+        if file is None or file["size_bytes"] > 16 * 1024**2:
+            return base
+        with records.open_blob(BlobRef(**file["blob"])) as stream:
+            steps = json.load(stream)
+        if not isinstance(steps, list):
+            raise ValueError("stored trajectory view is invalid")
+        page = steps[cursor : cursor + limit]
+        base["steps"] = page
+        base["next_cursor"] = cursor + len(page) if cursor + len(page) < len(steps) else None
+        return base

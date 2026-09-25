@@ -9,6 +9,7 @@ import pytest
 from agent_infra_asi_bench import Adapter
 from agent_infra_asi_bench.backend import AsiBenchBackend
 from agent_infra_asi_bench.bundle import build_local_bundle
+from agent_infra_asi_bench.codex import CodexAdapter
 
 from agent_infra.benchmarks.api import CandidateRef, Parameter, PlanRequest
 from agent_infra.environments.api import ProcessCommand
@@ -53,6 +54,56 @@ def test_plan_preserves_native_identity_and_score_boundary():
 def test_unsupported_agent_is_rejected():
     adapter = Adapter()
     plan = adapter.plan(adapter.discover(INSTANCE), request(agent="codex_cli"))
+    assert adapter.validate(plan)[0].code == "unsupported_native_profile"
+
+
+def test_native_codex_profile_preserves_upstream_sandbox_and_resource_envelope():
+    adapter = CodexAdapter()
+    request = PlanRequest(
+        selection=(INSTANCE.name,),
+        candidate=CandidateRef(
+            candidate_id="codex-test",
+            agent="codex_cli",
+            agent_version="asibench-0.1.5",
+            model="gpt-5.6-sol",
+            configuration_digest="sha256:" + "0" * 64,
+        ),
+        parameters=(
+            Parameter(key="prompt_level", value="b1"),
+            Parameter(key="tasks_dir", value=str(ASI_ROOT / "tasks")),
+            Parameter(key="timeout_seconds", value="300"),
+        ),
+    )
+    plan = adapter.plan(adapter.discover(INSTANCE), request)
+    assert adapter.validate(plan) == ()
+    assert plan.suite.profile == "seed31415-single-codex-os-v1"
+    assert plan.phases[0].resources.cpu_cores == 4
+    assert plan.phases[0].resources.memory_bytes == 8 * 1024**3
+    invocation = adapter.invocation(plan)
+    assert invocation.outputs[-2:] == ("evidence", "docker-observations.jsonl")
+    assert '"mode":"codex_os"' in invocation.command.argv[-1]
+    assert '"model":"gpt-5.6-sol"' in invocation.command.argv[-1]
+
+
+def test_codex_profile_rejects_wrong_agent_and_loopback_proxy_without_host_network():
+    adapter = CodexAdapter()
+    plan = adapter.plan(adapter.discover(INSTANCE), request(agent="fixture"))
+    assert adapter.validate(plan)[0].code == "unsupported_native_profile"
+    valid = PlanRequest(
+        selection=(INSTANCE.name,),
+        candidate=CandidateRef(
+            candidate_id="codex-test",
+            agent="codex_cli",
+            agent_version="asibench-0.1.5",
+            model="gpt-5.6-sol",
+            configuration_digest="sha256:" + "0" * 64,
+        ),
+        parameters=(
+            Parameter(key="tasks_dir", value=str(ASI_ROOT / "tasks")),
+            Parameter(key="proxy_url", value="http://127.0.0.1:17890"),
+        ),
+    )
+    plan = adapter.plan(adapter.discover(INSTANCE), valid)
     assert adapter.validate(plan)[0].code == "unsupported_native_profile"
 
 

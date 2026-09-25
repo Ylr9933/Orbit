@@ -16,6 +16,7 @@ from agent_infra.runs.console import ConsoleService
 
 class BenchmarkView(Protocol):
     def snapshot(self) -> dict[str, Any]: ...
+    def trajectory(self, run_id: str, *, cursor: int = 0, limit: int = 50) -> dict[str, Any]: ...
 
 
 def create_server(
@@ -125,6 +126,14 @@ def create_server(
                 if benchmark is None:
                     raise KeyError(path)
                 return benchmark.snapshot()
+            if method == "GET" and len(parts) == 3 and parts[:2] == ["benchmarks", "runs"]:
+                if benchmark is None:
+                    raise KeyError(path)
+                return benchmark.trajectory(
+                    parts[2],
+                    cursor=int(query.get("cursor", ["0"])[0]),
+                    limit=int(query.get("limit", ["50"])[0]),
+                )
             if workflow is not None and (
                 parts[0] in {"execution", "capabilities"}
                 or (parts[0] == "projects" and (method == "GET" or len(parts) > 1))

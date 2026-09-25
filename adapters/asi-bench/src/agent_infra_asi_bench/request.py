@@ -1,4 +1,6 @@
-"""Immutable request admitted by the BM02-B engineering profile."""
+"""Immutable, non-secret native ASI-Bench request."""
+
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,3 +27,14 @@ class Request(BaseModel):
     instance_id: str
     prompt_level: str = Field(pattern=r"^b[1-4]$")
     timeout_seconds: int = Field(gt=0, le=10800)
+    mode: Literal["fixture", "codex_os"] = Field(
+        default="fixture", exclude_if=lambda value: value == "fixture"
+    )
+    model: str = Field(default="none", exclude_if=lambda value: value == "none")
+    effort: Literal["low", "medium", "high", "xhigh"] = Field(
+        default="medium", exclude_if=lambda value: value == "medium"
+    )
+    proxy_url: str = Field(default="", exclude_if=lambda value: value == "")
+    docker_network: Literal["bridge", "host"] = Field(
+        default="bridge", exclude_if=lambda value: value == "bridge"
+    )

@@ -49,3 +49,44 @@ python -m agent_infra_asi_bench.bundle \
 
 之后的认证提交与官方评分仍由 ASI-Bench 服务负责。不要把公开集本地分数或 bundle
 创建成功解释成官方成绩。
+
+## 原生 Codex + Docker OS 公开试运行
+
+准备 Docker daemon、当前用户可读的私有 `~/.codex/auth.json`、固定 revision 的 ASI-Bench checkout、
+安装了 ASI-Bench 与两个 agent-infra 包的 Python 环境。先确认本机可承担
+**单个原生容器最多 4 CPU / 8 GiB、无 GPU**；上游 OS sandbox 当前没有更低的
+CLI 限额参数。镜像构建与模型调用需要网络；本地代理可在 request 参数中指定
+`proxy_url`，环回代理须同时指定 `docker_network=host`。
+此组合只让 ASI 的任务镜像构建和 Agent 容器使用宿主机网络；容器仍由原生
+`--sandbox os` 创建并受 CPU/内存限额约束。
+
+把 `request-codex-os.json` 复制到私有临时目录，改 `tasks_dir` 为 checkout 的
+`tasks/` 绝对路径，核对模型、超时和实例后执行：
+
+```bash
+agent-infra benchmark inspect asi-bench-codex-os \
+  --config adapters/asi-bench/adapters.toml --source /path/to/INSTANCE__seed31415
+agent-infra benchmark plan asi-bench-codex-os \
+  --config adapters/asi-bench/adapters.toml --source /path/to/INSTANCE__seed31415 \
+  --request /private/codex-request.json --output /private/codex-plan.json
+agent-infra benchmark check /private/codex-plan.json \
+  --config adapters/asi-bench/adapters.toml \
+  --capabilities adapters/asi-bench/capabilities-codex-os.json
+agent-infra benchmark prepare /private/codex-plan.json \
+  --config adapters/asi-bench/adapters.toml --output /private/codex-execution.json
+agent-infra benchmark run /private/codex-execution.json \
+  --config adapters/asi-bench/adapters.toml --state-dir /private/state \
+  --operation-id asi-codex-public-trial \
+  --capabilities adapters/asi-bench/capabilities-codex-os.json \
+  --allow-host-process --allow-native-runtime
+```
+
+`check` 只验证冻结声明，`runtime_ready=false` 是预期值。提交后用
+`benchmark status/events/artifacts` 查看 Run/Attempt 和 Records；Web 的
+Benchmark 页面可分页查看同一次运行的原生 instance、prompt level、Codex
+session、工具步骤以及 Docker 身份、限额和最近资源样本。Records 中的
+`evidence/index.json` 必须逐项核对：`raw_stdout_file`、`trajectory_file`、
+`raw_stderr_file`、`model_calls_file` 的 `capture_status` 会区分 `complete`、
+`derived`、`unavailable`、`missing` 和 `truncated` 等情况。上游此 revision
+通常不产生独立的模型调用文件；若 JSONL 有 `turn.completed`，则索引给出
+完成轮次与最后一次用量。容器未采到样本时，不要把外层进程用量当作容器用量。
