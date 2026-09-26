@@ -156,3 +156,7 @@ Web 与 Controller 支持任意启动顺序，共用的 `controller/` 目录首�
 需要本机 Docker、已有 `python:3.12-slim` 镜像及空闲单用户 Controller 槽位；测试先开 Web，
 再启动真实 Controller、执行 CPU Job、归档指标并读取分析，最后验证服务离线后历史仍可读取。
 容器请求 0.5 CPU / 256 MiB，不调用模型；页面交互继续由上面的浏览器测试覆盖。
+
+## Benchmark 实验工作台
+
+本轮工作台扩展支持登记不同目录的已有批次、完整成员查询、同任务评分比较、轨迹与产物复盘、笔记和导出，以及保存单 Run 取消意图。原有只读诊断接口保持兼容。使用范围、评分口径与新接口见 [Benchmark 实验工作台](benchmark-workspace.md)。

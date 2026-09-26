@@ -58,7 +58,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.getByRole("heading", {name:"运行状态",exact:true}).waitFor();
     assert.equal(page.url(), submitted);
     await page.getByRole("button", {name:"取消运行",exact:true}).click();
-    await page.getByText("执行结果：cancelled", {exact:true}).waitFor();
+    await page.getByText("执行结果：已取消", {exact:true}).waitFor();
     await page.goto(`${base}/#execution/${info.finished}`);
     await page.getByRole("heading", {name:"容器内 Job",exact:true}).waitFor();
     await page.getByRole("button", {name:/metrics.json ·/}).click();

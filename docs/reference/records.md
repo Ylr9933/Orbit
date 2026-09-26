@@ -138,3 +138,7 @@ Agent 规范事件载荷使用 `agent.session.v1`、`agent.message.v1`、
 - scorer 输出与结果 Artifact 标记为 `evaluator/private_evaluation`。
 - 公共 feedback 和由其明确导出的 reward 可以进入普通轨迹；私有答案不会进入 observation。
 - `open_blob` 是控制面内部能力。面向远端用户开放前，需要在 gateway 中增加基于 Artifact/stream 元数据的访问检查。
+
+## 本地只读日志尾部
+
+`LocalRecordsStore(root, read_only=True)` 使用 SQLite 只读连接，不初始化 schema 或更改状态目录权限。SQLite 在 WAL 模式下仍可能创建共享内存辅助文件。可选 `RecordsStreamReader.read_stream_tail(attempt_id, stream_id, limit=65536)` 返回 `StreamTail`，仅读取已提交游标范围内的最后 64 KiB 或更少字节，并携带可见性/数据分类；调用方仍须执行访问过滤。流完成后使用已发布 Blob，未完成时读取自有 spool，绝不推进执行或终结该流。

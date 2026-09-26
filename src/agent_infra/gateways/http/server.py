@@ -15,6 +15,10 @@ from agent_infra.runs.console import ConsoleService
 
 
 class BenchmarkView(Protocol):
+    def workspace_route(
+        self, method: str, parts: list[str], query: dict[str, list[str]], body: dict[str, Any]
+    ) -> dict[str, Any]: ...
+
     def snapshot(self) -> dict[str, Any]: ...
     def trajectory(self, run_id: str, *, cursor: int = 0, limit: int = 50) -> dict[str, Any]: ...
 
@@ -87,6 +91,8 @@ def create_server(
                     query = parse_qs(parsed.query)
                     result = self.api(method, path, query)
                     self.respond(200, result)
+                except (BrokenPipeError, ConnectionResetError):
+                    return  # The browser navigated away or cancelled a polling request.
                 except (CatalogConflict, ProjectConflict) as error:
                     self.respond(409, {"error": str(error)})
                 except (KeyError, ProjectNotFound):
@@ -111,7 +117,11 @@ def create_server(
         def api(self, method: str, path: str, query: dict[str, list[str]]) -> object:
             body: dict[str, Any] = {}
             if method == "POST":
-                if workflow is None and path != "/api/v1/projects":
+                if (
+                    workflow is None
+                    and path != "/api/v1/projects"
+                    and not (benchmark and path.startswith("/api/v1/benchmarks/workspace"))
+                ):
                     raise KeyError(path)
                 if self.headers.get_content_type() != "application/json":
                     raise ValueError("expected JSON")
@@ -122,6 +132,8 @@ def create_server(
                 if not isinstance(body, dict):
                     raise ValueError("expected object")
             parts = path.removeprefix("/api/v1/").split("/")
+            if benchmark is not None and parts[:2] == ["benchmarks", "workspace"]:
+                return benchmark.workspace_route(method, parts[2:], query, body)
             if method == "GET" and path == "/api/v1/benchmarks":
                 if benchmark is None:
                     raise KeyError(path)
