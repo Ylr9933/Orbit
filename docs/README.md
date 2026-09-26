@@ -51,6 +51,7 @@
 
 ## 当前代码检查
 
+- [0926-1717 Benchmark 抽象与框架精简建议](architecture/0926-1717-benchmark-abstraction-and-framework-review.md)：对照现有 SDK、backend、监测和结果路径，说明新 bench 的独立接入、Codex 适配流程、模块边界、具体缺口和渐进方案；属于架构建议，未改变现有接口。
 - [0926 框架详解与 Benchmark 调度](implementation/0926-framework-and-benchmark-scheduling.md)：以 ASI 为例说明模块职责、计划冻结、FIFO/租约、原生执行、证据、恢复及当前边界。
 
 - [当前代码结构、可用能力与目标差距](implementation/current-code-and-capability-review.md)：以 `main` 源码和分项验收为依据，梳理两条科研执行路径、benchmark 接入、Records/Web、验证边界与后续差距。
