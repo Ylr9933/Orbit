@@ -62,3 +62,12 @@ The former `asi-bench` fixture entry point and simulated agent have been removed
 Reinstall this adapter after upgrading to refresh package entry-point metadata.
 Old fixture plans cannot execute and are not converted to paid Codex runs;
 archived Records remain readable.
+
+For reproducible Codex upgrades, set the optional request parameter
+`codex_version` to an exact release such as `0.157.1`. The version bridge sets
+only the pinned upstream builder's Codex install command before delegating to
+its native CLI. ASI includes this command in the default task image cache key,
+so older images are preserved and cannot silently supply the older CLI.
+Custom task images bypass this default install path. Model/provider terminal
+errors are reported as `model_unavailable` or `model_authentication_failed`;
+the batch coordinator stops dispatch instead of switching models or retrying.

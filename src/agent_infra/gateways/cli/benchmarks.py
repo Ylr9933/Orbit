@@ -7,6 +7,21 @@ from typing import Any
 def add_benchmark_arguments(commands: Any) -> None:
     command = commands.add_parser("benchmark", help="Plan and execute enabled benchmark adapters")
     actions = command.add_subparsers(dest="benchmark_command", required=True)
+    batch = actions.add_parser("batch", help="Prepare and run a bounded native batch")
+    batch_commands = batch.add_subparsers(dest="batch_command", required=True)
+    for operation in ("prepare", "submit", "status", "worker"):
+        item = batch_commands.add_parser(operation)
+        item.add_argument("--directory", type=Path, required=True)
+        if operation == "prepare":
+            item.add_argument("--config", type=Path, required=True)
+            item.add_argument("--adapter", required=True)
+            item.add_argument("--sources", type=Path, required=True)
+            item.add_argument("--pattern", default="*")
+            item.add_argument("--request", type=Path, required=True)
+            item.add_argument("--concurrency", type=int, default=1)
+            item.add_argument("--declare-compatibility", action="store_true")
+        if operation == "submit":
+            item.add_argument("--allow-native-runtime", action="store_true")
     for name in (
         "campaign",
         "compatibility",

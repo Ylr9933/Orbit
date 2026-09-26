@@ -82,6 +82,7 @@
 - [BM06 Campaign 使用参考](reference/benchmark-campaign.md)、[实现导读](implementation/benchmark-campaign.md)：有界候选迭代、反馈权限、血缘、预算与停止/选优；真实 benchmark 支持受各适配器协议声明约束。
 - [BM07 使用与扩展验收](reference/benchmark-delivery.md)：只读批次页面、兼容矩阵、原生提交交接和独立包接入演练。
 - [BM02-A TB-Science 试运行](operations/tb-science-native-trial.md)、[Harbor 实现](implementation/benchmark-harbor.md)：独立适配包、原生容器 trial 与工程验收边界。
+- [ASI-Bench 批量运行](operations/asi-bench-batch.md)：批量冻结、模型声明、持久队列、并发与每任务汇总。
 - [BM02-B ASI-Bench 试运行](operations/asi-bench-native-trial.md)、[实现路径](implementation/benchmark-asi-bench.md)：公开 seed31415 原生产出/评分及 seed42 外部提交边界。
 - [BM03 PAST-Bench 试运行](operations/past-bench-native-trial.md)、[实现路径](implementation/benchmark-past-bench.md)：完整 family 配对序列、session/state 隔离、原生聚合及工程验收边界。
 - [BM04 PostTrainBench 试运行](operations/posttrain-bench-native-trial.md)、[实现路径](implementation/benchmark-posttrain-bench.md)：HTCondor job 身份与清理、长时 GPU 资源声明、judge 证据和内容寻址模型交接。

@@ -32,6 +32,9 @@ class Request(BaseModel):
     timeout_seconds: int = Field(gt=0, le=10800)
     mode: Literal["codex_os"]
     model: str = Field(min_length=1)
+    codex_version: str | None = Field(
+        default=None, pattern=r"^\d+\.\d+\.\d+$", exclude_if=lambda value: value is None
+    )
     effort: Literal["low", "medium", "high", "xhigh"] = Field(
         default="medium", exclude_if=lambda value: value == "medium"
     )

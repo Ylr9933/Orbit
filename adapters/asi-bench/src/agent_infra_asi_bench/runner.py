@@ -14,6 +14,7 @@ from agent_infra.contracts.files import content_digest
 
 from .docker_proxy import summarize
 from .evidence import capture
+from .model_errors import model_failure
 from .request import Request
 
 
@@ -98,6 +99,8 @@ def run(request: Request) -> int:
         "--tasks-dir",
         str(tasks),
     ]
+    if request.codex_version:
+        command[2:3] = ["agent_infra_asi_bench.native_cli", request.codex_version]
     auth = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".codex" / "auth.json"
     if not auth.is_file() or auth.is_symlink() or auth.stat().st_uid != os.getuid():
         raise ValueError("a private host Codex auth.json owned by this user is required")
@@ -178,6 +181,9 @@ def run(request: Request) -> int:
         root / "evidence",
         docker=summarize(observations, provenance.get("image_identity")),
     )
+    failure = model_failure(result.get("agent_output") or {})
+    if failure:
+        return _write_failure(root, request, completed.returncode, failure, evidence)
     persisted = result.get("agent_output", {}).get("persisted_outputs", {}).get("dir")
     if not persisted:
         return _write_failure(

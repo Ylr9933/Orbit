@@ -97,7 +97,15 @@ class Adapter:
         cpu_cores=4, memory_bytes=8 * 1024**3, gpu_count=0, allocator="local"
     )
     allowed_parameters = frozenset(
-        {"prompt_level", "tasks_dir", "timeout_seconds", "effort", "proxy_url", "docker_network"}
+        {
+            "prompt_level",
+            "tasks_dir",
+            "timeout_seconds",
+            "effort",
+            "proxy_url",
+            "docker_network",
+            "codex_version",
+        }
     )
     limitations = (
         "One public seed31415 instance; local score is non-official",
@@ -222,6 +230,7 @@ class Adapter:
             timeout_seconds=timeout,
             mode=self.mode,
             model=plan.request.candidate.model,
+            codex_version=_parameters(plan.request).get("codex_version"),
             effort=_parameters(plan.request).get("effort", "medium"),
             proxy_url=_parameters(plan.request).get("proxy_url", ""),
             docker_network=_parameters(plan.request).get("docker_network", "bridge"),
