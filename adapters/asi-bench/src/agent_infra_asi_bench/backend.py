@@ -10,16 +10,11 @@ from .docker_proxy import OWNER_LABEL
 from .request import BACKEND, FEATURES, Request
 
 
-class AsiBenchBackend(ManagedProcessBackend):
+class CodexAsiBenchBackend(ManagedProcessBackend):
+    """Native execution owns its process group and labeled Docker containers."""
+
     backend_id = BACKEND
     features = FEATURES
-    cleanup_scope = "owned_process_group"
-
-
-class CodexAsiBenchBackend(AsiBenchBackend):
-    """Native Codex execution also owns its labeled Docker child containers."""
-
-    features = FEATURES + ("docker_os", "native_codex_trace", "docker_telemetry")
     cleanup_scope = "owned_process_group_and_labeled_docker_containers"
 
     def cleanup(self, handle: ExecutionHandle) -> CleanupResult:
@@ -29,9 +24,7 @@ class CodexAsiBenchBackend(AsiBenchBackend):
         spec = self.spec(handle)
         if spec.command.argv[1:3] != ("-m", "agent_infra_asi_bench.runner"):
             return process
-        request = Request.model_validate_json(spec.command.argv[-1])
-        if request.mode != "codex_os":
-            return process
+        Request.model_validate_json(spec.command.argv[-1])
         run_id = spec.run_id
         try:
             listed = subprocess.run(

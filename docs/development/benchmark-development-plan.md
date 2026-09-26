@@ -33,7 +33,7 @@ BM01 交付范围见[受管执行参考](../reference/benchmark-execution.md)和
 进程组清理和状态目录单槽不等于容器隔离或持久资源租约；GPU/子容器控制、官方协议评分、多单位队列
 仍按后续阶段实施。BM02-A 已通过可选 Harbor runtime 补充原生 job/子容器清理和 CPU/内存实际核验；
 [验收范围](../operations/tb-science-native-trial.md)限单 CPU Oracle/Nop profile，不等于整套任务或模型 Agent 兼容。
-BM02-B 的[验收范围](../operations/asi-bench-native-trial.md)限公开 seed31415 单任务 fixture；
+BM02-B 历史验收范围为公开 seed31415 单任务 fixture（现已删除）；当前仅保留[原生 Codex OS 入口](../operations/asi-bench-native-trial.md)；
 本地分数、seed42 bundle、认证提交和官方分数保持分离。
 BM05-A 增加同一 benchmark 状态目录内的 FIFO 等待队列和持久租约账本：请求/Run、owner epoch、
 原生 job ID、对账与清理后释放均可恢复；默认仍为单活动租约。它不提供 cgroup/GPU 硬限额、后台

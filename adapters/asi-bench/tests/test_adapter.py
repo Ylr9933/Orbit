@@ -7,9 +7,8 @@ from pathlib import Path
 
 import pytest
 from agent_infra_asi_bench import Adapter
-from agent_infra_asi_bench.backend import AsiBenchBackend
+from agent_infra_asi_bench.backend import CodexAsiBenchBackend
 from agent_infra_asi_bench.bundle import build_local_bundle
-from agent_infra_asi_bench.codex import CodexAdapter
 
 from agent_infra.benchmarks.api import CandidateRef, Parameter, PlanRequest
 from agent_infra.environments.api import ProcessCommand
@@ -22,14 +21,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def request(*, prompt: str = "b1", agent: str = "fixture") -> PlanRequest:
+def request(*, prompt: str = "b1", agent: str = "codex_cli") -> PlanRequest:
     return PlanRequest(
         selection=(INSTANCE.name,),
         candidate=CandidateRef(
             candidate_id="engineering",
             agent=agent,
-            agent_version="1.0.0",
-            model="none",
+            agent_version="asibench-0.1.5",
+            model="gpt-5.6-sol",
             configuration_digest="sha256:" + "0" * 64,
         ),
         parameters=(
@@ -48,17 +47,17 @@ def test_plan_preserves_native_identity_and_score_boundary():
     assert plan.units[0].native_id == INSTANCE.name
     assert plan.request.parameters[0].value == "b1"
     assert plan.phases[0].resources.gpu_count == 0
-    assert "non-official" in plan.limitations[1]
+    assert any("non-official" in item for item in plan.limitations)
 
 
 def test_unsupported_agent_is_rejected():
     adapter = Adapter()
-    plan = adapter.plan(adapter.discover(INSTANCE), request(agent="codex_cli"))
+    plan = adapter.plan(adapter.discover(INSTANCE), request(agent="fixture"))
     assert adapter.validate(plan)[0].code == "unsupported_native_profile"
 
 
 def test_native_codex_profile_preserves_upstream_sandbox_and_resource_envelope():
-    adapter = CodexAdapter()
+    adapter = Adapter()
     request = PlanRequest(
         selection=(INSTANCE.name,),
         candidate=CandidateRef(
@@ -86,7 +85,7 @@ def test_native_codex_profile_preserves_upstream_sandbox_and_resource_envelope()
 
 
 def test_codex_profile_rejects_wrong_agent_and_loopback_proxy_without_host_network():
-    adapter = CodexAdapter()
+    adapter = Adapter()
     plan = adapter.plan(adapter.discover(INSTANCE), request(agent="fixture"))
     assert adapter.validate(plan)[0].code == "unsupported_native_profile"
     valid = PlanRequest(
@@ -197,7 +196,7 @@ def test_seed31415_cannot_be_bundled_as_official(tmp_path: Path):
 
 def test_backend_cancel_does_not_signal_unrelated_process(tmp_path: Path):
     unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
-    backend = AsiBenchBackend(tmp_path / "backend")
+    backend = CodexAsiBenchBackend(tmp_path / "backend")
     spec = ExecutionSpec(
         run_id="run",
         attempt_id="attempt",

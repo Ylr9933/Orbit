@@ -3,15 +3,10 @@
 This independent adapter runs one already-materialized public `seed31415`
 instance through the pinned native ASI-Bench runner, then calls ASI-Bench's
 `BenchFlow` scorer on the persisted attempt. Agent Infra schedules the process,
-captures evidence, and owns only the outer process group. ASI-Bench remains the
-authority for instance semantics, prompt levels, result layout, gates, and scores.
+captures evidence, and cleans up its process group and labeled Docker containers.
+ASI-Bench remains the authority for instance semantics, prompt levels, result layout, gates, and scores.
 
-The engineering profile `asi-bench` admits the model-free `fixture` agent, one task,
-one prompt level, `--sandbox none`, no retries, and no external tools. It proves
-the native produce/score boundary without spending model or GPU resources. It is
-not a leaderboard profile.
-
-The additional `asi-bench-codex-os` profile admits ASI-Bench's native
+The sole entry point `asi-bench-codex-os` admits ASI-Bench's native
 `codex_cli` agent in its `--sandbox os` Docker container. It requests the
 pinned upstream OS defaults (4 CPU, 8 GiB, no GPU) and one public seed31415
 instance. The host needs Docker, its image-build dependencies, and the current
@@ -50,15 +45,20 @@ repository root. Enable it through an operator-reviewed allowlist:
 ```bash
 agent-infra benchmark adapters --config adapters/asi-bench/adapters.toml
 agent-infra benchmark inspect --config adapters/asi-bench/adapters.toml \
-  --source /path/to/instances/math.task__seed31415 asi-bench
+  --source /path/to/instances/math.task__seed31415 asi-bench-codex-os
 ```
 
-Discover an unchanged public instance directory, then use `request.json` after
+Discover an unchanged public instance directory, then use `request-codex-os.json` after
 replacing `tasks_dir` with the matching pinned ASI-Bench checkout. The standard
 `benchmark plan`, `benchmark check`, `benchmark prepare`, and `benchmark run`
-commands are the execution path. Native execution requires both explicit
-`--allow-host-process` and `--allow-native-runtime` acknowledgement flags.
+commands are the execution path. Native execution requires the explicit
+`--allow-native-runtime` acknowledgement flag.
 
 For `seed42`, `python -m agent_infra_asi_bench.bundle --results-dir RESULTS
 --output-dir BUNDLE` validates native seed/provenance rules and creates an
 unarchived local bundle. It performs no authentication, browser action, or upload.
+
+The former `asi-bench` fixture entry point and simulated agent have been removed.
+Reinstall this adapter after upgrading to refresh package entry-point metadata.
+Old fixture plans cannot execute and are not converted to paid Codex runs;
+archived Records remain readable.

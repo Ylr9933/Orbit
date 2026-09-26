@@ -200,7 +200,7 @@ Web 只读显示队列、租约、近期 Run、Campaign 和矩阵。见
 | 适配器 | 已实现和有证据的范围 | 仍不能宣称 |
 | --- | --- | --- |
 | [TB-Science](../../adapters/tb-science/) + [Harbor runtime](../../adapters/harbor-runtime/) | 固定上游版本，单 CPU 单任务 Oracle/Nop profile；Oracle 原生 trial、同产物重评、取消/清理和 Records 有工程证据。 | 模型 Agent、整套 suite、多服务/GPU 任务、官方榜单兼容。Oracle 是参考解，不是模型成绩。见[试运行](../operations/tb-science-native-trial.md)。 |
-| [ASI-Bench](../../adapters/asi-bench/) | 固定版本；公开 seed31415 单任务 fixture 产出及本地 BenchFlow 评分通过。seed42 bundle 有本地 provenance 校验路径。 | 真实 Agent/GPU/完整任务集、seed42 认证上传和官方分数。`local_public_score` 不是 `official_score`。见[试运行](../operations/asi-bench-native-trial.md)。 |
+| [ASI-Bench](../../adapters/asi-bench/) | 固定版本；公开 seed31415 单实例原生 Codex/Docker、轨迹归档及本地 BenchFlow 评分通过，fixture 已删除。seed42 bundle 有本地 provenance 校验路径。 | GPU/完整任务集、seed42 认证上传和官方分数。`local_public_score` 不是 `official_score`。见[试运行](../operations/asi-bench-native-trial.md)。 |
 | [PAST-Bench](../../adapters/past-bench/) | 固定 family 的 persistence on/off 配对、episode 顺序、状态/会话隔离与原生聚合；SM01 无模型工程 profile 的独立 wheel 验收。 | 真实 Agent/judge、Docker sandbox、正式榜单复现。见[试运行](../operations/past-bench-native-trial.md)。 |
 | [PostTrainBench](../../adapters/posttrain-bench/) | 固定源码、HTCondor job 身份/对账/取消与模型内容寻址交接；无模型 wheel 和模拟 scheduler 生命周期验收。 | 真实 H100/Apptainer/Agent/judge 集群组合与官方分数；运行前须证明 GPU 可见性及原生子作业清理。见[试运行](../operations/posttrain-bench-native-trial.md)。 |
 

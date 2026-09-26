@@ -13,6 +13,9 @@ FEATURES = (
     "wall_timeout",
     "native_evidence",
     "public_native_score",
+    "docker_os",
+    "native_codex_trace",
+    "docker_telemetry",
 )
 
 
@@ -27,10 +30,8 @@ class Request(BaseModel):
     instance_id: str
     prompt_level: str = Field(pattern=r"^b[1-4]$")
     timeout_seconds: int = Field(gt=0, le=10800)
-    mode: Literal["fixture", "codex_os"] = Field(
-        default="fixture", exclude_if=lambda value: value == "fixture"
-    )
-    model: str = Field(default="none", exclude_if=lambda value: value == "none")
+    mode: Literal["codex_os"]
+    model: str = Field(min_length=1)
     effort: Literal["low", "medium", "high", "xhigh"] = Field(
         default="medium", exclude_if=lambda value: value == "medium"
     )

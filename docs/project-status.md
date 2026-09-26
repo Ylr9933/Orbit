@@ -1,6 +1,6 @@
 # 项目当前状态
 
-Updated at: 2026-09-25T16:53:00+08:00
+Updated at: 2026-09-26T05:32:22.200808+00:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
 GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及 BM00–BM07 的各工程阶段。
@@ -33,7 +33,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 - **宿主机 Codex 采集**：项目目录发现候选会话、显式绑定真实 thread ID、原始 JSONL 与规范事件写入独立 Records Run，并支持轮次通知触发的断点续采；不启动模型或 Docker。
 - **BM00/BM01（本地 `main`）**：版本化 SDK、独立包显式启用、规划/检查与命令冻结；一个原子单位的本机受管进程、持久 operation/handle、重启续查、取消及 Records 归档。独立 wheel 和短时真实 CPU 进程已有验证；其普通进程后端不承担容器/GPU 配额或评分。
 - **BM02-A（本地 `main`）**：独立 TB-Science/Harbor 包、固定版本、独立 verifier、CPU/内存实际核验和 Records 原始证据。Oracle 单任务的原生同产物重评、重复提交、真实取消清理通过；不代表模型 Agent、整套任务、GPU 或正式榜单兼容。
-- **BM02-B 与 Codex OS 扩展**：独立 ASI-Bench 包固定 runner；fixture 公开单任务已验收。新增显式 `codex_cli` + Docker `--sandbox os` profile，公开 seed31415 单实例真实 Codex 运行、BenchFlow 本地评分、原生 JSONL/轨迹/错误流归档、Web 关联查询、子容器身份与采样、清理及租约释放均已本机验证。该分数非官方；seed42 bundle 仍只做本地生成，未认证、上传或取得官方分数。
+- **BM02-B 与 Codex OS 扩展**：独立 ASI-Bench 包固定 runner；已移除 fixture 入口与模拟执行，仅保留显式 `codex_cli` + Docker `--sandbox os` profile，公开 seed31415 单实例真实 Codex 运行、BenchFlow 本地评分、原生 JSONL/轨迹/错误流归档、Web 关联查询、子容器身份与采样、清理及租约释放均已本机验证。该分数非官方；seed42 bundle 仍只做本地生成，未认证、上传或取得官方分数。
 - **BM05-A**：Benchmark 请求可持久 FIFO 排队；Resources 保存幂等租约、owner epoch、原生 job ID、对账和释放历史。崩溃窗口、等待取消、清理后续跑以及独立 wheel 双任务验收通过；当前默认单活动租约，不代表 CPU/GPU 硬隔离或后台自动调度。
 - **BM05-B**：同一状态目录可配置并持久保存并发容量、运行轮询 worker 与墙钟预算组；受管进程采样 CPU/内存/I/O，结果区分申请、准入、实际分配证明及测量；本地产物支持中断续传与完整校验。默认仍为单槽，租约不实施硬限额。
 - **BM06**：不可变候选、授权修改范围、公开指标投影、父子血缘、确定性提交、累计试验/墙钟预算和停止/选优。两候选合成结果通过工程测试；四个原生参考适配器尚未开放 optimizer 反馈，不等于已能自动优化官方成绩。
@@ -74,6 +74,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 - [BM07 集成维护](changes/20260923-benchmark-integration-maintenance-35a9d2.md)
 - [当前代码与能力审阅](implementation/current-code-and-capability-review.md)
 - [BM02-B 任务记录](changes/20260922-benchmark-asi-bm02b-4d2c81.md)、[ASI-Bench 操作说明](operations/asi-bench-native-trial.md)
+- [ASI fixture 移除](changes/20260926-remove-asi-fixture-d1a8c4.md)
 - [ASI Codex OS 真实验收与轨迹归档](changes/20260925-asi-codex-os-traces-7e4b2a.md)
 - [BM02-A 任务记录](changes/20260922-benchmark-tb-science-bm02a-6b91e3.md)、[TB-Science 操作说明](operations/tb-science-native-trial.md)
 - [BM00 SDK](changes/20260922-benchmark-sdk-bm00-c7e2a1.md)、[BM01 受管执行记录](changes/20260922-benchmark-execution-bm01-a4f8d2.md)、[执行使用参考](reference/benchmark-execution.md)

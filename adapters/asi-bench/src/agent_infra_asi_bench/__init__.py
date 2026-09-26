@@ -6,7 +6,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlparse, urlsplit
 
 import ai4sci_bench
 
@@ -29,7 +29,7 @@ from agent_infra.benchmarks.execution_api import NativeInvocation
 from agent_infra.contracts.files import content_digest
 from agent_infra.environments.api import ProcessCommand
 
-from .backend import AsiBenchBackend
+from .backend import CodexAsiBenchBackend
 from .request import ASI_REVISION, BACKEND, FEATURES, Request
 
 
@@ -87,18 +87,23 @@ def _parameters(request: PlanRequest) -> dict[str, str]:
 
 class Adapter:
     descriptor = AdapterDescriptor(
-        adapter_id="asi-bench", description="Pinned ASI-Bench public produce and score"
+        adapter_id="asi-bench-codex-os",
+        description="Pinned ASI-Bench public Codex CLI with native Docker OS sandbox",
     )
-    profile = "seed31415-single-fixture-v1"
-    mode = "fixture"
+    profile = "seed31415-single-codex-os-v1"
+    mode = "codex_os"
     required_features = FEATURES
-    resources = ResourceRequirements(gpu_count=0, allocator="local")
-    allowed_parameters = frozenset({"prompt_level", "tasks_dir", "timeout_seconds"})
+    resources = ResourceRequirements(
+        cpu_cores=4, memory_bytes=8 * 1024**3, gpu_count=0, allocator="local"
+    )
+    allowed_parameters = frozenset(
+        {"prompt_level", "tasks_dir", "timeout_seconds", "effort", "proxy_url", "docker_network"}
+    )
     limitations = (
-        "Engineering fixture only; no model call, GPU, or leaderboard claim",
-        "Public seed31415 local score is explicitly non-official",
-        "Official seed42 scoring remains ASI-Bench authenticated external evaluation",
-        "Host observes CPU/memory; this profile does not claim cgroup limits",
+        "One public seed31415 instance; local score is non-official",
+        "Native ASI-Bench Docker OS sandbox owns Codex and its task image",
+        "Docker OS defaults to 4 CPU/8 GiB; no GPU or complete-suite claim",
+        "Private seed42 submission remains a separate native protocol",
     )
 
     def discover(self, source: Path) -> Catalog:
@@ -175,8 +180,31 @@ class Adapter:
         )
 
     def _validate_candidate(self, plan: ExecutionPlan, params: dict[str, str]) -> None:
-        if plan.request.candidate.agent != "fixture" or plan.request.candidate.model != "none":
-            raise ValueError("BM02-B admits only the model-free fixture agent")
+        candidate = plan.request.candidate
+        if candidate.agent != "codex_cli" or candidate.agent_version != "asibench-0.1.5":
+            raise ValueError("Codex OS profile requires native codex_cli from ASI-Bench 0.1.5")
+        if candidate.model in {"", "none"}:
+            raise ValueError("Codex OS profile requires an explicit model")
+        if params.get("effort", "medium") not in {"low", "medium", "high", "xhigh"}:
+            raise ValueError("unsupported Codex reasoning effort")
+        network = params.get("docker_network", "bridge")
+        if network not in {"bridge", "host"}:
+            raise ValueError("unsupported Docker network mode")
+        proxy = params.get("proxy_url", "")
+        if proxy:
+            parsed = urlsplit(proxy)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError("proxy_url must be an unauthenticated HTTP(S) origin")
+            if parsed.hostname in {"127.0.0.1", "localhost"} and network != "host":
+                raise ValueError("loopback proxy requires docker_network=host")
 
     def _native_request(
         self, plan: ExecutionPlan, source: Path, tasks: Path, prompt: str, timeout: int
@@ -203,7 +231,7 @@ class Adapter:
         try:
             params = _parameters(plan.request)
             if set(params) - self.allowed_parameters:
-                raise ValueError("unsupported parameter for ASI-Bench engineering profile")
+                raise ValueError("unsupported parameter for ASI-Bench Codex OS profile")
             if len(plan.units) != 1 or plan.units[0].unit_id != plan.units[0].native_id:
                 raise ValueError("exactly one unchanged native instance is required")
             self._validate_candidate(plan, params)
@@ -271,13 +299,13 @@ class Adapter:
         )
 
     def _extra_outputs(self) -> tuple[str, ...]:
-        return ()
+        return ("evidence", "docker-observations.jsonl")
 
     def _artifact_limit(self) -> int:
-        return 16 * 1024**2
+        return 256 * 1024**2
 
-    def execution_backend(self, root: Path) -> AsiBenchBackend:
-        return AsiBenchBackend(root)
+    def execution_backend(self, root: Path) -> CodexAsiBenchBackend:
+        return CodexAsiBenchBackend(root)
 
     def validate_execution(self, plan: ExecutionPlan, invocation: NativeInvocation) -> None:
         if invocation != self.invocation(plan):
@@ -313,4 +341,16 @@ class Adapter:
         }
 
     def _interpret_evidence(self, root: Path) -> dict:
-        return {}
+        index = root / "outputs" / "evidence" / "index.json"
+        if not index.is_file():
+            return {"evidence": {"capture_status": "unavailable"}}
+        value = json.loads(index.read_text(encoding="utf-8"))
+        return {
+            "evidence": {
+                "capture_status": value["capture_status"],
+                "files": value["files"],
+                "calls": value.get("calls", {}),
+                "trajectory": value.get("trajectory", {}),
+                "docker": value.get("docker", {}),
+            }
+        }

@@ -44,24 +44,22 @@ adapters/        独立安装的原生 benchmark 适配包
 
 | 文件 | 职责 |
 | --- | --- |
-| `__init__.py` | 发现固定版本原生实例、构造计划、校验材料、构造调用与解释公开评分；提供 fixture 基线及可覆盖的扩展点 |
-| `codex.py` | Codex OS profile：候选、模型、网络参数、资源请求、证据解释、后端选择 |
+| `__init__.py` | 发现固定版本原生实例、构造计划、校验材料、构造调用与解释公开评分；直接定义唯一 Codex OS profile、资源请求与证据解释 |
 | `request.py` | 原生请求的有界、不可变字段及固定上游版本 |
 | `runner.py` | 原生 CLI 调用、结果身份核对、证据归档入口、BenchFlow 评分与摘要 |
-| `backend.py` | fixture 受管进程后端；Codex 子类增加专属 Docker 清理与能力声明 |
+| `backend.py` | 原生受管进程后端，负责本次 Docker 容器清理与能力声明 |
 | `docker_proxy.py` | 包装本次原生 Docker 命令，添加 owner label、构建网络配置、身份及 stats 采样 |
 | `evidence.py` | 根据原生结果引用复制 sidecar、记录覆盖状态、派生规范轨迹与有界视图 |
-| `fixture_agent.py` | 无模型工程测试用模拟 Agent，不能代表真实 Agent 能力 |
 | `bundle.py` | 调用上游逻辑生成 seed42 本地提交包，不负责上传 |
 
 ## 3. 本轮整理做了什么
 
-1. 将 Docker 扩展能力与清理实现归入 `CodexAsiBenchBackend`。fixture 后端只声明其真正拥有的进程能力，避免无 Docker 的模式也带上容器职责。
-2. 将“主摘要缺失时仍解释已有证据”的分支统一放入适配器基类已有扩展点，删除 Codex 子类重复的 `interpret()` 包装。
+1. 将 Docker 扩展能力与清理实现归入 `CodexAsiBenchBackend`。删除 fixture 后端，仅保留原生 Codex 的进程组与容器清理。
+2. 统一“主摘要缺失时仍解释已有证据”的逻辑；删除 fixture 后，将 Codex profile 合入唯一 Adapter，取消仅为两种模式分开的继承层。
 3. 将 Benchmark 轨迹详情拆为 `benchmark-trajectory.tsx`，由详情组件持有分页和请求；页面只负责选择 Run。用 Run ID 作为 React key，切换 Run 时重建分页状态。
 4. 保留原生 runner、归档器、Docker 观测器的独立文件，避免把运行、证据解释和界面逻辑合进一个模块。
 
-本轮没有发现可以安全删除的整个业务模块。`runs/service.py` 较大，科研和 Benchmark 的部分流程也仍有相似之处，但其输入、授权及评测边界不同；仅依据文件长度或名称相似就合并会增加风险。后续应按具体用例提取共享步骤，并用两条路径的恢复测试证明等价。
+按后续用户要求，已删除 ASI fixture 入口、模拟 Agent 和专用配置。其余业务模块保持现有边界。`runs/service.py` 较大，科研和 Benchmark 的部分流程也仍有相似之处，但其输入、授权及评测边界不同；仅依据文件长度或名称相似就合并会增加风险。后续应按具体用例提取共享步骤，并用两条路径的恢复测试证明等价。
 
 ## 4. 调用链总图
 
@@ -96,7 +94,7 @@ flowchart TD
 
 `AdapterRegistry` 按 `adapters.toml` 的 alias、distribution、version、entry point、SDK version 加载已安装包。安装一个包并不自动授予其执行权限。适配包是可信本地 Python 代码，allowlist 是加载边界，不是把恶意 Python 代码隔离的沙箱。
 
-ASI 有两个入口：`asi-bench`（fixture）和 `asi-bench-codex-os`（真实 Codex OS）。两者仍使用同一固定上游 revision，不能只修改 fixture 的 agent 字符串就获得完整真实运行链。
+ASI 仅保留 `asi-bench-codex-os`（真实 Codex OS）。原 `asi-bench` fixture 入口已删除；升级后重新安装适配包。旧 fixture 计划不会转换为真实模型执行，历史 Records 不受影响。
 
 ### 5.2 inspect：发现实例
 
@@ -302,6 +300,6 @@ Campaign 已有候选 lineage、授权变更范围、累计预算、提交去重
 
 ## 16. 建议阅读顺序
 
-先读 `gateways/cli/benchmarks.py` 看命令，再读 `bootstrap/benchmark_execution.py` 看组装，随后读 `runs/benchmark_execution.py` 的 `submit → _advance → _collect → _finish`。资源判断在 `resources/persistent.py`，预算在 `runs/benchmark_budget.py`；原生启动/恢复在 `environments/managed_process.py` 与 `_process_supervisor.py`。最后沿 ASI `codex.py → runner.py → evidence.py` 阅读，并对照 `bootstrap/benchmark_console.py` 和 Web `benchmark-trajectory.tsx` 理解数据如何展示。
+先读 `gateways/cli/benchmarks.py` 看命令，再读 `bootstrap/benchmark_execution.py` 看组装，随后读 `runs/benchmark_execution.py` 的 `submit → _advance → _collect → _finish`。资源判断在 `resources/persistent.py`，预算在 `runs/benchmark_budget.py`；原生启动/恢复在 `environments/managed_process.py` 与 `_process_supervisor.py`。最后沿 ASI `__init__.py → runner.py → evidence.py` 阅读，并对照 `bootstrap/benchmark_console.py` 和 Web `benchmark-trajectory.tsx` 理解数据如何展示。
 
 相关文档：[总体代码能力审阅](current-code-and-capability-review.md)、[Benchmark 执行实现](benchmark-execution.md)、[ASI 实现路径](benchmark-asi-bench.md)、[队列操作说明](../operations/benchmark-queue.md)、[本轮维护记录](../changes/20260926-framework-maintenance-c82e61.md)。

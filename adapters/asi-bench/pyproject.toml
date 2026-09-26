@@ -12,5 +12,4 @@ dependencies = [
 ]
 
 [project.entry-points."agent_infra.benchmarks.v1"]
-asi-bench = "agent_infra_asi_bench:Adapter"
-asi-bench-codex-os = "agent_infra_asi_bench.codex:CodexAdapter"
+asi-bench-codex-os = "agent_infra_asi_bench:Adapter"

@@ -3,7 +3,6 @@
 import json
 import os
 import pwd
-import shlex
 import shutil
 import subprocess
 import sys
@@ -99,67 +98,54 @@ def run(request: Request) -> int:
         "--tasks-dir",
         str(tasks),
     ]
-    environment = None
-    if request.mode == "fixture":
-        agent_command = " ".join(
-            (
-                shlex.quote(sys.executable),
-                "-m",
-                "agent_infra_asi_bench.fixture_agent",
-                "--workspace",
-                "{workspace}",
-            )
-        )
-        command.extend(("--agent-cmd", agent_command, "--sandbox", "none"))
-    else:
-        auth = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".codex" / "auth.json"
-        if not auth.is_file() or auth.is_symlink() or auth.stat().st_uid != os.getuid():
-            raise ValueError("a private host Codex auth.json owned by this user is required")
-        docker = shutil.which("docker", path=os.defpath)
-        if docker is None:
-            raise ValueError("Docker CLI is unavailable")
-        proxy = root / "docker-proxy"
-        proxy.mkdir(mode=0o700)
-        wrapper = proxy / "docker"
-        wrapper.write_text(
-            f"#!{sys.executable}\n"
-            "from agent_infra_asi_bench.docker_proxy import main\n"
-            "raise SystemExit(main())\n",
-            encoding="utf-8",
-        )
-        wrapper.chmod(0o700)
-        observations = root / "docker-observations.jsonl"
-        observations.touch(mode=0o600)
-        environment = os.environ.copy()
+    auth = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".codex" / "auth.json"
+    if not auth.is_file() or auth.is_symlink() or auth.stat().st_uid != os.getuid():
+        raise ValueError("a private host Codex auth.json owned by this user is required")
+    docker = shutil.which("docker", path=os.defpath)
+    if docker is None:
+        raise ValueError("Docker CLI is unavailable")
+    proxy = root / "docker-proxy"
+    proxy.mkdir(mode=0o700)
+    wrapper = proxy / "docker"
+    wrapper.write_text(
+        f"#!{sys.executable}\n"
+        "from agent_infra_asi_bench.docker_proxy import main\n"
+        "raise SystemExit(main())\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o700)
+    observations = root / "docker-observations.jsonl"
+    observations.touch(mode=0o600)
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "HOME": str(auth.parent.parent),
+            "PATH": str(proxy) + os.pathsep + os.defpath,
+            "AGENT_INFRA_DOCKER_BIN": docker,
+            "AGENT_INFRA_ASI_RUN": root.name,
+            "AGENT_INFRA_DOCKER_OBSERVATIONS": str(observations),
+            "AGENT_INFRA_ASI_BUILD_NETWORK": request.docker_network,
+        }
+    )
+    if request.docker_network == "host":
+        environment["AI4SCI_DOCKER_NETWORK"] = "host"
+    if request.proxy_url:
         environment.update(
-            {
-                "HOME": str(auth.parent.parent),
-                "PATH": str(proxy) + os.pathsep + os.defpath,
-                "AGENT_INFRA_DOCKER_BIN": docker,
-                "AGENT_INFRA_ASI_RUN": root.name,
-                "AGENT_INFRA_DOCKER_OBSERVATIONS": str(observations),
-                "AGENT_INFRA_ASI_BUILD_NETWORK": request.docker_network,
-            }
+            http_proxy=request.proxy_url,
+            https_proxy=request.proxy_url,
+            HTTP_PROXY=request.proxy_url,
+            HTTPS_PROXY=request.proxy_url,
         )
-        if request.docker_network == "host":
-            environment["AI4SCI_DOCKER_NETWORK"] = "host"
-        if request.proxy_url:
-            environment.update(
-                http_proxy=request.proxy_url,
-                https_proxy=request.proxy_url,
-                HTTP_PROXY=request.proxy_url,
-                HTTPS_PROXY=request.proxy_url,
-            )
-        command.extend(
-            (
-                "--agent",
-                "codex_cli",
-                "--agent-config",
-                json.dumps({"model": request.model, "effort": request.effort}),
-                "--sandbox",
-                "os",
-            )
+    command.extend(
+        (
+            "--agent",
+            "codex_cli",
+            "--agent-config",
+            json.dumps({"model": request.model, "effort": request.effort}),
+            "--sandbox",
+            "os",
         )
+    )
     command.extend(
         (
             "--parallel",
@@ -180,20 +166,18 @@ def run(request: Request) -> int:
     if result.get("prompt_level") != request.prompt_level:
         raise ValueError("native runner changed prompt level")
     provenance = result.get("provenance", {}).get("sandbox", {})
-    evidence = None
-    if request.mode == "codex_os":
-        observations = []
-        for line in (root / "docker-observations.jsonl").read_text().splitlines():
-            try:
-                observations.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        evidence = capture(
-            result_path,
-            result,
-            root / "evidence",
-            docker=summarize(observations, provenance.get("image_identity")),
-        )
+    observations = []
+    for line in (root / "docker-observations.jsonl").read_text().splitlines():
+        try:
+            observations.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    evidence = capture(
+        result_path,
+        result,
+        root / "evidence",
+        docker=summarize(observations, provenance.get("image_identity")),
+    )
     persisted = result.get("agent_output", {}).get("persisted_outputs", {}).get("dir")
     if not persisted:
         return _write_failure(
@@ -209,7 +193,7 @@ def run(request: Request) -> int:
             root, request, completed.returncode, "prediction directory missing", evidence
         )
     prediction = prediction.resolve()
-    if request.mode == "codex_os" and not (
+    if not (
         provenance.get("effective_mode") == "os"
         and provenance.get("verification_status") == "docker_container"
         and provenance.get("image_identity")
@@ -229,9 +213,9 @@ def run(request: Request) -> int:
         "prediction_dir": str(prediction),
         "instance_dir": str(instance),
         "tasks_dir": str(tasks),
-        "harness": "agent-infra-fixture" if request.mode == "fixture" else "codex_cli",
+        "harness": "codex_cli",
         "model": request.model,
-        "sandbox": "none" if request.mode == "fixture" else "os",
+        "sandbox": "os",
         "scorer_revision": json.loads(scorer_policy.read_text(encoding="utf-8"))["source_revision"],
     }
     manifest_path = root / "benchflow_manifest.json"
