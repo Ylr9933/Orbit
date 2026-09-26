@@ -49,6 +49,10 @@
 
 `AGENTS.md` 与 `CLAUDE.md` 中的简表用于快速定位；具体归档示例与阅读导航在本文件维护。更新规则时同步两个根规则文件。
 
+## 产品需求调研
+
+- [Codex / Claude Code 辅助科研的真实需求与 infra 建议](product/scientific-agent-needs-2026-09.md)：2026-09-26 的社区、GitHub、研究与源码调研，覆盖需求证据、当前缺口、工具复用、精简范围和验收建议；属于产品建议，不代表新增功能已实现。
+
 ## 当前代码检查
 
 - [0926 框架详解与 Benchmark 调度](implementation/0926-framework-and-benchmark-scheduling.md)：以 ASI 为例说明模块职责、计划冻结、FIFO/租约、原生执行、证据、恢复及当前边界。
