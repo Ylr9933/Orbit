@@ -82,9 +82,3 @@ class CodexAdapter(Adapter):
                 "docker": value.get("docker", {}),
             }
         }
-
-    def interpret(self, root: Path) -> dict:
-        result = super().interpret(root)
-        if "evidence" not in result:
-            result.update(self._interpret_evidence(root))
-        return result

@@ -291,6 +291,7 @@ class Adapter:
                 "protocol": "unknown",
                 "metrics": {},
                 "reason": "native result absent",
+                **self._interpret_evidence(root),
             }
         data = json.loads(path.read_text(encoding="utf-8"))
         valid = data.get("local_score_official") is False and data.get("official_score") is None

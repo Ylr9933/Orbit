@@ -12,8 +12,15 @@ from .request import BACKEND, FEATURES, Request
 
 class AsiBenchBackend(ManagedProcessBackend):
     backend_id = BACKEND
-    features = FEATURES + ("docker_os", "native_codex_trace", "docker_telemetry")
+    features = FEATURES
     cleanup_scope = "owned_process_group"
+
+
+class CodexAsiBenchBackend(AsiBenchBackend):
+    """Native Codex execution also owns its labeled Docker child containers."""
+
+    features = FEATURES + ("docker_os", "native_codex_trace", "docker_telemetry")
+    cleanup_scope = "owned_process_group_and_labeled_docker_containers"
 
     def cleanup(self, handle: ExecutionHandle) -> CleanupResult:
         process = super().cleanup(handle)
@@ -60,9 +67,3 @@ class AsiBenchBackend(ManagedProcessBackend):
             return CleanupResult(True, "scope: owned process group and labeled Docker containers")
         except (OSError, subprocess.SubprocessError):
             return CleanupResult(False, "owned Docker container cleanup unconfirmed")
-
-
-class CodexAsiBenchBackend(AsiBenchBackend):
-    """Same native backend contract with explicit child-container cleanup scope."""
-
-    cleanup_scope = "owned_process_group_and_labeled_docker_containers"
