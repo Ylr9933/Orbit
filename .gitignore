@@ -100,3 +100,5 @@ Desktop.ini
 
 # Local benchmark trials: native outputs, Records and frozen runtime plans.
 /benchmark/asibench/
+
+/benchmark/tb-science/

@@ -53,7 +53,7 @@ export function BenchmarkTrajectoryPanel({
       5000,
     );
   return (
-    <Panel title="ASI-Bench 原生 Agent 轨迹">
+    <Panel title="Benchmark 原生 Agent 轨迹">
       <button type="button" onClick={onClose}>
         关闭
       </button>
@@ -62,7 +62,7 @@ export function BenchmarkTrajectoryPanel({
         <>
           <p className="muted">
             Run {trajectory.run_id} · Attempt {trajectory.attempt_id} ·{" "}
-            {trajectory.instance_id} / {trajectory.prompt_level ?? "—"} · Codex
+            {trajectory.instance_id} / {trajectory.prompt_level ?? "—"} · Agent
             session {trajectory.session_id ?? "未捕获"}
           </p>
           <p className="muted">
@@ -72,7 +72,7 @@ export function BenchmarkTrajectoryPanel({
             {trajectory.trajectory.origin ?? "原生"})
           </p>
           <p className="muted">
-            Codex 完成轮次 {trajectory.calls.completed_turns ?? "未记录"} ·
+            已记录的完成轮次 {trajectory.calls.completed_turns ?? "未记录"} ·
             调用用量{" "}
             {trajectory.calls.last_reported_usage
               ? JSON.stringify(trajectory.calls.last_reported_usage)
@@ -88,7 +88,7 @@ export function BenchmarkTrajectoryPanel({
             {trajectory.docker.memory_limit_bytes != null
               ? `${(trajectory.docker.memory_limit_bytes / 1024 ** 3).toFixed(1)} GiB`
               : "内存未证明"}{" "}
-            · 资源样本 {trajectory.docker.usage_samples ?? 0}
+            · 资源样本 {trajectory.docker.usage_samples ?? "未采样"}
           </p>
           {trajectory.docker.last_sample && (
             <p className="muted">

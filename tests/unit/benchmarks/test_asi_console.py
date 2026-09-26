@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from http.client import HTTPConnection
 from threading import Thread
 
+import pytest
+
 from agent_infra.bootstrap.benchmark_console import BenchmarkConsole
 from agent_infra.gateways.http.server import create_server
 from agent_infra.records.api import (
@@ -18,14 +20,15 @@ from agent_infra.records.local import LocalRecordsStore
 from agent_infra.runs.control_store import RunControlStore
 
 
-def test_asi_trajectory_is_scoped_to_the_run_and_paged(tmp_path):
+@pytest.mark.parametrize("benchmark", ["ASI-Bench", "terminal-bench-science"])
+def test_asi_trajectory_is_scoped_to_the_run_and_paged(tmp_path, benchmark):
     state = tmp_path / "state"
     control = RunControlStore(state / "benchmarks")
     request = {
         "execution": {
             "frozen_plan": {
                 "plan": {
-                    "suite": {"benchmark": "ASI-Bench"},
+                    "suite": {"benchmark": benchmark},
                     "units": [{"native_id": "task__seed31415"}],
                 }
             }

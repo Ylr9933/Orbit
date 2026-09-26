@@ -91,13 +91,11 @@ class BenchmarkConsole:
         }
 
     def trajectory(self, run_id: str, *, cursor: int = 0, limit: int = 50) -> dict[str, Any]:
-        """Read a bounded ASI native view from the run's own immutable Records artifact."""
+        """Read a bounded native view from the run's own immutable Records artifact."""
         if not 0 <= cursor <= 100000 or not 1 <= limit <= 100:
             raise ValueError("invalid trajectory page")
         run = RunControlStore(self.root, read_only=True).get(run_id)
         plan = run["request"]["execution"]["frozen_plan"]["plan"]
-        if plan["suite"]["benchmark"] != "ASI-Bench":
-            raise ValueError("this trajectory view supports ASI-Bench runs only")
         result = run.get("result") or {}
         native = result.get("native_result") or {}
         evidence = native.get("evidence") or {}

@@ -61,7 +61,7 @@ def test_native_mapping_preserves_clocks_resources_visibility(adapter):
     instance, plan, _ = adapter
     assert not instance.validate(plan)
     phase = plan.phases[0]
-    assert phase.budget.clock == "native_agent" and phase.budget.wall_seconds == 120
+    assert phase.budget.clock == "wall" and phase.budget.wall_seconds == 2550
     assert phase.resources.disk_bytes == 10240 * 1024**2
     assert "solver" not in next(m for m in phase.materials if m.material_id == "tests").readers
     invocation = instance.invocation(plan)
@@ -114,6 +114,9 @@ def test_native_failure_is_never_scored_as_zero(adapter, tmp_path):
     result.write_text(json.dumps(body))
     assert instance.interpret(tmp_path)["evaluation"] == "failed"
     assert instance.interpret(tmp_path)["metrics"] == {}
+    body["exception_info"] = {"exception_type": "AgentAuthenticationError"}
+    result.write_text(json.dumps(body))
+    assert instance.interpret(tmp_path)["failure_reason"] == "model_authentication_failed"
 
 
 def test_default_grace_keeps_bm01_serialization_compatible():
@@ -160,3 +163,70 @@ def test_native_cleanup_requires_receipt_and_live_daemon_absence(adapter, monkey
 
     monkeypatch.setattr(module, "remaining", unavailable)
     assert not backend.cleanup(handle).complete
+
+
+def test_codex_explicit_model_version_and_native_limits(adapter):
+    instance, plan, path = adapter
+    candidate = plan.request.candidate.model_copy(
+        update={"agent": "codex", "agent_version": "0.157.1", "model": "gpt-6-sol"}
+    )
+    request = plan.request.model_copy(update={"candidate": candidate})
+    plan = instance.plan(instance.discover(path), request)
+    assert not instance.validate(plan)
+    invocation = instance.invocation(plan)
+    native = json.loads(invocation.command.argv[-1])
+    assert native["model"] == "gpt-6-sol" and native["codex_version"] == "0.157.1"
+    assert plan.phases[0].resources.cpu_cores == 1.1
+    assert plan.phases[0].resources.memory_bytes == 2176 * 1024**2
+    assert "native-evidence.json" in invocation.outputs
+    assert invocation.max_artifact_bytes == 256 * 1024**2
+
+
+def test_codex_rejects_shell_model_and_mutable_version(adapter):
+    instance, plan, _ = adapter
+    for model, version in [("gpt;echo bad", "0.157.1"), ("gpt-6-sol", "latest")]:
+        candidate = plan.request.candidate.model_copy(
+            update={"agent": "codex", "agent_version": version, "model": model}
+        )
+        altered = plan.model_copy(
+            update={"request": plan.request.model_copy(update={"candidate": candidate})}
+        )
+        assert instance.validate(altered)
+
+
+def test_suite_audit_retains_rejected_tasks_and_declared_gpu(adapter):
+    from agent_infra_tb_science.__main__ import audit
+
+    _, plan, path = adapter
+    report = audit(path, plan.request)
+    assert report["total"] == report["eligible"] == 1
+    assert report["tasks"][0]["declared_solver_resources"]["gpus"] == 0
+    config = path / "task.toml"
+    config.write_text(config.read_text().replace("gpus = 0", "gpus = 1"))
+    report = audit(path, plan.request)
+    assert report["total"] == 1 and report["eligible"] == 0
+    assert report["tasks"][0]["declared_solver_resources"]["gpus"] == 1
+
+
+def test_proxy_cannot_bypass_native_solver_network_policy(adapter):
+    from agent_infra.benchmarks.api import Parameter
+
+    instance, plan, path = adapter
+    candidate = plan.request.candidate.model_copy(
+        update={"agent": "codex", "agent_version": "0.157.1", "model": "gpt-6-sol"}
+    )
+    request = plan.request.model_copy(
+        update={
+            "candidate": candidate,
+            "parameters": (Parameter(key="proxy_url", value="http://127.0.0.1:17890"),),
+        }
+    )
+    plan = instance.plan(instance.discover(path), request)
+    assert not instance.validate(plan)
+    config = path / "task.toml"
+    config.write_text(
+        config.read_text().replace(
+            "[environment]\n", '[environment]\nnetwork_mode = "no-network"\n'
+        )
+    )
+    assert "cannot bypass policy" in instance.validate(plan)[0].message

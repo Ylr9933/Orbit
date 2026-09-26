@@ -85,3 +85,16 @@ def test_teardown_attempts_all_environments_after_failure(monkeypatch):
     with pytest.raises(ExceptionGroup):
         asyncio.run(environment.close_all())
     assert visited == [True, True]
+
+
+def test_solver_stop_revokes_proxy_before_ip_reuse(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    relay = SimpleNamespace(allowed={"172.20.0.2"})
+    monkeypatch.setattr(environment, "CONTEXT", {"task": str(tmp_path), "relay": relay})
+    monkeypatch.setattr(environment, "remaining", lambda _: [])
+    env = owned()
+    env.claimed = True
+    env.environment_dir = tmp_path / "environment"
+    asyncio.run(env.stop(True))
+    assert relay.allowed == set()
