@@ -1,6 +1,6 @@
 # BM02-A：Harbor 与 TB-Science 的实现路径
 
-状态：任务分支实现；使用范围与验收见[操作说明](../operations/tb-science-native-trial.md)及
+状态：BM02-A 已集成，本次增加原生 Codex 配置、证据清单和批次审阅；使用范围与验收见[操作说明](../operations/tb-science-native-trial.md)及
 [任务记录](../changes/20260922-benchmark-tb-science-bm02a-6b91e3.md)。
 
 ## 模块分工
@@ -11,7 +11,7 @@
 | `adapters/harbor-runtime/` | 通用 Harbor 单 trial 执行、资源实际验证、原生命名空间与清理证据；没有 TB-Science 名称分支 |
 | `benchmarks/execution_api.py` | 可选 NativeRuntimeAdapter 扩展：backend factory、执行验证、证据解释 |
 | `bootstrap/benchmark_execution.py` | 根据已启用、固定版本的 adapter 组装 runtime；CLI 参数不直接指定任意 Python import |
-| `runs/benchmark_execution.py` | 复用原有 Run/Attempt、单活动槽、重复提交处理、Records 与完成顺序 |
+| `runs/benchmark_execution.py` | 复用原有 Run/Attempt、持久队列与租约、重复提交处理、Records 与完成顺序 |
 | `environments/managed_process.py` | durable launch/进程监督，可扩展读取已核对 spec；不理解 benchmark |
 
 新 bench 使用已有 runtime 时只增加适配包和启用/兼容配置。需要新的 backend 能力时，由可选适配包
@@ -51,9 +51,46 @@ factory 不启动任务；验证必须在 submit 前完成，并对资源、阶�
 
 ## 限制与下一阶段
 
-本阶段验证可复用的 native runtime 接入，不自动扩展为整套任务兼容。模型 Agent、其他 task profile、
-多服务资源核对、GPU、持久队列/全局租约、自动优化与榜单提交需各自验收。
+本阶段验证可复用的 native runtime 接入，不自动扩展为整套任务兼容。其他 task profile、多服务资源核对、GPU、自动优化与榜单提交需各自验收。
+Codex 通过 `agent.py` 生成原生配置，`evidence.py` 清点原始轨迹与产物并生成有界 Web 视图；
+`__main__.py` 只负责 TB-Science 离线整套准入审阅。批次复用核心队列，不添加第二个调度器。
 TB-Science 的请求和原始 scoring 不被本平台改写；工程缺省限额、网络辅助服务开销、构建与磁盘限制均显式展示。
 
 Harbor 自身原生 API 和少量受保护的 Docker 扩展点被限制在可选 runtime 包中，固定 commit + 文件摘要 + 真机回归
 用于发现上游变化。核心项目既不依赖 Harbor，也不按 benchmark 名修改注册表或状态机。
+
+## Codex 扩展调用链
+
+```text
+batch prepare / submit
+  → TB-Science discover + plan + validate
+  → 固定任务、Harbor 文件摘要、模型、Codex 版本和可选发行包摘要
+  → 持久队列与阶段峰值资源租约
+  → ManagedProcessBackend → agent_infra_harbor.runner
+  → 原生 Harbor Trial.create / run
+  → OwnedDockerEnvironment：原生镜像 + 限额核验 + 可选发行包上传
+  → 原生 Codex.setup / run：认证、模型调用、原始会话和 ATIF
+  → 停止求解环境并撤销代理 IP 授权
+  → 原生提交交接 → 新建独立 verifier → 原生 reward
+  → 原生清理 + 证据清单 → 冻结输出 → Records → Web 分页视图
+```
+
+新增代码按职责分开：`agent.py` 只生成 Agent 配置和读取私有认证引用；`bundle.py` 只验证、
+上传发行包并核对容器内版本；`proxy.py` 只管理任务所属的代理连接；`evidence.py` 清点原生文件
+并派生只读视图。TB-Science `__main__.py` 负责全套静态审阅，不启动 Docker 或模型。
+核心不导入 Harbor，也没有新建另一套调度状态机。
+
+API key 从私有文件进入 worker 内存，不能依赖被 supervisor 清除的终端环境变量。
+代理仅支持明确的 loopback HTTP 代理；监听端口由 OS 分配，来源白名单来自实际 Docker inspect。
+求解环境停止时清空白名单，防止同一 IP 被后续评测容器复用；worker finally 关闭监听与连接。
+这是已有 public 网络任务的连接方式，不是修改 benchmark 的网络许可。
+
+开始前失败也必须执行清理并写证据状态；缺少清理回执时保留隔离状态。
+原始文件缺失、ATIF 解析失败、有界视图截断、运行失败和评分为 0 是不同概念。
+采集目录出现凭据文件名或不安全路径时不把它们静默写入 Records；保留工作区供操作者处理。
+大于 256 MiB 的原生输出保留在工作区，采集明确失败，不把截断后的目录当成完整提交。
+
+资源声明现在使用求解与评测阶段的峰值及网络辅助容器余量。旧的 prepared execution
+应重新生成；历史 Records 继续可读，运行中的旧任务不自动重启。任务时限仍由 Harbor 执行，
+外层 wall budget 只作为监督进程上限。新增 GPU 或 Compose profile 应独立验证所有服务的
+申请、实际分配、网络边界、产物交接和清理，不能仅删掉现有拒绝条件。

@@ -8,6 +8,7 @@ from harbor.environments.docker.docker import DockerEnvironment
 
 from agent_infra.environments.recovery import write_ownership
 
+from .bundle import install as install_codex_bundle
 from .docker import inspect_containers, remaining
 
 # Set once by the dedicated native worker, never by the solver.
@@ -116,9 +117,36 @@ class OwnedDockerEnvironment(DockerEnvironment):
             },
         )
 
+        if (
+            CONTEXT.get("relay")
+            and self.environment_dir.resolve() == (Path(CONTEXT["task"]) / "environment").resolve()
+        ):
+            for item in containers:
+                if item["Config"]["Labels"]["com.docker.compose.service"] == "main":
+                    for network in item["NetworkSettings"]["Networks"].values():
+                        if network.get("IPAddress"):
+                            CONTEXT["relay"].allowed.add(network["IPAddress"])
+        if (
+            CONTEXT.get("codex_bundle")
+            and self.environment_dir.resolve() == (Path(CONTEXT["task"]) / "environment").resolve()
+        ):
+            await install_codex_bundle(
+                self,
+                CONTEXT["codex_bundle"],
+                CONTEXT["codex_bundle_digest"],
+                CONTEXT["codex_version"],
+                Path(CONTEXT["root"]) / "attestations" / (self.project + "-codex.json"),
+            )
+
     async def stop(self, delete: bool):
         if not self.claimed:
             return
+        # Revoke the solver before its IP can be recycled for the private verifier.
+        if (
+            CONTEXT.get("relay")
+            and self.environment_dir.resolve() == (Path(CONTEXT["task"]) / "environment").resolve()
+        ):
+            CONTEXT["relay"].allowed.clear()
         # A build may fail before Compose has a complete configuration or any objects.
         if not remaining(self.project):
             return

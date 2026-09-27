@@ -118,16 +118,14 @@ export function BenchmarksPage({ token }: { token: string }) {
                         <td>
                           <strong>{run.candidate_id}</strong>
                           <small>{run.run_id}</small>
-                          {run.benchmark === "ASI-Bench" && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedRun(run.run_id);
-                              }}
-                            >
-                              查看轨迹
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedRun(run.run_id);
+                            }}
+                          >
+                            查看轨迹
+                          </button>
                         </td>
                         <td>
                           {run.benchmark}
