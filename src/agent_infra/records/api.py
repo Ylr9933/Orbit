@@ -333,3 +333,21 @@ class RecordsReader(Protocol):
     def list_artifacts(self, attempt_id: str) -> tuple[ArtifactRef, ...]: ...
 
     def open_blob(self, ref: BlobRef) -> BinaryIO: ...
+
+
+@dataclass(frozen=True, slots=True)
+class StreamTail:
+    """Only committed bytes; offset may start within a UTF-8 character."""
+
+    data: bytes
+    offset: int
+    total_bytes: int
+    capture_status: CaptureStatus
+    visibility: Visibility
+    data_class: DataClass
+
+
+class RecordsStreamReader(Protocol):
+    def read_stream_tail(
+        self, attempt_id: str, stream_id: str, *, limit: int = 65536
+    ) -> StreamTail: ...

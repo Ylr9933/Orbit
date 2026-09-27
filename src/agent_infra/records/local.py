@@ -35,6 +35,7 @@ from agent_infra.records.api import (
     RecordContext,
     RunManifest,
     RunRecord,
+    StreamTail,
     TraceGraph,
     TraceSpan,
     Visibility,
@@ -48,8 +49,14 @@ _SCHEMA_VERSION = 1
 class LocalRecordsStore:
     """Thread-safe local backend with one SQLite transaction per public mutation."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, read_only: bool = False) -> None:
+        self.read_only = read_only
         self.root = root.resolve()
+        if read_only:
+            self.blob_root = self.root / "blobs" / "sha256"
+            self.database = self.root / "records.sqlite3"
+            self._lock = RLock()
+            return
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.root.chmod(0o700)
         self.blob_root = self.root / "blobs" / "sha256"
@@ -62,7 +69,11 @@ class LocalRecordsStore:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database, timeout=30)
+        connection = (
+            sqlite3.connect(self.database.as_uri() + "?mode=ro", uri=True, timeout=30)
+            if self.read_only
+            else sqlite3.connect(self.database, timeout=30)
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=30000")
@@ -409,7 +420,55 @@ class LocalRecordsStore:
             raise RuntimeError("invalid stored blob path")
         return path.open("rb")
 
+    def read_stream_tail(
+        self, attempt_id: str, stream_id: str, *, limit: int = 65536
+    ) -> StreamTail:
+        """Read bounded committed output without advancing execution or finalizing a stream."""
+        if not 1 <= limit <= 65536:
+            raise ValueError("invalid stream tail limit")
+        for retry in range(2):
+            with closing(self._connect()) as db:
+                row = db.execute(
+                    "SELECT * FROM streams WHERE stream_id=? AND attempt_id=?",
+                    (stream_id, attempt_id),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(stream_id)
+                blob = db.execute(
+                    "SELECT * FROM blobs WHERE digest=?", (row["blob_digest"],)
+                ).fetchone()
+            size = int(row["size_bytes"])
+            offset = max(0, size - limit)
+            if blob is not None:
+                source = self.open_blob(
+                    BlobRef(blob["digest"], blob["size_bytes"], blob["media_type"])
+                )
+            else:
+                path = self.root / row["spool_path"]
+                if path.is_symlink() or not path.resolve().is_relative_to(self.root / "spool"):
+                    raise ValueError("invalid stream spool path")
+                try:
+                    source = path.open("rb")
+                except FileNotFoundError:
+                    if retry == 0:
+                        continue  # Finalization atomically publishes a blob then removes the spool.
+                    raise
+            with source:
+                source.seek(offset)
+                data = source.read(size - offset)
+            return StreamTail(
+                data,
+                offset,
+                size,
+                CaptureStatus(row["capture_status"]),
+                Visibility(row["visibility"]),
+                DataClass(row["data_class"]),
+            )
+        raise RuntimeError("stream changed while reading")
+
     def _put_blob(self, data: bytes, media_type: str) -> BlobRef:
+        if self.read_only:
+            raise ValueError("Records store is read-only")
         if not media_type.strip():
             raise ValueError("blob media type must not be empty")
         hexadecimal = hashlib.sha256(data).hexdigest()
@@ -453,6 +512,8 @@ class LocalRecordsStore:
 
     def _put_blob_file(self, source: Path, media_type: str) -> BlobRef:
         """Import a large file with durable partial bytes and bounded memory."""
+        if self.read_only:
+            raise ValueError("Records store is read-only")
         if source.is_symlink() or not source.is_file() or not media_type.strip():
             raise ValueError("blob source must be a regular file with a media type")
         with source.open("rb") as stream:

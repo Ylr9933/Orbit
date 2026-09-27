@@ -295,7 +295,9 @@ export function App() {
             />
           )}
           {page === "resources" && <ResourcesPage token={token} />}
-          {page === "benchmarks" && <BenchmarksPage token={token} />}
+          {page === "benchmarks" && (
+            <BenchmarksPage token={token} route={route} />
+          )}
           {page === "tasks" && <TasksPage token={token} />}
           {page === "agents" && <AgentsPage token={token} />}
           {(page === "runs" || page === "records") && (

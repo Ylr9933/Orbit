@@ -78,6 +78,7 @@
 
 - [Web 科研控制台方案](architecture/web-console-design.md)：完整页面规划、模块边界与分期验收。
 - [W 批科研工作流](architecture/web-research-workflow.md)：新旧项目兼容、研究方案、实验预检/提交/取消、产物和分析的实现边界。
+- [Benchmark 实验工作台](operations/benchmark-workspace.md)：跨目录批次登记、评分趋势、逐题比较、轨迹搜索、运行日志、笔记与导出。
 - [Web 控制台使用说明](operations/web-console.md)：已实现简版的启动、SSH 访问、页面范围、HTTP 接口与验证方式。
 
 - [Run / Environment 契约](architecture/run-environment-contract.md)：仅求解与隔离评测设计。

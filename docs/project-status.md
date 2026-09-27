@@ -1,6 +1,6 @@
 # 项目当前状态
 
-Updated at: 2026-09-26T08:00:58.116059+00:00
+Updated at: 2026-09-26T09:09:53.071537+00:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
 GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及 BM00–BM07 的各工程阶段。
@@ -41,6 +41,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 - **BM07**：Benchmark 只读页面、精确元组及本地运行证据核对的兼容矩阵、可选原生提交交接和一次性发送保护；独立新包在隔离 venv 中复用现有 backend 完成 CPU 演练。未进行官方提交或真实模型/GPU 验收。
 - **BM03**：独立 PAST-Bench 包固定 v1.0.0 revision，把完整 family 的 persistence on/off 配对作为原子任务；冻结 episode 顺序、fresh session、history/state 策略和原生 runner，归档原生 evidence 与聚合结果。无模型 SM01 工程 profile 通过独立 wheel 验收；尚未运行真实 Agent/judge，不代表 Docker sandbox、官方复现或榜单提交。
 - **BM04**：独立 PostTrainBench 包将一个训练 trial 保持为原子 HTCondor job，持久绑定 native job ID；真实模式声明 H100/CPU/内存/磁盘和 GPU 可见性隔离，按 job ID 查询/取消。提交响应不确定时暂停自动重试，等待原生身份对账。final model 进入文件级校验的内容寻址私有存储，Records 保存 handoff manifest、指标、judge 和有界轨迹。无模型 wheel 与模拟 scheduler 生命周期通过；未进行真实 H100/Apptainer/Agent/judge 集群验收。
+- **Benchmark Web 工作台（本分支拟集成）**：登记跨目录批次，查看全部任务与有效评分，比较同任务得分、完整批次描述性趋势，搜索/并排复盘归档轨迹，预览和导出产物、保存笔记与默认基线。运行日志读取已采集内容，取消操作保存意图供 worker 处理；不提供自动重跑、实时 token 流或官方总分聚合。412 项非集成/E2E 测试及 Benchmark/原科研浏览器流程通过；真实 ASI 批次仅做只读投影核对。
 - **W**：Web 兼容旧 catalog 和新工作区，支持初始化、研究方案查看、实验编译/预检/提交/取消、产物下载和分析展示。
 - **模块整理**：修复 Web-first 启动权限、统一状态目录/研究运行上下文，以及事件/产物/轨迹可见性；拆分 Records 内部实现并保留兼容 API。
   `make verify` 通过（272 项非 E2E）；18 项无模型真实 Docker 集成、两套浏览器流程和独立 wheel 安装通过。
@@ -51,7 +52,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 - **科研训练**：长期科研环境的 GPU 入口、CUDA/系统依赖模板、外部不可变数据与大权重传输；当前 HTTP 下载上限 16 MiB。真实 GPU 训练及完整冻结 Task 验收仍缺。
 - **执行与任务**：其他 provider 的完整容器链、ToolBinding、科研 Controller 的持久等待队列与训练 checkpoint 接续。Benchmark 已有最小持久队列，但尚未推广到所有执行入口；ASI 仍限公开单实例、PAST 真实 Agent/runtime 与 PostTrainBench H100/HTCondor/Apptainer/Agent/judge 组合仍待验收。
 - **自动研究**：科研主线仍仅能在冻结 Task 授权集合内迭代；BM06 可在明确范围内登记 benchmark 候选，但不会自动生成候选或判断科学真实性。
-- **记录和界面**：其他 Agent 的平台外轨迹仍依赖显式导入；Codex 格式兼容需随 CLI 版本维护，尚无 Web 专门会话列表；benchmark 本地大文件可恢复，但缺跨节点传输/远端备份/token-logprob。Benchmark 页只读；Web 未覆盖 H/E/I 全部控制或 benchmark 提交/取消，HTTP/TypeScript 契约仍手工维护。
+- **记录和界面**：其他 Agent 的平台外轨迹仍依赖显式导入；Codex 格式兼容需随 CLI 版本维护，尚无 Web 专门会话列表；benchmark 本地大文件可恢复，但缺跨节点传输/远端备份/token-logprob。Benchmark 已有结果复盘和单 Run 取消意图；Web 未覆盖 H/E/I 全部控制或 benchmark 提交/重跑，HTTP/TypeScript 契约仍手工维护。
 - **运维和扩展**：Web 资产需单独提供；单管理员服务未产品化为安装即用部署；无 Worker/Ray、多节点或多人在线权限。
 
 ## 下一步优先级
@@ -65,6 +66,8 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 纯代码开发无外部阻塞。真实模型、完整 GPU 任务、两节点分别需要凭据与费用预算、训练镜像及明确资源范围、第二台节点和网络。BM04 原生验收还需要满足 GPU 可见性隔离的 HTCondor H100 队列、共享存储、Apptainer 镜像和 judge 认证；当前机器不能代替该集群条件。当前 Controller 已有实例独占主机锁，本轮未重启它或执行真实 Codex GPU Run。HTTP 仅限本机管理员；托管 CI/分支保护尚需平台核实，License 尚未确定。
 
 ## 相关记录
+
+- [Benchmark Web 工作台](changes/20260926-benchmark-web-4f82c1.md)、[使用说明](operations/benchmark-workspace.md)
 
 - [BM04 任务记录](changes/20260923-benchmark-posttrain-bm04-7b2e91.md)、[PostTrainBench 操作说明](operations/posttrain-bench-native-trial.md)
 - [Benchmark 集成整理](changes/20260923-benchmark-integration-cleanup-4e9b62.md)

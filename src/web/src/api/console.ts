@@ -113,7 +113,12 @@ export async function request<T>(
   return value as T;
 }
 
-export function useData<T>(token: string, path: string | null, interval = 0) {
+export function useData<T>(
+  token: string,
+  path: string | null,
+  interval = 0,
+  stopWhen?: (value: T) => boolean,
+) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState("");
   const [updated, setUpdated] = useState("");
@@ -127,6 +132,7 @@ export function useData<T>(token: string, path: string | null, interval = 0) {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function load() {
+      let repeat = true;
       try {
         const value = await request<T>(
           token,
@@ -134,6 +140,7 @@ export function useData<T>(token: string, path: string | null, interval = 0) {
           undefined,
           controller.signal,
         );
+        repeat = !stopWhen?.(value);
         if (!controller.signal.aborted) {
           setData(value);
           setError("");
@@ -142,7 +149,7 @@ export function useData<T>(token: string, path: string | null, interval = 0) {
       } catch (reason) {
         if (!controller.signal.aborted) setError(String(reason));
       } finally {
-        if (interval && !controller.signal.aborted)
+        if (interval && repeat && !controller.signal.aborted)
           timer = setTimeout(load, interval);
       }
     }
@@ -151,7 +158,7 @@ export function useData<T>(token: string, path: string | null, interval = 0) {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [token, path, interval, revision]);
+  }, [token, path, interval, revision, stopWhen]);
   return { data, error, updated, refresh: () => setRevision((n) => n + 1) };
 }
 
