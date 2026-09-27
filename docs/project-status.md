@@ -1,6 +1,6 @@
 # 项目当前状态
 
-Updated at: 2026-09-26T09:09:53.071537+00:00
+Updated at: 2026-09-27T20:02:46+08:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
 GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及 BM00–BM07 的各工程阶段。
@@ -33,6 +33,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 - **宿主机 Codex 采集**：项目目录发现候选会话、显式绑定真实 thread ID、原始 JSONL 与规范事件写入独立 Records Run，并支持轮次通知触发的断点续采；不启动模型或 Docker。
 - **BM00/BM01（本地 `main`）**：版本化 SDK、独立包显式启用、规划/检查与命令冻结；一个原子单位的本机受管进程、持久 operation/handle、重启续查、取消及 Records 归档。独立 wheel 和短时真实 CPU 进程已有验证；其普通进程后端不承担容器/GPU 配额或评分。
 - **BM02-A（本地 `main`）**：独立 TB-Science/Harbor 包、固定版本、独立 verifier、CPU/内存实际核验和 Records 原始证据。Oracle 单任务的原生同产物重评、重复提交、真实取消清理通过；不代表模型 Agent、整套任务、GPU 或正式榜单兼容。
+- **TB-Science Codex 扩展**：支持固定版本的原生 Harbor Codex、显式认证/模型、公开网络代理、资源准入、完整原始证据归档与批次离线检查。真实 Codex 已在原生容器中求解并归档会话、137 步 ATIF 和提交，工作台能读取其中 131 步工具调用；验收因既定时间上限在 verifier 前取消，无真实 Codex 评分证据。70 项任务的求解配置均为 `gpus=0`，这不证明全部实际无需 GPU；4 CPU/8 GiB 的静态准入仅覆盖 51 项。
 - **BM02-B 与 Codex OS 扩展**：独立 ASI-Bench 包固定 runner；已移除 fixture 入口与模拟执行，仅保留显式 `codex_cli` + Docker `--sandbox os` profile，公开 seed31415 单实例真实 Codex 运行、BenchFlow 本地评分、原生 JSONL/轨迹/错误流归档、Web 关联查询、子容器身份与采样、清理及租约释放均已本机验证。该分数非官方；seed42 bundle 仍只做本地生成，未认证、上传或取得官方分数。
 - **BM05-A**：Benchmark 请求可持久 FIFO 排队；Resources 保存幂等租约、owner epoch、原生 job ID、对账和释放历史。崩溃窗口、等待取消、清理后续跑以及独立 wheel 双任务验收通过；当前默认单活动租约，不代表 CPU/GPU 硬隔离或后台自动调度。
 - **BM05-B**：同一状态目录可配置并持久保存并发容量、运行轮询 worker 与墙钟预算组；受管进程采样 CPU/内存/I/O，结果区分申请、准入、实际分配证明及测量；本地产物支持中断续传与完整校验。默认仍为单槽，租约不实施硬限额。
@@ -41,7 +42,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 - **BM07**：Benchmark 只读页面、精确元组及本地运行证据核对的兼容矩阵、可选原生提交交接和一次性发送保护；独立新包在隔离 venv 中复用现有 backend 完成 CPU 演练。未进行官方提交或真实模型/GPU 验收。
 - **BM03**：独立 PAST-Bench 包固定 v1.0.0 revision，把完整 family 的 persistence on/off 配对作为原子任务；冻结 episode 顺序、fresh session、history/state 策略和原生 runner，归档原生 evidence 与聚合结果。无模型 SM01 工程 profile 通过独立 wheel 验收；尚未运行真实 Agent/judge，不代表 Docker sandbox、官方复现或榜单提交。
 - **BM04**：独立 PostTrainBench 包将一个训练 trial 保持为原子 HTCondor job，持久绑定 native job ID；真实模式声明 H100/CPU/内存/磁盘和 GPU 可见性隔离，按 job ID 查询/取消。提交响应不确定时暂停自动重试，等待原生身份对账。final model 进入文件级校验的内容寻址私有存储，Records 保存 handoff manifest、指标、judge 和有界轨迹。无模型 wheel 与模拟 scheduler 生命周期通过；未进行真实 H100/Apptainer/Agent/judge 集群验收。
-- **Benchmark Web 工作台（本分支拟集成）**：登记跨目录批次，查看全部任务与有效评分，比较同任务得分、完整批次描述性趋势，搜索/并排复盘归档轨迹，预览和导出产物、保存笔记与默认基线。运行日志读取已采集内容，取消操作保存意图供 worker 处理；不提供自动重跑、实时 token 流或官方总分聚合。412 项非集成/E2E 测试及 Benchmark/原科研浏览器流程通过；真实 ASI 批次仅做只读投影核对。
+- **Benchmark Web 工作台**：登记跨目录批次，查看全部任务与有效评分，比较同任务得分、完整批次描述性趋势，搜索/并排复盘归档轨迹，预览和导出产物、保存笔记与默认基线。运行日志读取已采集内容，取消操作保存意图供 worker 处理；不提供自动重跑、实时 token 流或官方总分聚合。合并后 417 项非集成/E2E 测试通过，已只读检查真实 TB 归档轨迹；浏览器流程在原工作分支通过。
 - **W**：Web 兼容旧 catalog 和新工作区，支持初始化、研究方案查看、实验编译/预检/提交/取消、产物下载和分析展示。
 - **模块整理**：修复 Web-first 启动权限、统一状态目录/研究运行上下文，以及事件/产物/轨迹可见性；拆分 Records 内部实现并保留兼容 API。
   `make verify` 通过（272 项非 E2E）；18 项无模型真实 Docker 集成、两套浏览器流程和独立 wheel 安装通过。
@@ -57,7 +58,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 
 ## 下一步优先级
 
-1. 给一个原生参考适配器增加合规开发反馈，在允许范围内试用两候选，并取得原生评分等价证据。
+1. 在新的明确模型预算下补齐 TB-Science 原生 Codex 求解→verifier 评分验收，检查完整证据归档；随后给一个原生参考适配器增加合规开发反馈与两候选试用。
 2. 准备 CUDA 训练镜像，完成冻结 Task + Codex 单 GPU Run 验收；随后补长期科研环境 GPU 入口及大数据/权重入口。
 3. 确定长期状态目录，补齐安装诊断和启动/备份指南，用一个真实科研项目试用完整流程。
 
@@ -67,6 +68,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 
 ## 相关记录
 
+- [本次分支集成](changes/20260927-local-branch-integration-2b8c9e.md)、[TB-Science Codex 扩展](changes/20260926-tb-science-codex-7ad3e1.md)
 - [Benchmark Web 工作台](changes/20260926-benchmark-web-4f82c1.md)、[使用说明](operations/benchmark-workspace.md)
 
 - [BM04 任务记录](changes/20260923-benchmark-posttrain-bm04-7b2e91.md)、[PostTrainBench 操作说明](operations/posttrain-bench-native-trial.md)

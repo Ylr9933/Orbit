@@ -2,9 +2,55 @@
 
 import base64
 import json
+from datetime import datetime
 from typing import Any
 
 from agent_infra.records.api import BlobRef, DataClass, RecordsReader, Visibility
+
+
+def _harbor_atif_steps(document: Any) -> list[dict[str, Any]]:
+    """Project an archived ATIF without losing its tool-call identity."""
+    if not isinstance(document, dict) or not isinstance(document.get("steps"), list):
+        raise ValueError("invalid native ATIF")
+    result = []
+    for index, step in enumerate(document["steps"]):
+        if not isinstance(step, dict):
+            raise ValueError("invalid native ATIF step")
+        calls = step.get("tool_calls")
+        if calls is not None and not isinstance(calls, list):
+            raise ValueError("invalid native ATIF tool calls")
+        first = calls[0] if calls and isinstance(calls[0], dict) else {}
+        metadata = {"role": step.get("source", "unknown")}
+        if isinstance(first.get("function_name"), str):
+            metadata["tool_name"] = first["function_name"]
+        if isinstance(first.get("tool_call_id"), str):
+            metadata["tool_call_id"] = first["tool_call_id"]
+        timestamp = step.get("timestamp")
+        try:
+            timestamp_ms = (
+                int(datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp() * 1000)
+                if isinstance(timestamp, str)
+                else None
+            )
+        except ValueError:
+            timestamp_ms = None
+        result.append(
+            {
+                "step_index": index,
+                "timestamp_ms": timestamp_ms,
+                "step_type": "tool_call" if calls else step.get("source", "unknown"),
+                "content": json.dumps(
+                    {
+                        key: step[key]
+                        for key in ("message", "tool_calls", "observation")
+                        if key in step
+                    },
+                    ensure_ascii=False,
+                ),
+                "metadata": metadata,
+            }
+        )
+    return result
 
 
 class BenchmarkEvidence:
@@ -78,9 +124,24 @@ class BenchmarkEvidence:
         available = {f["path"] for f in self.files}
         member = trajectory.get("member")
         full = "outputs/evidence/trajectory.json"
-        if full in available:
+        atif = (evidence.get("groups") or {}).get("atif") or []
+        if (
+            trajectory.get("origin") == "native_harbor_atif"
+            and len(atif) == 1
+            and atif[0] in available
+        ):
+            try:
+                steps = _harbor_atif_steps(json.loads(self.read(atif[0])))
+                member = atif[0]
+            except (ValueError, KeyError):
+                pass  # Keep the bounded derived view if raw ATIF is unavailable or too large.
+        elif full in available:
             member = full
-        if member in available and member in {full, "outputs/evidence/trajectory-view.json"}:
+        if (
+            not steps
+            and member in available
+            and member in {full, "outputs/evidence/trajectory-view.json"}
+        ):
             try:
                 value = json.loads(self.read(member))
                 if isinstance(value, list):

@@ -20,6 +20,92 @@ from agent_infra.records.local import LocalRecordsStore
 from agent_infra.runs.control_store import RunControlStore
 
 
+def test_archived_harbor_atif_tool_filter_reads_original_calls(tmp_path):
+    """The bounded view can clip JSON; archived ATIF still exposes native calls."""
+    state = tmp_path / "state"
+    control = RunControlStore(state / "benchmarks")
+    run = control.create(
+        "tb-op",
+        {
+            "execution": {
+                "frozen_plan": {
+                    "plan": {
+                        "suite": {"benchmark": "terminal-bench-science"},
+                        "units": [{"native_id": "tb-task"}],
+                    }
+                }
+            }
+        },
+        {},
+    )
+    records = LocalRecordsStore(state / "benchmarks" / "records")
+    now = datetime.now(UTC)
+    records.begin_run(RunManifest(run["run_id"], now, {}))
+    records.begin_attempt(AttemptManifest(run["attempt_id"], run["run_id"], now))
+    sink = records.scoped_sink(
+        RecordContext(run["run_id"], run["attempt_id"], "test", ProducerKind.RUN)
+    )
+    source = tmp_path / "tb-artifact" / "outputs"
+    atif_member = "outputs/trials/trial-1/agent/trajectory.json"
+    atif = source / "trials/trial-1/agent/trajectory.json"
+    atif.parent.mkdir(parents=True)
+    atif.write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {"source": "agent", "message": "thinking"},
+                    {
+                        "source": "agent",
+                        "message": "run",
+                        "tool_calls": [
+                            {
+                                "function_name": "shell",
+                                "tool_call_id": "call-1",
+                                "arguments": "x" * 5000,
+                            }
+                        ],
+                        "observation": {"output": "ok"},
+                    },
+                ]
+            }
+        )
+    )
+    view = source / "evidence/trajectory-view.json"
+    view.parent.mkdir()
+    view.write_text(json.dumps([{"step_index": 0, "step_type": "agent", "content": "clipped"}]))
+    artifact = sink.commit_artifact(
+        source.parent, name="native-submission", visibility=Visibility.ADMIN
+    )
+    control.update(
+        run["run_id"],
+        state="finished",
+        result={
+            "artifact_id": artifact.artifact_id,
+            "native_result": {
+                "evidence": {
+                    "capture_status": "complete",
+                    "groups": {"atif": [atif_member]},
+                    "trajectory": {
+                        "origin": "native_harbor_atif",
+                        "member": "outputs/evidence/trajectory-view.json",
+                        "capture_status": "truncated",
+                    },
+                }
+            },
+        },
+    )
+    from agent_infra.runs.benchmark_evidence import BenchmarkEvidence
+
+    evidence = BenchmarkEvidence(
+        LocalRecordsStore(records.root, read_only=True), control.get(run["run_id"])
+    )
+    tools = evidence.trajectory(kind="tools")
+    assert tools["matched_steps"] == 1
+    assert tools["steps"][0]["metadata"]["tool_name"] == "shell"
+    assert tools["steps"][0]["metadata"]["tool_call_id"] == "call-1"
+    assert tools["search_scope"] == atif_member
+
+
 @pytest.mark.parametrize("benchmark", ["ASI-Bench", "terminal-bench-science"])
 def test_asi_trajectory_is_scoped_to_the_run_and_paged(tmp_path, benchmark):
     state = tmp_path / "state"
