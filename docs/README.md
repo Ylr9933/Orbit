@@ -51,6 +51,7 @@
 
 ## 产品需求调研
 
+- [0928 实验工作台调研与设计](product/experiment-workbench-design-20260928.md)、[离线交互原型](assets/experiment-workbench-20260928.html)：基于 60 条真实 ASI 结果的页面与交互方案；原型可直接用浏览器打开，尚未接入正式前端，重跑仅预览。
 - [Codex / Claude Code 辅助科研的真实需求与 infra 建议](product/scientific-agent-needs-2026-09.md)：2026-09-26 的社区、GitHub、研究与源码调研，覆盖需求证据、当前缺口、工具复用、精简范围和验收建议；属于产品建议，不代表新增功能已实现。
 
 ## 当前代码检查
