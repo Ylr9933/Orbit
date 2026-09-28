@@ -1,6 +1,6 @@
 # 项目当前状态
 
-Updated at: 2026-09-27T20:02:46+08:00
+Updated at: 2026-09-28T10:59:40+08:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
 GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及 BM00–BM07 的各工程阶段。
@@ -37,7 +37,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 - **BM02-B 与 Codex OS 扩展**：独立 ASI-Bench 包固定 runner；已移除 fixture 入口与模拟执行，仅保留显式 `codex_cli` + Docker `--sandbox os` profile，公开 seed31415 单实例真实 Codex 运行、BenchFlow 本地评分、原生 JSONL/轨迹/错误流归档、Web 关联查询、子容器身份与采样、清理及租约释放均已本机验证。该分数非官方；seed42 bundle 仍只做本地生成，未认证、上传或取得官方分数。
 - **BM05-A**：Benchmark 请求可持久 FIFO 排队；Resources 保存幂等租约、owner epoch、原生 job ID、对账和释放历史。崩溃窗口、等待取消、清理后续跑以及独立 wheel 双任务验收通过；当前默认单活动租约，不代表 CPU/GPU 硬隔离或后台自动调度。
 - **BM05-B**：同一状态目录可配置并持久保存并发容量、运行轮询 worker 与墙钟预算组；受管进程采样 CPU/内存/I/O，结果区分申请、准入、实际分配证明及测量；本地产物支持中断续传与完整校验。默认仍为单槽，租约不实施硬限额。
-- **Benchmark 批量入口**：`benchmark batch prepare/submit/status/worker` 将单实例适配器组合为固定批次，复用队列和并发租约；逐项冻结模型兼容声明，生成每任务状态与指标汇总。声明不证明账号可用性，汇总不冒充原生套件或官方分数。支持模型/认证终止错误停止派发。首次失败定位到旧容器 Codex 0.153.4；固定为宿主机同版 0.157.1 后，同一认证调用 gpt-6-sol 成功。60 项 b3 新批次已准备并启动提交，最多 6 并发；整批结果仍待完成，不作为完整套件验收。
+- **Benchmark 批量入口**：`benchmark batch prepare/submit/status/worker` 将单实例适配器组合为固定批次，复用队列和并发租约；逐项冻结模型兼容声明，生成每任务状态与指标汇总。声明不证明账号可用性，汇总不冒充原生套件或官方分数。支持模型/认证终止错误停止派发。首次失败定位到旧容器 Codex 0.153.4；固定为宿主机同版 0.157.1 后，同一认证调用 gpt-6-sol 成功。公开 seed31415 的 60 项 b3 批次已全部结束，59 项有有效本地评分、1 项未生成预测而失败，59 项算术均分 34.3384；全部清理并释放租约。这不是官方套件总分或正式榜单验收。
 - **BM06**：不可变候选、授权修改范围、公开指标投影、父子血缘、确定性提交、累计试验/墙钟预算和停止/选优。两候选合成结果通过工程测试；四个原生参考适配器尚未开放 optimizer 反馈，不等于已能自动优化官方成绩。
 - **BM07**：Benchmark 只读页面、精确元组及本地运行证据核对的兼容矩阵、可选原生提交交接和一次性发送保护；独立新包在隔离 venv 中复用现有 backend 完成 CPU 演练。未进行官方提交或真实模型/GPU 验收。
 - **BM03**：独立 PAST-Bench 包固定 v1.0.0 revision，把完整 family 的 persistence on/off 配对作为原子任务；冻结 episode 顺序、fresh session、history/state 策略和原生 runner，归档原生 evidence 与聚合结果。无模型 SM01 工程 profile 通过独立 wheel 验收；尚未运行真实 Agent/judge，不代表 Docker sandbox、官方复现或榜单提交。
@@ -80,7 +80,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 - [BM07 集成维护](changes/20260923-benchmark-integration-maintenance-35a9d2.md)
 - [当前代码与能力审阅](implementation/current-code-and-capability-review.md)
 - [BM02-B 任务记录](changes/20260922-benchmark-asi-bm02b-4d2c81.md)、[ASI-Bench 操作说明](operations/asi-bench-native-trial.md)
-- [ASI b3 批次入口与启动](changes/20260926-asi-batch-b3-6f98d2.md)、[批量操作](operations/asi-bench-batch.md)
+- [ASI b3 批次入口与启动](changes/20260926-asi-batch-b3-6f98d2.md)、[60 项最终结果](changes/20260927-asi-b3-resume-35-6d51b9.md)、[批量操作](operations/asi-bench-batch.md)
 - [ASI fixture 移除](changes/20260926-remove-asi-fixture-d1a8c4.md)
 - [ASI Codex OS 真实验收与轨迹归档](changes/20260925-asi-codex-os-traces-7e4b2a.md)
 - [BM02-A 任务记录](changes/20260922-benchmark-tb-science-bm02a-6b91e3.md)、[TB-Science 操作说明](operations/tb-science-native-trial.md)
