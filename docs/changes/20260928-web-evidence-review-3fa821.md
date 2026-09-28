@@ -4,8 +4,8 @@ task_id: "20260928-web-evidence-review-3fa821"
 title: "Surface benchmark evaluation health and evidence-linked research reviews"
 branch: "feat/benchmark-review-20260928"
 base_commit: "55f5c31"
-work_status: in_progress
-updated_at: "2026-09-28T22:33:24.075896+08:00"
+work_status: completed
+updated_at: "2026-09-28T22:36:31.683567+08:00"
 pull_request: null
 ---
 
@@ -22,7 +22,7 @@ pull_request: null
 - Added bounded recursive scoring diagnostics, terminal-event interpretation, independently labelled original execution status, batch filters and comparison/export warnings. Original metrics/aggregation are unchanged.
 - Added strict review attachment validation, optimistic revisions and exact run/attempt/execution/artifact/result snapshot binding. Validate visible member ownership and exact trace steps; stale summaries are suppressed while the old report remains accessible.
 - Reused existing batch/task pages for authored observations, explanations, hypotheses, evidence links and plain-text Markdown report view/download. No new navigation, runtime engine or dependencies.
-- Updated the workbench runbook and proposed project overview. Prepared the real 20-case / 90-link report attachment outside Git.
+- Updated the workbench runbook and proposed project overview. Imported the real 20-case / 90-link report attachment into the active local console, after backing up its metadata database. The reusable `web-review.json` stays in the ignored original review directory.
 
 ## Decisions
 
@@ -42,14 +42,16 @@ pull_request: null
 | SHA-256 checks against original review source-hashes.json | Original ASI batch | passed | All 65 business files unchanged; runtime report and extracted artifacts stay outside Git. |
 | New model/judge/Docker/GPU execution | None | not_run | Read-side/UI change; no rescoring or new execution budget. |
 | Both remote branch settings and ancestry | origin/main and zjunlpgit/main at 6601e3d | passed | Both fetched tips are ancestors; GitHub reports main unprotected. No required review was bypassed or policy changed. |
+| Active console import and GET-only browser check | 138110c; Web 8765 | passed | Real review revision 1; 20 cases, 90 evidence links, unchanged score mean. Rebuilt original-checkout assets (`index-BBdc3EMB.js` / `index-BfXnQzEE.css`) and restarted only the Web process, leaving Controller/jobs alone. Metadata backup: `infra-state-personal/benchmarks/console/workspace.before-review-20260928.sqlite3`; refreshed login link in private `infra-state-personal/console/access-url.txt`. |
+| Authorized local integration and both remote pushes | 138110cea273a4abe12eb73fac6f93e1fe084382 | passed | Local main fast-forwarded; both remote main refs independently verified at this implementation commit. `git branch --no-merged main` returned empty. Preserved all branches and worktrees; no force push. This final record is published as a following task-branch documentation commit. |
 
 ## Open items and blockers
 
-- Product implementation and acceptance passed. Import into the active local console, service update and remote publication remain.
+- None for the authorized implementation, local deployment and publication. Scorer fixes, rescoring and new research experiments remain separate work.
 
 ## Next steps
 
-- Import the validated runtime attachment, update only the Web process, fast-forward the integrated local branches and publish to both remotes.
+- None. Remote tips and ancestry are verified after publishing this finalized record; Git remains the authority for the final documentation commit.
 
 ## Compatibility and rollback
 
@@ -58,3 +60,5 @@ pull_request: null
 The first browser run exposed reduced first-screen density; compact health notices fixed it without weakening the test. Adding the score fixture also required disambiguating the old filename search. Final browser checks use explicit scoring paths. Temporary preview startup initially rejected a short test token, then passed with a valid test-only token. These were corrected before acceptance.
 
 Full reports are displayed as escaped Markdown source; offline relative report links still require the original review directory. Online case evidence links are independently validated. Rules currently cover known BenchFlow/Codex evidence formats, not arbitrary evaluator failures or scientific correctness. Original scoring/status producers remain unchanged; the UI does not repair the evaluator or claim corrected scores.
+
+Final tested implementation commit: `138110cea273a4abe12eb73fac6f93e1fe084382`. Final frontend logic tests: 9 passed. Browser logs: `/tmp/review-browser-final.log`, `/tmp/review-real-browser-delivery.log`, `/tmp/review-live-browser.log`; full repository check: `/tmp/review-verify.log`. Existing research/legacy browser workflows were unchanged in this increment and retain their earlier usability-branch evidence; no new full research execution is claimed.
