@@ -625,3 +625,48 @@
   line-height: 1.8;
   font-size: 14px;
 }
+
+.health-summary,
+.batch-review {
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--border, #dce2e4);
+}
+.health-summary small {
+  display: block;
+  margin-top: 0.25rem;
+}
+.research-review {
+  margin-top: 1rem;
+}
+.research-review p {
+  max-width: 90ch;
+  line-height: 1.7;
+}
+.research-review h3 small {
+  font-size: 0.8rem;
+  font-weight: normal;
+}
+.review-case-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem 1.5rem;
+  margin: 1rem 0;
+}
+.review-report {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+  max-height: 70vh;
+}
+.health-summary .actions,
+.research-review .actions {
+  flex-wrap: wrap;
+}
+
+.health-summary {
+  font-size: 13px;
+}
+.health-summary .actions {
+  margin: 0;
+  min-height: 0;
+}

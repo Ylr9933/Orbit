@@ -1,10 +1,12 @@
 """Compose registered batches and run evidence for the administrator workspace."""
 
+import json
 from pathlib import Path
 from typing import Any
 
 from agent_infra.benchmarks.batch import BatchPlan
 from agent_infra.benchmarks.execution import read_execution
+from agent_infra.projects.benchmark_review import ResearchReview
 from agent_infra.projects.benchmark_workspace import BenchmarkWorkspaceStore
 from agent_infra.records.api import DataClass, Visibility
 from agent_infra.records.local import LocalRecordsStore
@@ -28,7 +30,88 @@ def _batch(path: Path) -> BatchPlan:
 class BenchmarkWorkspace:
     def __init__(self, state: Path) -> None:
         self.state = state
+        self._health_cache: dict[str, dict[str, Any]] = {}
         self.metadata = BenchmarkWorkspaceStore(state / "benchmarks" / "console")
+
+    def _project(self, state: Path, item: dict[str, Any]) -> dict[str, Any]:
+        row = project_run(item)
+        cache_key = digest([str(state), row["run_id"], row["attempt_id"], row["evidence_id"]])
+        health = self._health_cache.get(cache_key)
+        if health is None:
+            root = state / "benchmarks/records"
+            records = (
+                LocalRecordsStore(root, read_only=True)
+                if (root / "records.sqlite3").is_file()
+                else None
+            )
+            try:
+                health = BenchmarkEvidence(records, item).health()
+            except (OSError, KeyError, ValueError):
+                health = BenchmarkEvidence(None, item).health()
+            if row["state"] == "finished" and health["evaluation"]["status"] != "unknown":
+                if len(self._health_cache) >= 256:
+                    self._health_cache.pop(next(iter(self._health_cache)))
+                self._health_cache[cache_key] = health
+        row["health"] = health
+        return row
+
+    @staticmethod
+    def _snapshot(rows: list[dict[str, Any]]) -> str:
+        return digest(
+            sorted(
+                (
+                    {
+                        k: row[k]
+                        for k in (
+                            "unit_id",
+                            "run_id",
+                            "attempt_id",
+                            "evidence_id",
+                            "execution_digest",
+                            "comparison_key",
+                            "metrics",
+                            "state",
+                            "evaluation",
+                            "protocol",
+                        )
+                    }
+                    for row in rows
+                ),
+                key=lambda row: (row["unit_id"], row["run_id"] or ""),
+            )
+        )
+
+    def review(self, key: str, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+        value = self.metadata.all("review").get(key)
+        if value is None:
+            return None
+        return {**value, "stale": value["snapshot"] != self._snapshot(rows)}
+
+    def import_review(self, key: str, body: dict[str, Any]) -> dict[str, Any]:
+        if len(json.dumps(body, ensure_ascii=False).encode()) > 65536:
+            raise ValueError("复盘附件不能超过 64 KiB")
+        review = ResearchReview.model_validate(body)
+        _, _, rows = self._load(key)
+        if review.snapshot != self._snapshot(rows):
+            raise ValueError("复盘与当前运行快照不匹配，请重新核对结果")
+        runs = {r["run_id"]: r for r in rows if r["run_id"]}
+        seen: set[str] = set()
+        for case in review.cases:
+            if case.run_id not in runs or case.run_id in seen:
+                raise ValueError("复盘包含重复或不属于本批次的 Run")
+            seen.add(case.run_id)
+            evidence = self.evidence(key, case.run_id)
+            members = {f["path"] for f in evidence.files}
+            for ref in case.evidence:
+                if (ref.member is None) == (ref.step is None):
+                    raise ValueError("证据链接必须指定文件或轨迹步骤其中之一")
+                if ref.member is not None and ref.member not in members:
+                    raise ValueError("证据文件不属于当前 Run 的可见归档")
+                if ref.step is not None:
+                    page = evidence.trajectory(cursor=ref.step, limit=1)
+                    if not page["steps"] or page["steps"][0]["step_index"] != ref.step:
+                        raise ValueError("轨迹步骤不存在或不能准确定位")
+        return self.metadata.save("review", key, review.model_dump())
 
     def register(self, body: dict[str, Any]) -> dict[str, Any]:
         path = Path(str(body.get("path", ""))).expanduser()
@@ -68,7 +151,7 @@ class BenchmarkWorkspace:
         for item in RunControlStore(root, read_only=True).ordered():
             if item["request"].get("kind") != "benchmark":
                 continue
-            row = project_run(item)
+            row = self._project(self.state, item)
             config = row["config"]
             key = (
                 "local-"
@@ -112,7 +195,7 @@ class BenchmarkWorkspace:
             if item is not None:
                 if item["request"]["execution"]["digest"] != member.execution_digest:
                     raise ValueError("执行状态与登记计划不一致")
-                rows.append(project_run(item))
+                rows.append(self._project(state, item))
             else:
                 file = (root / member.execution).resolve()
                 if not file.is_relative_to(root):
@@ -166,7 +249,10 @@ class BenchmarkWorkspace:
     def detail(self, key: str) -> dict[str, Any]:
         _, name, rows = self._load(key)
         notes = self.metadata.all("note")
+        review = self.review(key, rows)
         return {
+            "review_snapshot": self._snapshot(rows),
+            "review": {k: v for k, v in review.items() if k != "report"} if review else None,
             **self._describe(key, name, rows),
             "runs": [
                 {**row, "annotation": notes.get(key + ":" + row["unit_id"], {})} for row in rows
@@ -245,6 +331,12 @@ class BenchmarkWorkspace:
         key = parts[0]
         if len(parts) == 1 and method == "GET":
             return self.detail(key)
+        if parts[1:] == ["review"]:
+            if method == "POST":
+                return self.import_review(key, body)
+            if method == "GET":
+                _, _, rows = self._load(key)
+                return {"review": self.review(key, rows)}
         if parts[1:] == ["note"] and method == "POST":
             return self.annotate(key, body, q("unit") or None)
         if len(parts) == 4 and parts[1] == "runs":
@@ -259,8 +351,18 @@ class BenchmarkWorkspace:
                 return {"cancel_requested": run["cancel_requested"], "state": run["state"]}
             if method == "GET":
                 if action == "detail":
-                    _, run = self._run(key, run_id)
-                    row = project_run(run)
+                    state, run = self._run(key, run_id)
+                    row = self._project(state, run)
+                    _, _, rows = self._load(key)
+                    review = self.review(key, rows)
+                    row["review"] = None
+                    if review is not None:
+                        case = next((c for c in review["cases"] if c["run_id"] == run_id), None)
+                        row["review"] = {
+                            "author": review["author"],
+                            "stale": review["stale"],
+                            "case": case,
+                        }
                     row["annotation"] = self.metadata.all("note").get(
                         key + ":" + row["unit_id"], {}
                     )

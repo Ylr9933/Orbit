@@ -6,6 +6,8 @@ export interface Annotation {
   revision?: number;
 }
 export interface BenchmarkRun {
+  health?: RunHealth;
+  review?: { author: string; stale: boolean; case: ReviewCase | null } | null;
   run_id: string | null;
   attempt_id: string | null;
   unit_id: string;
@@ -32,6 +34,7 @@ export interface BenchmarkRun {
   annotation: Annotation;
 }
 export interface Batch {
+  health?: HealthSummary;
   id: string;
   name: string;
   annotation: Annotation;
@@ -49,6 +52,8 @@ export interface Batch {
   updated_at: string;
 }
 export interface BatchDetail extends Batch {
+  review_snapshot: string;
+  review: ResearchReview | null;
   runs: BenchmarkRun[];
 }
 export interface Overview {
@@ -90,4 +95,42 @@ export interface Trajectory {
   matched_steps: number;
   next_cursor: number | null;
   search_scope: string | null;
+}
+
+export interface RunHealth {
+  evaluation: {
+    status: "needs_review" | "no_anomaly_detected" | "unknown";
+    issues: { kind: string; path: string }[];
+    member: string;
+    hard_gates_passed?: boolean;
+  };
+  solver: {
+    status: "completed" | "failed" | "quota_exhausted" | "unknown";
+    native_status: string | null;
+    status_conflict: boolean;
+    member: string;
+  };
+}
+export interface HealthSummary {
+  needs_review: number;
+  unknown: number;
+  solver_failed: number;
+  status_conflicts: number;
+}
+export interface ReviewCase {
+  run_id: string;
+  observation: string;
+  interpretation: string;
+  next: string;
+  evidence: { label: string; member?: string | null; step?: number | null }[];
+}
+export interface ResearchReview {
+  title: string;
+  author: string;
+  summary: string;
+  cases: ReviewCase[];
+  report?: string;
+  stale: boolean;
+  revision: number;
+  updated_at: string;
 }

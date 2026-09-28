@@ -1,4 +1,5 @@
 import { BatchSummary } from "./batch-summary";
+import { BatchHealth } from "./health";
 import {
   batchConditions,
   batchState,
@@ -50,7 +51,7 @@ export function BatchHeader({
             onClick={() =>
               download(
                 "benchmark-experiment.md",
-                `# ${selected.name}\n\n${selected.annotation.notes ?? ""}\n\n模型：${selected.models.join(", ")}\n\n有效评分 ${selected.scored}/${selected.total}\n\n${metric}：${selected.metrics[metric]?.mean ?? "—"}（本地描述性均值，非官方总分）\n`,
+                `# ${selected.name}\n\n${selected.annotation.notes ?? ""}\n\n模型：${selected.models.join(", ")}\n\n数值评分 ${selected.scored}/${selected.total}\n\n${metric}：${selected.metrics[metric]?.mean ?? "—"}（本地描述性均值，非官方总分）\n\n评分需复核：${selected.health?.needs_review ?? "未知"}；健康未知：${selected.health?.unknown ?? "未知"}；求解异常：${selected.health?.solver_failed ?? "未知"}。均分保留异常评分，不能据此直接推断能力。\n`,
               )
             }
           >
@@ -67,6 +68,10 @@ export function BatchHeader({
           }
         />
       )}
+      <BatchHealth
+        batch={selected.id}
+        health={detail?.health ?? selected.health}
+      />
       <div className="workbench-tab-row">
         <nav className="workbench-tabs" aria-label="实验详情">
           <a

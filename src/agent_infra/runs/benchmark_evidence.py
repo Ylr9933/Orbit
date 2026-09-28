@@ -6,6 +6,12 @@ from datetime import datetime
 from typing import Any
 
 from agent_infra.records.api import BlobRef, DataClass, RecordsReader, Visibility
+from agent_infra.runs.benchmark_health import (
+    SCORE_MEMBER,
+    TERMINAL_MEMBER,
+    evaluation_health,
+    terminal_health,
+)
 
 
 def _harbor_atif_steps(document: Any) -> list[dict[str, Any]]:
@@ -84,6 +90,38 @@ class BenchmarkEvidence:
         assert self.records is not None
         with self.records.open_blob(ref) as stream:
             return stream.read(maximum + 1)
+
+    def health(self) -> dict[str, Any]:
+        def read_json(member: str) -> Any:
+            try:
+                return json.loads(self.read(member))
+            except (OSError, KeyError, ValueError):
+                return None
+
+        native_status = None
+        native = (self.run.get("result") or {}).get("native_result") or {}
+        plan = self.run["request"]["execution"]["frozen_plan"]["plan"]
+        instance = native.get("instance_id") or plan["units"][0]["native_id"]
+        native_members = [
+            f["path"]
+            for f in self.files
+            if f["path"].startswith("outputs/native/")
+            and f["path"].rsplit("/", 1)[-1].startswith(instance + "__")
+            and f["path"].endswith(".json")
+            and ".outputs/" not in f["path"]
+        ]
+        if len(native_members) == 1:
+            native = read_json(native_members[0])
+            if isinstance(native, dict) and isinstance(native.get("status"), str):
+                native_status = native["status"]
+        try:
+            stdout = self.read(TERMINAL_MEMBER)
+        except (OSError, KeyError, ValueError):
+            stdout = None
+        return {
+            "evaluation": evaluation_health(read_json(SCORE_MEMBER)),
+            "solver": terminal_health(stdout, native_status),
+        }
 
     def inventory(self) -> dict[str, Any]:
         return {"files": [{"path": f["path"], "size_bytes": f["size_bytes"]} for f in self.files]}

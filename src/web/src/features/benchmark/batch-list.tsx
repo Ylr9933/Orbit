@@ -65,7 +65,7 @@ export function BatchList({
                 <th>实验</th>
                 <th>模型</th>
                 <th className="numeric">平均分</th>
-                <th>有效评分</th>
+                <th>数值评分</th>
                 <th>状态</th>
                 <th>最近活动</th>
               </tr>
@@ -89,6 +89,9 @@ export function BatchList({
                     <td className="numeric">
                       {number(b.metrics[metric]?.mean)}
                       <small>{metricLabel(metric)}</small>
+                      {!!b.health?.needs_review && (
+                        <small>{b.health.needs_review} 题评分需复核</small>
+                      )}
                     </td>
                     <td>
                       {b.scored} / {b.total}

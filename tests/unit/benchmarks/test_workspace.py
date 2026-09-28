@@ -183,3 +183,63 @@ def test_nonfinite_metrics_never_enter_comparisons(batches):
     }
     value = project_run(item)
     assert value["metrics"] == {} and not value["score_valid"]
+
+
+def review_payload(workspace, key, run_id):
+    return {
+        "schema_version": 1,
+        "snapshot": workspace.detail(key)["review_snapshot"],
+        "title": "Fixture research review",
+        "author": "Test reviewer",
+        "summary": "An observation, not a measured improvement.",
+        "report": "# Full report\n\n<script>unsafe()</script>",
+        "cases": [
+            {
+                "run_id": run_id,
+                "observation": "Saved score is zero.",
+                "interpretation": "Method cause is not established.",
+                "next": "Test on held-out public inputs.",
+                "evidence": [
+                    {"label": "score", "member": "outputs/score.json"},
+                    {"label": "step", "step": 57},
+                ],
+            }
+        ],
+    }
+
+
+def test_review_snapshot_scope_links_revision_and_staleness(batches):
+    workspace, left, right, first, second = batches
+    run = first["runs"][0]
+    body = review_payload(workspace, left, run["run_id"])
+    before = copy.deepcopy(first["store"].get(run["run_id"]))
+    saved = workspace.route("POST", [left, "review"], {}, body)
+    assert saved["revision"] == 1
+    result = workspace.detail(left)
+    assert not result["review"]["stale"] and "report" not in result["review"]
+    detail = workspace.route("GET", [left, "runs", run["run_id"], "detail"], {}, {})
+    assert detail["review"]["case"]["run_id"] == run["run_id"]
+    assert workspace.route("GET", [left, "review"], {}, {})["review"]["report"] == body["report"]
+    assert first["store"].get(run["run_id"]) == before
+    with pytest.raises(ValueError, match="刷新"):
+        workspace.import_review(left, body)
+    with pytest.raises(ValueError, match="快照"):
+        workspace.import_review(right, body)
+    for ref in (
+        {"label": "invalid", "member": "../../secret"},
+        {"label": "invalid", "step": 999},
+        {"label": "invalid", "step": 1, "member": "outputs/score.json"},
+    ):
+        invalid = copy.deepcopy(body)
+        invalid["cases"][0]["evidence"] = [ref]
+        with pytest.raises(ValueError):
+            workspace.import_review(left, invalid)
+    invalid = copy.deepcopy(body)
+    invalid["cases"][0]["run_id"] = second["runs"][0]["run_id"]
+    with pytest.raises(ValueError, match="不属于"):
+        workspace.import_review(left, invalid)
+    first["store"].update(run["run_id"], state="running")
+    assert workspace.detail(left)["review"]["stale"]
+    assert workspace.route("GET", [left, "runs", run["run_id"], "detail"], {}, {})["review"][
+        "stale"
+    ]

@@ -49,6 +49,11 @@ export function Trend({
         同任务集、同材料与评分版本，全部任务具有有效评分时纳入。纵轴为{" "}
         {metric || "所选指标"} 的描述性均值。
       </p>
+      {points.some((p) => (p.health?.needs_review ?? 0) > 0) && (
+        <p className="bench-warning">
+          趋势包含评分异常，数值变化暂不宜解释为能力提升。
+        </p>
+      )}
       {points.length ? (
         <svg
           ref={svg}
@@ -59,6 +64,11 @@ export function Trend({
           style={{ background: "white", color: "#203b3b" }}
         >
           <title>完整批次描述性均值；不是官方总分</title>
+          {points.some((p) => (p.health?.needs_review ?? 0) > 0) && (
+            <text x="70" y="16" fontSize="11" fill="#975420">
+              包含评分异常；暂不宜解释为能力提升
+            </text>
+          )}
           <line x1="60" x2="680" y1="165" y2="165" stroke="#bacdca" />
           <text x="8" y="48" fontSize="12" fill="currentColor">
             {number(max)}

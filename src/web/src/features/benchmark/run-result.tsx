@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { solverLabel } from "./health";
 import { configFields, metricLabel, taskTimeout } from "./presentation";
 import type { BenchmarkRun } from "./types";
 import { duration, number, outcome } from "./utils";
@@ -32,7 +33,7 @@ export function RunResult({
         <span className="badge">{outcome(run)}</span>
         <p className="muted">
           {run.score_valid
-            ? "分数来自原生评测记录。零分也是有效评分，请结合评分证据复盘。"
+            ? "已保存数值评分，零分照常保留；评分健康与 Agent 结束情况请看下方证据核验。"
             : "需要先检查运行状态和诊断信息；未评分不会计为零分。"}
         </p>
         <div className="actions">
@@ -55,7 +56,9 @@ export function RunResult({
               ? "未单独记录"
               : duration(taskTimeout(run))}
           </dd>
-          <dt>执行状态</dt>
+          <dt>Agent 结束</dt>
+          <dd>{solverLabel(run)}</dd>
+          <dt>Infra 执行记录</dt>
           <dd>
             {(
               {

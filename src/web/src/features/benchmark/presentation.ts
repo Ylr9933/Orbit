@@ -70,12 +70,24 @@ export function resultRows(
   return runs
     .filter((r) => {
       const value = score(r, metric);
+      if (
+        filter === "evaluation" &&
+        r.health?.evaluation.status !== "needs_review"
+      )
+        return false;
+      if (
+        filter === "solver" &&
+        !["failed", "quota_exhausted"].includes(r.health?.solver.status ?? "")
+      )
+        return false;
+      if (filter === "conflict" && !r.health?.solver.status_conflict)
+        return false;
       return (
         `${r.unit_id} ${taskLabel(r.unit_id)} ${taskDomain(r.unit_id)} ${r.model} ${r.annotation.notes ?? ""}`
           .toLowerCase()
           .includes(query) &&
         (!params.domain || taskDomain(r.unit_id) === params.domain) &&
-        (filter === "all" ||
+        (["all", "evaluation", "solver", "conflict"].includes(filter) ||
           (filter === "zero"
             ? value === 0
             : filter === "unscored"
@@ -117,6 +129,8 @@ export function pageNumber(
 }
 export function batchState(batch: Batch) {
   if (batch.states.quarantined) return "需要核对";
+  if (batch.finished === batch.total && (batch.health?.solver_failed ?? 0) > 0)
+    return "已结束 · 求解异常";
   if (batch.finished === batch.total)
     return batch.failed ? "已结束 · 有失败" : "已完成";
   if (batch.states.running || batch.states.collecting) return "运行中";

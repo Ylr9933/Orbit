@@ -5,14 +5,16 @@ import { Empty, Notice } from "../../components/common";
 export function EvidenceFiles({
   token,
   path,
+  initialMember = "",
 }: {
   token: string;
   path: string;
+  initialMember?: string;
 }) {
   const { data, error } = useData<{
     files: { path: string; size_bytes: number }[];
   }>(token, path);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialMember);
   const [preview, setPreview] = useState<{
     name: string;
     text?: string;

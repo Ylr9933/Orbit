@@ -24,9 +24,43 @@ uv run --locked agent-infra web --state-dir /absolute/path/to/console-state
 5. 在「实验笔记」保存实验名称、改动说明和项目标签。在「实验比较」选择另一组结果作为基线，查看共同有效任务的均分、逐题差值、提升/退步数量和配置差异；可只看有变化或不可比的任务。需要时进入「并排查看轨迹」。
 6. 导出逐题 CSV、对比 CSV、Markdown 摘要；同任务集历史均分与 SVG 导出收在比较页的展开项中。只有一组实验时显示比较空状态。
 
-所有冻结成员包括未提交任务均可查询。零分是有效评分，执行失败、缺失评分、取消和清理未完成分别标示。已完成实验与任务停止周期读取，使用「刷新结果」或「刷新任务」按需获取；运行中每 5 秒读取持久记录。运行期间刷新失败保留上次数据，并显示读取错误。
+所有冻结成员包括未提交任务均可查询。零分保留为数值评分，评分健康另行核验；执行失败、缺失评分、取消和清理未完成分别标示。已完成实验与任务停止周期读取，使用「刷新结果」或「刷新任务」按需获取；运行中每 5 秒读取持久记录。运行期间刷新失败保留上次数据，并显示读取错误。
 
 科研项目页支持名称/目标搜索和状态筛选，继续提供初始化、方案、实验与结果入口。旧 Records 事件页与科研执行页共用可读事件组件，支持重点、全部、工具和 Agent 筛选；平台记录仍与原生 Codex 会话区分。
+
+## 评分健康与研究复盘
+
+批次与任务同时保留数值评分、评分健康、Agent 终止事件和原始状态。顶部提供「评分需要复核」「求解异常结束」「状态记录冲突」筛选。异常不会删除分数、填零或改变原聚合；比较、趋势和 CSV 同时提示或保留健康信息。`score_valid` 仍表示已有数值且原协议状态有效，不再把它解释成评测健康。
+
+自动检查目前识别归档的 BenchFlow schema v2 中嵌套 `evaluator_unavailable` 和评分分项的文件/依赖缺失错误；硬性检查失败单独显示。终止事件来自本次归档 Codex JSONL 的最后一轮，区分正常结束、额度中断、其他失败和未知。不会把工具日志里的 `timed out` 当成 Agent 超时。缺失、损坏、超限或不支持的证据显示未知；「未发现已知异常」不是完整评分或科学正确性认证。只缓存有归档的已结束评分诊断，按状态目录、Run、attempt 和 artifact 身份隔离。
+
+已有复盘收在批次任务表上方的「研究复盘」展开项，逐题结果页显示观察、解释和待验证假设，并链接本次可见归档文件或轨迹步骤。署名研究解读与自动检查分开。完整报告按 Markdown 原文安全显示和下载，不执行 HTML；报告内原始相对文件路径仍属于离线复盘目录，在线证据入口以经过验证的案例链接为准。
+
+在批次页下载当前快照模板，然后上传不超过 64 KiB 的 JSON 附件；也可由管理员通过同一 HTTP 接口导入。`report` 最多 30,000 字符，`cases` 最多 100 项，每项至少一个证据链接；文件 `member` 与轨迹 `step` 二选一。示例（用模板中的真实 snapshot、revision 和本批次 Run 替换示例值）：
+
+```json
+{
+  "schema_version": 1,
+  "snapshot": "<从当前批次模板获取的 64 字符摘要>",
+  "revision": 0,
+  "title": "本轮研究复盘",
+  "author": "复盘作者",
+  "summary": "主要发现及其限制",
+  "report": "# 完整复盘\n\n证据、结论和待验证假设。",
+  "cases": [{
+    "run_id": "<本批次 Run>",
+    "observation": "保存的结果说明了什么",
+    "interpretation": "如何解释以及哪些原因尚未证实",
+    "next": "接下来验证哪个假设",
+    "evidence": [
+      {"label": "评分分项", "member": "outputs/benchflow_score.json"},
+      {"label": "轨迹步骤 0", "step": 0}
+    ]
+  }]
+}
+```
+
+快照绑定全批次的运行、attempt、执行计划、产物、指标和结果状态；新 attempt 或结果变化后旧复盘标为过期，当前摘要/逐题解释会收起，旧报告仍可查阅。更新使用 revision 防止覆盖其他作者的修改。后端检查 Run 归属、可见文件和可准确定位的步骤；导入者仍负责文字解读的证据质量。复盘保存在工作台自己的 `workspace.sqlite3`，不会写回原始批次，不提供自动调用模型复盘或重评。
 
 ## 如何解释图表
 
@@ -53,8 +87,9 @@ uv run --locked agent-infra web --state-dir /absolute/path/to/console-state
 | 路径 | 方法 | 用途 |
 | --- | --- | --- |
 | `/`（无尾斜杠） | GET / POST | 批次索引 / 显式登记目录 |
-| `/{batch}` | GET | 全部冻结成员、当前结果与笔记 |
+| `/{batch}` | GET | 全部冻结成员、当前结果、健康、笔记、复盘摘要与 review_snapshot |
 | `/settings` | POST | 保存默认基线，带 revision |
+| `/{batch}/review` | GET / POST | 读取完整复盘 / 导入绑定快照的复盘（带 revision） |
 | `/{batch}/note?unit=...` | POST | 批次或任务笔记；乐观版本检查防覆盖 |
 | `/compare?left=...&right=...&metric=...` | GET | 逐题可比性及共同有效样本统计 |
 | `/{batch}/runs/{run}/detail` | GET | 配置、状态、评分与资源 |
@@ -65,7 +100,7 @@ uv run --locked agent-infra web --state-dir /absolute/path/to/console-state
 
 成员文件通过该 Run 自有 artifact manifest 与 Records blob 引用读取，不接受宿主机任意文件路径。私有评测、凭据与 secret 类 artifact/stream 不通过这些入口提供。笔记使用独立表和 revision；更新冲突需要刷新核对后保存。
 
-源码分工：`projects/benchmark_workspace.py` 保存用户元数据；`runs/benchmark_views.py` 提供纯投影/比较，`runs/benchmark_evidence.py` 读取有界证据；`bootstrap/benchmark_workspace.py` 组装状态与 Records；`features/benchmarks.tsx` 负责路由与数据组装；`features/benchmark/` 的 `batch-list`、`batch-header`、`batch-detail`、`batch-summary` 分离列表、详情标题、任务表与统计，`presentation.ts` 集中处理展示数据和筛选；`run-result`、`trace-reader` 与 `evidence-files` 负责复盘。科研与旧记录共用 `features/execution-events.tsx`。不引入图表库、第二套执行器或独立前端状态管理依赖。
+源码分工：`projects/benchmark_workspace.py` 保存用户元数据；`runs/benchmark_views.py` 提供纯投影/比较，`runs/benchmark_evidence.py` 读取有界证据，`runs/benchmark_health.py` 解释健康，`projects/benchmark_review.py` 限定复盘附件契约；`bootstrap/benchmark_workspace.py` 组装状态与 Records；`features/benchmarks.tsx` 负责路由与数据组装；`features/benchmark/` 的 `batch-list`、`batch-header`、`batch-detail`、`batch-summary` 分离列表、详情标题、任务表与统计，`presentation.ts` 集中处理展示数据和筛选；`run-result`、`trace-reader` 与 `evidence-files` 负责复盘。科研与旧记录共用 `features/execution-events.tsx`。不引入图表库、第二套执行器或独立前端状态管理依赖。
 
 ## 验证范围
 
@@ -81,3 +116,5 @@ node tests/web/benchmark.smoke.cjs
 ```
 
 详见 [原工作台记录](../changes/20260926-benchmark-web-4f82c1.md)与[页面优化记录](../changes/20260928-web-workbench-usability-9a2c6e.md)。
+
+本轮健康与复盘展示的实现和验证见[任务记录](../changes/20260928-web-evidence-review-3fa821.md)。

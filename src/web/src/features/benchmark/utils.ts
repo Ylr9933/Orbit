@@ -83,6 +83,8 @@ export function comparisonCsv(data: Comparison) {
       "reason",
       "baseline_run",
       "candidate_run",
+      "baseline_evaluation_health",
+      "candidate_evaluation_health",
     ],
     ...data.rows.map((r) => [
       r.unit_id,
@@ -92,6 +94,8 @@ export function comparisonCsv(data: Comparison) {
       r.reason,
       r.left?.run_id,
       r.right?.run_id,
+      r.left?.health?.evaluation.status,
+      r.right?.health?.evaluation.status,
     ]),
   ]);
 }

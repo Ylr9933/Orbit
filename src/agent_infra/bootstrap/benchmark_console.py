@@ -16,6 +16,7 @@ from agent_infra.runs.control_store import RunControlStore
 class BenchmarkConsole:
     def __init__(self, state_root: Path) -> None:
         self.root = state_root / "benchmarks"
+        self.workspace = BenchmarkWorkspace(state_root)
 
     @staticmethod
     def _run(item: dict[str, Any]) -> dict[str, Any]:
@@ -128,4 +129,4 @@ class BenchmarkConsole:
     def workspace_route(
         self, method: str, parts: list[str], query: dict[str, list[str]], body: dict[str, Any]
     ) -> dict[str, Any]:
-        return BenchmarkWorkspace(self.root.parent).route(method, parts, query, body)
+        return self.workspace.route(method, parts, query, body)

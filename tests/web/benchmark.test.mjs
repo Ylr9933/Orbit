@@ -133,3 +133,42 @@ test("human readable time and configuration do not confuse outer budget with sol
     "思考强度 medium（部分任务未记录）",
   );
 });
+
+test("health filters retain original scores and separate unknown evidence", async () => {
+  const { resultRows, resultStats } = await import(
+    "../../src/web/src/features/benchmark/presentation.ts"
+  );
+  const runs = [
+    {
+      unit_id: "a",
+      model: "m",
+      state: "finished",
+      score_valid: true,
+      metrics: { score: 0 },
+      annotation: {},
+      health: {
+        evaluation: { status: "needs_review" },
+        solver: { status: "quota_exhausted", status_conflict: true },
+      },
+    },
+    {
+      unit_id: "b",
+      model: "m",
+      state: "finished",
+      score_valid: true,
+      metrics: { score: 80 },
+      annotation: {},
+      health: {
+        evaluation: { status: "unknown" },
+        solver: { status: "unknown" },
+      },
+    },
+  ];
+  for (const filter of ["evaluation", "solver", "conflict"])
+    assert.deepEqual(
+      resultRows(runs, "score", { filter }).map((r) => r.unit_id),
+      ["a"],
+    );
+  assert.equal(resultStats(runs, "score").mean, 40);
+  assert.equal(resultStats(runs, "score").count, 2);
+});

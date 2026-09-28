@@ -9,6 +9,7 @@ import { Trend } from "./benchmark/charts";
 import { ComparisonPanel } from "./benchmark/comparison";
 import { Notes } from "./benchmark/notes";
 import { batchTitle, resultRows } from "./benchmark/presentation";
+import { BatchReview } from "./benchmark/review";
 import { RunDetail } from "./benchmark/run-detail";
 import type { BatchDetail, Overview } from "./benchmark/types";
 import { link, workspace } from "./benchmark/utils";
@@ -226,12 +227,38 @@ export function BenchmarksPage({
             ) : (
               <>
                 {tab === "results" && batch.data && (
-                  <BatchResults
-                    batch={batch.data}
-                    metric={metric}
-                    params={effective}
-                    update={update}
-                  />
+                  <>
+                    {batch.data.review && (
+                      <details className="batch-review-entry">
+                        <summary>
+                          研究复盘 ·{" "}
+                          {batch.data.review.stale
+                            ? "旧结果，待重新核对"
+                            : `${batch.data.review.cases.length} 个重点案例`}
+                        </summary>
+                        <BatchReview
+                          key={`${batch.data.id}-${batch.data.review.revision}`}
+                          token={token}
+                          batch={batch.data}
+                          saved={saved}
+                        />
+                      </details>
+                    )}
+                    <BatchResults
+                      batch={batch.data}
+                      metric={metric}
+                      params={effective}
+                      update={update}
+                    />
+                    {!batch.data.review && (
+                      <BatchReview
+                        key={batch.data.id}
+                        token={token}
+                        batch={batch.data}
+                        saved={saved}
+                      />
+                    )}
+                  </>
                 )}
                 {tab === "distribution" && batch.data && (
                   <ScoreDistribution batch={batch.data} metric={metric} />

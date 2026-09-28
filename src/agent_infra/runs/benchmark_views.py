@@ -83,6 +83,8 @@ def project_run(item: dict[str, Any]) -> dict[str, Any]:
             "usage": usage,
         },
         "has_evidence": bool(result.get("artifact_id")),
+        "evidence_id": result.get("artifact_id"),
+        "execution_digest": execution.get("digest"),
     }
 
 
@@ -93,6 +95,23 @@ def summarize_runs(rows: list[dict[str, Any]]) -> dict[str, Any]:
             for metric, value in row["metrics"].items():
                 values.setdefault(metric, []).append(value)
     return {
+        "health": {
+            "needs_review": sum(
+                r.get("health", {}).get("evaluation", {}).get("status") == "needs_review"
+                for r in rows
+            ),
+            "unknown": sum(
+                r.get("health", {}).get("evaluation", {}).get("status", "unknown") == "unknown"
+                for r in rows
+            ),
+            "solver_failed": sum(
+                r.get("health", {}).get("solver", {}).get("status") in {"failed", "quota_exhausted"}
+                for r in rows
+            ),
+            "status_conflicts": sum(
+                bool(r.get("health", {}).get("solver", {}).get("status_conflict")) for r in rows
+            ),
+        },
         "total": len(rows),
         "states": dict(Counter(row["state"] for row in rows)),
         "finished": sum(row["state"] == "finished" for row in rows),

@@ -162,6 +162,28 @@ def make_batch(root: Path, candidate: str, count: int = 60, *, incomplete: bool 
             (evidence / "trajectory.json").write_text(json.dumps(steps))
             (evidence / "trajectory-view.json").write_text(json.dumps(steps[:2]))
             (artifact / "outputs/score.json").write_text('{"score": 0}')
+            (artifact / "outputs/benchflow_score.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "gate_results": [],
+                        "score_details": [{"details": {"nested": {"evaluator_unavailable": True}}}],
+                        "hard_gates_passed": True,
+                    }
+                )
+            )
+            (evidence / "codex-stdout.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "turn.failed",
+                        "error": {"message": "You've hit your usage limit"},
+                    }
+                )
+                + "\n"
+            )
+            native_root = artifact / "outputs/native" / unit
+            native_root.mkdir(parents=True)
+            (native_root / (unit + "__b3.json")).write_text('{"status": "timeout"}')
             ref = sink.commit_artifact(
                 artifact, name="native-submission", visibility=Visibility.ADMIN
             )

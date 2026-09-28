@@ -17,10 +17,10 @@ export function BatchSummary({
       <div>
         <span>{metricLabel(metric)}均分</span>
         <strong>{number(stats.mean)}</strong>
-        <small>中位数 {number(stats.median)} · 当前全部有效评分</small>
+        <small>中位数 {number(stats.median)} · 当前全部数值评分</small>
       </div>
       <div>
-        <span>有效评分</span>
+        <span>数值评分</span>
         <strong>
           {stats.count}
           <em> / {batch.total}</em>
@@ -29,7 +29,7 @@ export function BatchSummary({
           {batch.finished === batch.total
             ? "全部任务已结束"
             : `已结束 ${batch.finished} 项`}{" "}
-          · {batch.failed} 项运行失败
+          · {batch.health?.solver_failed ?? 0} 项已知求解异常
         </small>
       </div>
       <div>
@@ -62,7 +62,7 @@ export function ScoreDistribution({
     const v = score(r, metric);
     return v == null ? [] : [v];
   });
-  if (!values.length) return <p className="empty">当前指标还没有有效评分。</p>;
+  if (!values.length) return <p className="empty">当前指标还没有数值评分。</p>;
   const min = Math.min(...values),
     max = Math.max(...values);
   const bins = Array<number>(max === min ? 1 : 10).fill(0);
@@ -79,7 +79,7 @@ export function ScoreDistribution({
     <section className="panel">
       <h2>得分分布</h2>
       <p className="muted">
-        {values.length} 个有效评分 · {metricLabel(metric)} · 缺失评分不计为零
+        {values.length} 个数值评分 · {metricLabel(metric)} · 缺失评分不计为零
       </p>
       <section className="score-histogram" aria-label="得分直方图">
         {bins.map((count, i) => {
@@ -110,7 +110,7 @@ export function ScoreDistribution({
               <thead>
                 <tr>
                   <th>领域</th>
-                  <th className="numeric">有效评分数</th>
+                  <th className="numeric">数值评分数</th>
                   <th className="numeric">均分</th>
                 </tr>
               </thead>

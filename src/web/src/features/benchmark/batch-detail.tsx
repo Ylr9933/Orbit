@@ -78,6 +78,9 @@ export function BatchResults({
             onChange={(e) => change({ filter: e.target.value })}
           >
             <option value="all">全部任务</option>
+            <option value="evaluation">评分需要复核</option>
+            <option value="solver">求解异常结束</option>
+            <option value="conflict">状态记录冲突</option>
             <option value="zero">零分任务</option>
             <option value="failed">失败与超时</option>
             <option value="unscored">无有效评分</option>
@@ -117,6 +120,8 @@ export function BatchResults({
                   "state",
                   "execution",
                   "evaluation",
+                  "evaluation_health",
+                  "solver_terminal",
                   metric,
                   "elapsed_seconds",
                   "run_id",
@@ -128,6 +133,8 @@ export function BatchResults({
                   r.state,
                   r.execution,
                   r.evaluation,
+                  r.health?.evaluation.status,
+                  r.health?.solver.status,
                   score(r, metric),
                   r.elapsed_seconds,
                   r.run_id,
@@ -196,6 +203,15 @@ export function BatchResults({
                         >
                           {outcome(run)}
                         </span>
+                        {run.health?.evaluation.status === "needs_review" && (
+                          <small>评分需复核</small>
+                        )}
+                        {run.health?.solver.status === "quota_exhausted" && (
+                          <small>额度耗尽中断</small>
+                        )}
+                        {run.health?.solver.status === "failed" && (
+                          <small>求解异常结束</small>
+                        )}
                         {run.cleanup_complete === false && (
                           <small>清理未完成</small>
                         )}

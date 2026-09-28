@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useData } from "../../api/console";
 import { Notice, Panel } from "../../components/common";
 import { ScoreMatrix } from "./charts";
+import { BatchHealth } from "./health";
 import { taskLabel } from "./presentation";
 import type { Batch, Comparison } from "./types";
 import {
@@ -62,6 +63,8 @@ export function ComparisonPanel({
       <p>
         {baseline.name} → {candidate.name}
       </p>
+      <BatchHealth health={baseline.health} batch={baseline.id} />
+      <BatchHealth health={candidate.health} batch={candidate.id} />
       <Notice error={error} loading={!data} />
       {data && (
         <>
@@ -187,7 +190,7 @@ export function ComparisonPanel({
               onClick={() =>
                 download(
                   "benchmark-comparison.md",
-                  `# ${baseline.name} → ${candidate.name}\n\n指标：${metric}\n\n${data.aggregation}\n\n可比任务：${data.paired}/${data.total}\n\n基线：${number(data.left_mean)}；当前：${number(data.right_mean)}；差值：${number(data.mean_delta)}\n\n${candidate.annotation.notes ?? ""}\n\n|任务|差值|说明|\n|---|---:|---|\n${data.rows.map((r) => `|${r.unit_id.replaceAll("|", "\\|")}|${number(r.delta)}|${r.reason ?? "可比"}|`).join("\n")}`,
+                  `# ${baseline.name} → ${candidate.name}\n\n指标：${metric}\n\n${data.aggregation}\n\n评分需复核：基线 ${baseline.health?.needs_review ?? "未知"} / 当前 ${candidate.health?.needs_review ?? "未知"}；健康未知：基线 ${baseline.health?.unknown ?? "未知"} / 当前 ${candidate.health?.unknown ?? "未知"}。数值变化不等于能力提升。\n\n可比任务：${data.paired}/${data.total}\n\n基线：${number(data.left_mean)}；当前：${number(data.right_mean)}；差值：${number(data.mean_delta)}\n\n${candidate.annotation.notes ?? ""}\n\n|任务|差值|说明|\n|---|---:|---|\n${data.rows.map((r) => `|${r.unit_id.replaceAll("|", "\\|")}|${number(r.delta)}|${r.reason ?? "可比"}|`).join("\n")}`,
                 )
               }
             >

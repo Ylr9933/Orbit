@@ -70,7 +70,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       .boundingBox();
     assert(
       fifth.y + fifth.height < 900,
-      "five tasks should be visible in the first desktop screen",
+      `five tasks should be visible in the first desktop screen: ${JSON.stringify(fifth)}`,
     );
     let overviewReads = 0;
     page.on("request", (r) => {
@@ -177,7 +177,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       .getByText("DEEP_ERROR: missing column", { exact: true })
       .waitFor();
     await page.getByRole("button", { name: "文件与评分证据" }).last().click();
-    await page.getByLabel("搜索证据文件").fill("score.json");
+    await page.getByLabel("搜索证据文件").fill("outputs/score.json");
     await page.getByRole("button", { name: "预览", exact: true }).click();
     await page.getByText('"score": 0', { exact: false }).waitFor();
     const fileDownload = page.waitForEvent("download");
@@ -237,10 +237,113 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     );
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${base}/#benchmarks/workspace?batch=${info.right}`);
+    await page
+      .getByRole("link", { name: "1 题评分需要复核", exact: true })
+      .click();
+    await page
+      .getByRole("status")
+      .filter({ hasText: "1 / 60 个任务" })
+      .waitFor();
+    await page.getByRole("link", { name: "task-000", exact: true }).click();
+    await page.getByText("额度耗尽中断", { exact: false }).first().waitFor();
+    await page.getByRole("link", { name: "评分原始证据", exact: true }).click();
+    assert.equal(
+      await page.getByLabel("搜索证据文件").inputValue(),
+      "outputs/benchflow_score.json",
+    );
+    await page.getByRole("button", { name: "预览", exact: true }).click();
+    await page
+      .locator(".bench-preview")
+      .getByText("evaluator_unavailable", { exact: false })
+      .waitFor();
+    const response = await page.request.get(
+      `${base}/api/v1/benchmarks/workspace/${info.right}`,
+      {
+        headers: {
+          Authorization: "Bearer benchmark-browser-fixture-token-123456789",
+        },
+      },
+    );
+    const detail = await response.json();
+    const review = {
+      schema_version: 1,
+      snapshot: detail.review_snapshot,
+      title: "Synthetic evidence review",
+      author: "Fixture reviewer",
+      summary: "Observed issue; method hypotheses remain untested.",
+      report: "# Full report\n\n<script>window.reviewInjected=true</script>",
+      cases: [
+        {
+          run_id: info.run,
+          observation: "Saved numeric score",
+          interpretation: "Do not infer method quality",
+          next: "Check the evaluator first",
+          evidence: [
+            { label: "评分文件", member: "outputs/benchflow_score.json" },
+            { label: "关键步骤 57", step: 57 },
+          ],
+        },
+      ],
+    };
+    await page.goto(`${base}/#benchmarks/workspace?batch=${info.right}`);
+    await page.getByText("导入研究复盘", { exact: true }).click();
+    await page
+      .getByLabel("选择复盘 JSON")
+      .setInputFiles({
+        name: "review.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(JSON.stringify(review)),
+      });
+    await page.getByText("研究复盘 · 1 个重点案例", { exact: true }).click();
+    await page
+      .getByText("Observed issue; method hypotheses remain untested.", {
+        exact: true,
+      })
+      .waitFor();
+    await page.getByRole("button", { name: "查看完整复盘报告" }).click();
+    await page
+      .locator(".review-report")
+      .getByText("<script>", { exact: false })
+      .waitFor();
+    assert.equal(await page.evaluate(() => window.reviewInjected), undefined);
+    const reportDownload = page.waitForEvent("download");
+    await page.getByRole("button", { name: "下载完整报告" }).click();
+    assert.equal(
+      (await reportDownload).suggestedFilename(),
+      "research-review.md",
+    );
+    await page.goto(
+      `${base}/#benchmarks/workspace?batch=${info.right}&run=${info.run}`,
+    );
+    await page
+      .getByText("Do not infer method quality", { exact: false })
+      .waitFor();
+    await page.getByRole("link", { name: "关键步骤 57" }).click();
+    await page
+      .getByText("DEEP_ERROR: missing column", { exact: true })
+      .waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(
+      `${base}/#benchmarks/workspace?batch=${info.right}&run=${info.run}`,
+    );
+    await page
+      .getByText("Check the evaluator first", { exact: false })
+      .waitFor();
+    assert(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    );
+    await page.screenshot({
+      path: "/tmp/review-mobile-20260928.png",
+      fullPage: true,
+    });
     assert(!bodies.join("\n").includes("PRIVATE_NATIVE_SENTINEL"));
     assert.equal(errors.length, 0, errors.join("\n"));
     console.log(
-      "PASS: list/detail, first-screen density, 60 tasks, URL filters/pagination, back/reload, stopped polling, notes, comparison/exports, trace deep links, files, registration, missing scores, mobile.",
+      "PASS: list/detail, first-screen density, 60 tasks, URL filters/pagination, back/reload, stopped polling, notes, comparison/exports, trace deep links, files, registration, missing scores, health filters, review upload/report/evidence links, escaped HTML, mobile.",
     );
   } finally {
     await browser?.close();

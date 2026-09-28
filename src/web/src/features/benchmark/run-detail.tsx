@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { request, useData } from "../../api/console";
 import { Notice, Panel } from "../../components/common";
 import { EvidenceFiles } from "./evidence-files";
+import { RunHealthView } from "./health";
 import { Notes } from "./notes";
 import { taskLabel } from "./presentation";
+import { CaseReview } from "./review";
 import { RunConfig, RunResult } from "./run-result";
 import { TraceReader } from "./trace-reader";
 import type { Annotation, BenchmarkRun } from "./types";
@@ -114,6 +116,20 @@ export function RunDetail({
               trace={() => selectTab("trace")}
             />
           )}
+          {view === "result" && (
+            <>
+              <RunHealthView run={run} batch={batch} params={params} />
+              {run.review?.case && (
+                <CaseReview
+                  value={run.review.case}
+                  author={run.review.author}
+                  batch={batch}
+                  stale={run.review.stale}
+                  params={params}
+                />
+              )}
+            </>
+          )}
           {view === "trace" && (
             <TraceReader
               key={`${runId}-${run.has_evidence}-${evidenceRevision}`}
@@ -135,9 +151,10 @@ export function RunDetail({
           )}
           {view === "files" && (
             <EvidenceFiles
-              key={`${runId}-${run.has_evidence}-${evidenceRevision}`}
+              key={`${runId}-${run.has_evidence}-${evidenceRevision}-${params.member}`}
               token={token}
               path={`${path}/files`}
+              initialMember={params.member}
             />
           )}
           {view === "config" && <RunConfig run={run} />}
