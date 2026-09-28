@@ -1,6 +1,6 @@
 # 项目当前状态
 
-Updated at: 2026-09-28T14:33:34+08:00
+Updated at: 2026-09-28T08:38:46.189312+00:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
 GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及 BM00–BM07 的各工程阶段。
@@ -37,7 +37,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 - **BM02-B 与 Codex OS 扩展**：独立 ASI-Bench 包固定 runner；已移除 fixture 入口与模拟执行，仅保留显式 `codex_cli` + Docker `--sandbox os` profile，公开 seed31415 单实例真实 Codex 运行、BenchFlow 本地评分、原生 JSONL/轨迹/错误流归档、Web 关联查询、子容器身份与采样、清理及租约释放均已本机验证。该分数非官方；seed42 bundle 仍只做本地生成，未认证、上传或取得官方分数。
 - **BM05-A**：Benchmark 请求可持久 FIFO 排队；Resources 保存幂等租约、owner epoch、原生 job ID、对账和释放历史。崩溃窗口、等待取消、清理后续跑以及独立 wheel 双任务验收通过；当前默认单活动租约，不代表 CPU/GPU 硬隔离或后台自动调度。
 - **BM05-B**：同一状态目录可配置并持久保存并发容量、运行轮询 worker 与墙钟预算组；受管进程采样 CPU/内存/I/O，结果区分申请、准入、实际分配证明及测量；本地产物支持中断续传与完整校验。默认仍为单槽，租约不实施硬限额。
-- **Benchmark 批量入口**：`benchmark batch prepare/submit/status/worker` 将单实例适配器组合为固定批次，复用队列和并发租约；逐项冻结模型兼容声明，生成每任务状态与指标汇总。声明不证明账号可用性，汇总不冒充原生套件或官方分数。支持模型/认证终止错误停止派发。首次失败定位到旧容器 Codex 0.153.4；固定为宿主机同版 0.157.1 后，同一认证调用 gpt-6-sol 成功。公开 seed31415 的 60 项 b3 批次现有 60 项有效本地评分，算术均分 35.43277818088395；全部清理并释放租约。这不是官方套件总分或正式榜单验收。
+- **Benchmark 批量入口**：`benchmark batch prepare/submit/status/worker` 将单实例适配器组合为固定批次，复用队列和并发租约；逐项冻结模型兼容声明，生成每任务状态与指标汇总。声明不证明账号可用性，汇总不冒充原生套件或官方分数。支持模型/认证终止错误停止派发。首次失败定位到旧容器 Codex 0.153.4；固定为宿主机同版 0.157.1 后，同一认证调用 gpt-6-sol 成功。公开 seed31415 的 60 项 b3 批次有 60 项持久化本地数值评分，算术均分 35.43277818088395；全部清理并释放租约。只读复盘发现 19 题含 judge/评分依赖异常；原生 13 个 timeout 标签中 12 个有正常结束事件，另 1 个实际为额度耗尽。有分数不等于评测健康或求解正常完成；这不是官方总分或纯模型能力验收。
 - **BM06**：不可变候选、授权修改范围、公开指标投影、父子血缘、确定性提交、累计试验/墙钟预算和停止/选优。两候选合成结果通过工程测试；四个原生参考适配器尚未开放 optimizer 反馈，不等于已能自动优化官方成绩。
 - **BM07**：Benchmark 只读页面、精确元组及本地运行证据核对的兼容矩阵、可选原生提交交接和一次性发送保护；独立新包在隔离 venv 中复用现有 backend 完成 CPU 演练。未进行官方提交或真实模型/GPU 验收。
 - **BM03**：独立 PAST-Bench 包固定 v1.0.0 revision，把完整 family 的 persistence on/off 配对作为原子任务；冻结 episode 顺序、fresh session、history/state 策略和原生 runner，归档原生 evidence 与聚合结果。无模型 SM01 工程 profile 通过独立 wheel 验收；尚未运行真实 Agent/judge，不代表 Docker sandbox、官方复现或榜单提交。
@@ -53,12 +53,13 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 - **科研训练**：长期科研环境的 GPU 入口、CUDA/系统依赖模板、外部不可变数据与大权重传输；当前 HTTP 下载上限 16 MiB。真实 GPU 训练及完整冻结 Task 验收仍缺。
 - **执行与任务**：其他 provider 的完整容器链、ToolBinding、科研 Controller 的持久等待队列与训练 checkpoint 接续。Benchmark 已有最小持久队列，但尚未推广到所有执行入口；ASI 仍限公开单实例、PAST 真实 Agent/runtime 与 PostTrainBench H100/HTCondor/Apptainer/Agent/judge 组合仍待验收。
 - **自动研究**：科研主线仍仅能在冻结 Task 授权集合内迭代；BM06 可在明确范围内登记 benchmark 候选，但不会自动生成候选或判断科学真实性。
+- **评分解释**：ASI 公开评分的 judge 不可用/输入依赖错误可能仍显示 scored；原生结束状态受模型列表刷新错误干扰。需保留分项异常、真实终止事件和重评版本，再做候选能力比较。
 - **记录和界面**：其他 Agent 的平台外轨迹仍依赖显式导入；Codex 格式兼容需随 CLI 版本维护，尚无 Web 专门会话列表；benchmark 本地大文件可恢复，但缺跨节点传输/远端备份/token-logprob。Benchmark 已有结果复盘和单 Run 取消意图；Web 未覆盖 H/E/I 全部控制或 benchmark 提交/重跑，HTTP/TypeScript 契约仍手工维护。
 - **运维和扩展**：Web 资产需单独提供；单管理员服务未产品化为安装即用部署；无 Worker/Ray、多节点或多人在线权限。
 
 ## 下一步优先级
 
-1. 在新的明确模型预算下补齐 TB-Science 原生 Codex 求解→verifier 评分验收，检查完整证据归档；随后给一个原生参考适配器增加合规开发反馈与两候选试用。
+1. 根据 ASI 60 题复盘，优先修复评分健康与结束状态解释，在独立评测版本中验证原提交；再在明确模型预算下推进 TB-Science 求解→评分验收及候选对照。
 2. 准备 CUDA 训练镜像，完成冻结 Task + Codex 单 GPU Run 验收；随后补长期科研环境 GPU 入口及大数据/权重入口。
 3. 确定长期状态目录，补齐安装诊断和启动/备份指南，用一个真实科研项目试用完整流程。
 
@@ -67,6 +68,8 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 纯代码开发无外部阻塞。真实模型、完整 GPU 任务、两节点分别需要凭据与费用预算、训练镜像及明确资源范围、第二台节点和网络。BM04 原生验收还需要满足 GPU 可见性隔离的 HTCondor H100 队列、共享存储、Apptainer 镜像和 judge 认证；当前机器不能代替该集群条件。当前 Controller 已有实例独占主机锁，本轮未重启它或执行真实 Codex GPU Run。HTTP 仅限本机管理员；托管 CI/分支保护尚需平台核实，License 尚未确定。
 
 ## 相关记录
+
+- [ASI 60 题证据复盘](changes/20260928-asi-b3-review-e91c7a.md)：全量归档校验、20 个重点案例及待验证假设。
 
 - [本次分支集成](changes/20260927-local-branch-integration-2b8c9e.md)、[TB-Science Codex 扩展](changes/20260926-tb-science-codex-7ad3e1.md)
 - [Benchmark Web 工作台](changes/20260926-benchmark-web-4f82c1.md)、[使用说明](operations/benchmark-workspace.md)
