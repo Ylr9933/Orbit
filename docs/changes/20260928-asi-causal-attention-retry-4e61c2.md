@@ -5,7 +5,7 @@ title: "Retry the unscored ASI-Bench b3 causal-attention instance"
 branch: "feat/asi-b3-causal-attention-retry-20260928"
 base_commit: "05c0836b8cb68032860c48647be591616d7d94cb"
 work_status: in_progress
-updated_at: "2026-09-28T11:29:36+08:00"
+updated_at: "2026-09-28T12:01:41+08:00"
 pull_request: null
 ---
 
@@ -18,7 +18,8 @@ pull_request: null
 ## Changes
 
 - Prepared an isolated one-member local batch under `benchmark/asibench/b3-gpt-6-sol-causal-attention-retry-20260928/`. Its frozen execution digest is byte-for-byte identical to the failed member's original digest `sha256:924b940a892eeb34acca5ae34826adef12e37a132cec193f74d110ec95902c36`.
-- Captured the pinned upstream task Dockerfile for image `ai4sci-bench-task:cb87a71f25e0` and started a prebuild with the same packages, Codex version, host-network proxy and task image tag. This is setup only; the new Agent Run has not been submitted.
+- Prebuilt the pinned upstream task image `ai4sci-bench-task:cb87a71f25e0` with the same packages, Codex version, host-network proxy and image tag. The build completed in about 36 minutes, past the original in-run 1800-second image-build limit.
+- Submitted one separate Run, `ee52851be95f4c84b374bdbbc08c3383`, and started its batch worker. The upstream ASI Docker container and Codex process are running; its score is pending.
 
 ## Decisions
 
@@ -32,16 +33,17 @@ pull_request: null
 | --- | --- | --- | --- |
 | Compare frozen original request and failed native result | Original batch digest `sha256:6b3a90825313a303627724bbcee15515ca86c1547f369e0f12b59e95d0c39086` | passed | `effort=medium`, model gpt-6-sol, Codex 0.157.1, b3, 10800 seconds; old Docker build timed out before Agent launch. |
 | `benchmark batch prepare` and frozen-plan comparison | Retry directory at 2026-09-28 11:22 +08:00 | passed | Exactly one member; original and retry `PreparedExecution` documents are identical, including digest, resources and invocation. |
-| Docker image prebuild | Retry directory at 2026-09-28 11:29 +08:00 | not_run | Still in progress at the upstream `chown -R` Dockerfile step; base, Codex and PyTorch install layers are cached. |
-| Retry preparation, execution, score and cleanup | Pending | not_run | Awaiting Docker build preparation and new Run. |
+| Docker image prebuild | Retry directory at 2026-09-28 12:00 +08:00 | passed | Exact upstream task image `ai4sci-bench-task:cb87a71f25e0` built; image ID `sha256:2829bda698dbb6aa499ab18cc55a37f5ff7a7c9fe278c0b3878def32f4029384`. |
+| Native Run launch and limits | Run `ee52851be95f4c84b374bdbbc08c3383` at 2026-09-28 12:01 +08:00 | passed | Docker container `929ce8950e69` started with 4 CPU, 8 GiB, host network; in-container Codex 0.157.1 and PyTorch 2.5.1 verified. Codex process uses gpt-6-sol and `model_reasoning_effort=medium`. |
+| Retry score, native trace and cleanup | Run `ee52851be95f4c84b374bdbbc08c3383` | not_run | Agent is still running; result and cleanup cannot yet be assessed. |
 
 ## Open items and blockers
 
-- Task Docker image is absent while its prebuild runs. The prior native build hit the 1800-second limit; the prebuild has a separate 3600-second cap. Root filesystem has about 26 GiB free and must be monitored.
+- The Run is active. The original native image build hit the 1800-second limit; this preparation required about 36 minutes on the rotational Docker root at `/disk/disk_20T/docker-runtime/docker`. No task score exists yet.
 
 ## Next steps
 
-- Prepare the same native task image, freeze one-member batch, run, supervise, and verify score and evidence.
+- Supervise the running one-member batch, then verify its public score, raw trace, artifact, and cleanup status. Keep the original 60-member result unchanged.
 
 ## Compatibility and rollback
 
