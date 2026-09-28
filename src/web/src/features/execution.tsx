@@ -1,25 +1,9 @@
 import { useState } from "react";
-import { known, request, type TraceEvent, useData } from "../api/console";
+import { known, request, useData } from "../api/console";
 import type { Capabilities, ControlRun } from "../api/workflow";
 import { Badge, Empty, Notice, Panel } from "../components/common";
 import { ArtifactFiles } from "./execution-artifacts";
-import {
-  filterTimeline,
-  groupTimeline,
-  type TimelineFilter,
-  timelineDetails,
-  timelineStatus,
-  timelineSummary,
-  timelineTitle,
-  timelineTone,
-} from "./execution-trace";
-
-function coverageLabel(value: string | undefined): string {
-  if (value === "complete") return "完整";
-  if (value === "partial") return "部分";
-  if (value === "unavailable") return "未采集";
-  return "未说明";
-}
+import { ExecutionEvents } from "./execution-events";
 
 function statusLabel(value: string | null | undefined): string {
   if (!value) return "未记录";
@@ -121,121 +105,9 @@ export function ExecutionRecent({ token }: { token: string }) {
     </Panel>
   );
 }
-function Events({ token, path }: { token: string; path: string }) {
-  const [pages, setPages] = useState<(string | null)[]>([null]);
-  const [filter, setFilter] = useState<TimelineFilter>("highlights");
-  const cursor = pages[pages.length - 1];
-  const events = useData<{
-    items: TraceEvent[];
-    next_cursor: string | null;
-    coverage: Record<string, string>;
-  }>(
-    token,
-    `${path}/events${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
-    5000,
-  );
-  const timeline = groupTimeline(events.data?.items ?? []);
-  const visible = filterTimeline(timeline, filter);
-  const coverage = events.data?.coverage;
-  return (
-    <Panel title="平台执行记录">
-      <p className="muted">
-        查看资源、容器、工具调用和任务状态。默认突出实验节点；切换“全部”可看本页所有公开事件。
-        这里不是 Codex 原生会话轨迹。
-      </p>
-      {coverage && Object.keys(coverage).length > 0 && (
-        <p className="muted">
-          采集范围：平台工具
-          {coverageLabel(coverage.platform_tools)} · 宿主机 Agent
-          {coverageLabel(coverage.host_agent)}
-        </p>
-      )}
-      {events.data && (
-        <p className="muted">
-          第 {pages.length} 页：{events.data.items.length} 条事件合并为{" "}
-          {timeline.length} 项；当前显示 {visible.length} 项。每 5
-          秒刷新公开摘要
-          {events.updated ? ` · 最近更新 ${events.updated}` : ""}。
-        </p>
-      )}
-      <Notice error={events.error} />
-      <fieldset className="trace-filters">
-        <legend>显示记录</legend>
-        {(
-          [
-            ["highlights", "重点"],
-            ["all", "全部"],
-            ["tools", "工具调用"],
-            ["agent", "Agent"],
-          ] as const
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={filter === value}
-            onClick={() => setFilter(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </fieldset>
-      {visible.map((item) => {
-        const tone = timelineTone(item);
-        const summary = timelineSummary(item);
-        return (
-          <article className={`event event-${tone}`} key={item.event.id}>
-            <div className="event-heading">
-              <strong>{timelineTitle(item)}</strong>
-              <span className={`event-status event-status-${tone}`}>
-                {timelineStatus(item)}
-              </span>
-            </div>
-            <small title={item.event.at}>
-              {new Date(item.event.at).toLocaleString()}
-              {summary ? ` · ${summary}` : ""}
-            </small>
-            {item.event.text && <pre>{item.event.text}</pre>}
-            <details>
-              <summary>查看事件字段</summary>
-              <pre>{timelineDetails(item)}</pre>
-            </details>
-          </article>
-        );
-      })}
-      {events.data && visible.length === 0 && (
-        <Empty>
-          {filter === "agent"
-            ? "本页没有采集到 Agent 事件；平台操作不等于 Agent 原生轨迹。"
-            : filter === "highlights" && timeline.length
-              ? "本页只有常规查询事件，可切换“全部”查看。"
-              : "本页没有符合条件的公开事件。"}
-        </Empty>
-      )}
-      <div className="actions">
-        <button
-          type="button"
-          disabled={pages.length === 1}
-          onClick={() => setPages((current) => current.slice(0, -1))}
-        >
-          上一页
-        </button>
-        <button
-          type="button"
-          disabled={!events.data?.next_cursor}
-          onClick={() => {
-            const next = events.data?.next_cursor;
-            if (next) setPages((current) => [...current, next]);
-          }}
-        >
-          下一页
-        </button>
-      </div>
-    </Panel>
-  );
-}
 export function ExecutionDetail({ token, id }: { token: string; id: string }) {
   const path = `execution/runs/${encodeURIComponent(id)}`;
-  const run = useData<ControlRun>(token, path, 5000);
+  const run = useData<ControlRun>(token, path, 5000, finished);
   const capabilities = useData<Capabilities>(token, "capabilities", 10000);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -322,9 +194,18 @@ export function ExecutionDetail({ token, id }: { token: string; id: string }) {
             </Panel>
           )}
           <ArtifactFiles token={token} path={path} />
-          <Events key={path} token={token} path={path} />
+          <ExecutionEvents
+            key={path}
+            token={token}
+            path={path}
+            poll={run.data?.state !== "finished"}
+          />
         </>
       )}
     </>
   );
+}
+
+function finished(run: ControlRun) {
+  return run.state === "finished";
 }

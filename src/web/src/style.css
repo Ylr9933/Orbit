@@ -1,18 +1,26 @@
 .muted,
 small,
 time {
-  color: #738784;
+  color: var(--muted);
   font-size: 12px;
 }
 small {
   display: block;
 }
 :root {
+  --text: #25303b;
+  --muted: #626e7a;
+  --canvas: #f7f8fa;
+  --border: #dce1e6;
+  --border-soft: #edf0f2;
+  --accent: #176b56;
+  --accent-soft: #edf5f1;
+  font-size: 14px;
   font-family:
     Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", sans-serif;
-  color: #203b3b;
-  background: #f4f7f7;
+  color: var(--text);
+  background: var(--canvas);
   font-synthesis: none;
   line-height: 1.6;
 }
@@ -23,7 +31,7 @@ body {
   margin: 0;
 }
 a {
-  color: #087d70;
+  color: var(--accent);
   text-decoration: none;
 }
 a:hover {
@@ -36,23 +44,24 @@ textarea {
   font: inherit;
 }
 button {
-  border: 1px solid #cedcdb;
+  min-height: 36px;
+  border: 1px solid var(--border);
   background: white;
-  color: #274a48;
+  color: var(--text);
   padding: 8px 15px;
   border-radius: 7px;
   cursor: pointer;
 }
 button:hover {
-  background: #edf6f4;
+  background: var(--accent-soft);
 }
 button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 button.primary {
-  background: #087d70;
-  border-color: #087d70;
+  background: var(--accent);
+  border-color: var(--accent);
   color: white;
 }
 :focus-visible {
@@ -64,11 +73,12 @@ button.primary {
   min-height: 100vh;
 }
 .sidebar {
-  width: 230px;
+  width: 192px;
   flex-shrink: 0;
-  background: #102e2d;
-  color: #aac2bf;
-  padding: 28px 20px;
+  background: #fff;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  padding: 24px 14px;
   position: fixed;
   inset: 0 auto 0 0;
   display: flex;
@@ -78,48 +88,49 @@ button.primary {
   display: flex;
   align-items: center;
   gap: 12px;
-  color: #fff;
-  font-size: 19px;
+  color: var(--text);
+  font-size: 17px;
   font-weight: 700;
 }
 .brand-mark {
   width: 39px;
   height: 39px;
   border: 1px solid #4c827b;
-  border-radius: 11px;
+  border-radius: 8px;
   text-align: center;
   padding-top: 2px;
-  color: #8ad8bf;
+  color: var(--accent);
   font-size: 24px;
 }
 .brand small {
   display: block;
   font-size: 9px;
   letter-spacing: 1.8px;
-  color: #8caaa7;
+  color: var(--muted);
 }
 .nav-label {
   font-size: 11px;
   letter-spacing: 2px;
   margin: 40px 14px 10px;
 }
-nav {
+.sidebar nav {
   display: grid;
   gap: 5px;
 }
-nav a {
-  color: #b6ccc9;
+.sidebar :where(nav) a {
+  color: var(--muted);
   padding: 11px 16px;
   border-radius: 7px;
   display: flex;
   gap: 14px;
 }
-nav a.active {
-  background: #264c47;
-  color: #b3efda;
+.sidebar :where(nav) a.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
 }
-nav a:hover {
-  background: #20433f;
+.sidebar :where(nav) a:hover {
+  background: #f1f4f6;
   text-decoration: none;
 }
 .sidebar-footer {
@@ -131,8 +142,8 @@ nav a:hover {
   display: block;
   margin-top: 12px;
   background: transparent;
-  color: #b6ccc9;
-  border-color: #3b5a57;
+  color: var(--muted);
+  border-color: var(--border);
   padding: 4px 12px;
 }
 .dot {
@@ -144,21 +155,21 @@ nav a:hover {
   margin-right: 6px;
 }
 .workspace {
-  margin-left: 230px;
+  margin-left: 192px;
   min-width: 0;
-  width: calc(100% - 230px);
+  width: calc(100% - 192px);
 }
 header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 28px 40px 22px;
+  padding: 14px 32px;
   background: #fff;
-  border-bottom: 1px solid #e0e8e7;
+  border-bottom: 1px solid var(--border);
 }
 h1 {
-  font-size: 25px;
-  margin: 5px 0 0;
+  font-size: 16px;
+  margin: 0;
   letter-spacing: -0.5px;
 }
 h2 {
@@ -172,16 +183,16 @@ p {
   font-size: 10px;
   letter-spacing: 2px;
   font-weight: 600;
-  color: #7b9391;
+  color: var(--muted);
 }
 .workspace main {
   max-width: 1440px;
   margin: auto;
-  padding: 30px 40px;
+  padding: 24px 32px;
 }
 footer {
   padding: 20px 40px;
-  color: #7b9391;
+  color: var(--muted);
   font-size: 11px;
 }
 .hero {
@@ -205,9 +216,9 @@ footer {
 }
 .panel {
   background: white;
-  padding: 23px;
-  border: 1px solid #e0e8e7;
-  border-radius: 10px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   margin-bottom: 22px;
   min-width: 0;
 }
@@ -218,16 +229,16 @@ footer {
 }
 .stats .panel h2 {
   font-size: 12px;
-  color: #6f8784;
+  color: var(--muted);
   font-weight: 500;
 }
 .login p {
-  color: #718782;
+  color: var(--muted);
 }
 .stats .panel p {
   margin-bottom: 0;
   font-size: 12px;
-  color: #6f8784;
+  color: var(--muted);
 }
 .metric {
   font-size: 32px;
@@ -237,7 +248,7 @@ footer {
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
-  gap: 22px;
+  gap: 16px;
 }
 .cards .panel {
   margin-bottom: 0;
@@ -265,7 +276,7 @@ footer {
 .empty {
   padding: 40px 18px;
   text-align: center;
-  color: #7b8f8c;
+  color: var(--muted);
   border: 1px dashed #d2dedb;
   border-radius: 8px;
   font-size: 14px;
@@ -293,9 +304,9 @@ select,
 textarea {
   width: 100%;
   min-width: 0;
-  color: #203b3b;
-  background: #fcfdfd;
-  border: 1px solid #cbdad7;
+  color: var(--text);
+  background: #fff;
+  border: 1px solid var(--border);
   padding: 9px 11px;
   border-radius: 6px;
 }
@@ -317,7 +328,7 @@ textarea {
   gap: 20px;
 }
 fieldset {
-  border: 1px solid #dce6e3;
+  border: 1px solid var(--border);
   border-radius: 6px;
   margin: 14px 0;
   max-height: 220px;
@@ -355,14 +366,14 @@ table {
 }
 th {
   font-size: 11px;
-  color: #7a8e89;
+  color: var(--muted);
   font-weight: 500;
   background: #f8fafa;
 }
 td,
 th {
-  padding: 14px;
-  border-bottom: 1px solid #ebf0ee;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-soft);
 }
 td {
   max-width: 460px;
@@ -376,7 +387,7 @@ pre {
     monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  background: #f5f8f7;
+  background: #f6f8fa;
   padding: 14px;
   border-radius: 6px;
   max-height: 460px;
@@ -467,7 +478,7 @@ dl {
   gap: 10px;
 }
 dt {
-  color: #81928e;
+  color: var(--muted);
 }
 dd {
   margin: 0;
@@ -522,17 +533,17 @@ dd {
   .nav-label {
     display: none;
   }
-  nav {
+  .sidebar nav {
     display: flex;
     overflow-x: auto;
     margin-top: 15px;
   }
-  nav a {
+  .sidebar :where(nav) a {
     flex-shrink: 0;
     font-size: 12px;
     padding: 8px 12px;
   }
-  nav a span {
+  .sidebar :where(nav) a span {
     display: none;
   }
   .sidebar-footer {
@@ -574,4 +585,132 @@ dd {
   .login {
     margin: 8vh 16px;
   }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.skip-link {
+  position: fixed;
+  top: -80px;
+  left: 16px;
+  z-index: 20;
+  padding: 12px;
+  background: white;
+}
+.skip-link:focus {
+  top: 12px;
+}
+.button-link {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: white;
+}
+.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+th[scope="row"] {
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.settings-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.settings-links a {
+  padding: 20px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.settings-links small {
+  margin-top: 8px;
+}
+.text-button {
+  min-height: 36px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  text-align: left;
+}
+@media (max-width: 680px) {
+  header {
+    padding: 12px 16px;
+  }
+  button,
+  .button-link,
+  input,
+  select {
+    min-height: 44px;
+  }
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+  }
+  .sidebar-footer {
+    display: block;
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    padding: 0;
+    font-size: 0;
+  }
+  .sidebar-footer .dot {
+    display: none;
+  }
+  .sidebar-footer button {
+    font-size: 12px;
+  }
+  .sidebar :where(nav) a {
+    padding: 10px 12px;
+  }
+  .brand small {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto;
+    animation: none;
+    transition: none;
+  }
+}
+
+.project-filters {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 16px 0 24px;
+}
+.project-filters label:first-child {
+  flex: 2;
+  min-width: 200px;
+}
+.project-filters label {
+  flex: 1;
+  margin-bottom: 0;
+  min-width: 120px;
 }

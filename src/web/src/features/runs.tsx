@@ -5,20 +5,14 @@ import {
   known,
   pretty,
   type Run,
-  type TraceEvent,
   useData,
 } from "../api/console";
 import { Badge, Empty, Notice, Panel } from "../components/common";
 import { ExecutionRecent } from "./execution";
+import { ExecutionEvents } from "./execution-events";
 
 function AttemptView({ token, attempt }: { token: string; attempt: Attempt }) {
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
   const path = `attempts/${encodeURIComponent(attempt.id)}`;
-  const events = useData<{ items: TraceEvent[]; next_cursor: string | null }>(
-    token,
-    `${path}/events${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
-  );
   const artifacts = useData<{ items: Artifact[] }>(token, `${path}/artifacts`);
   return (
     <>
@@ -35,69 +29,7 @@ function AttemptView({ token, attempt }: { token: string; attempt: Attempt }) {
           <pre>{pretty(attempt.coverage)}</pre>
         </Panel>
       </div>
-      <Panel title="运行轨迹与事件">
-        <p className="muted">
-          已持久化的事件。Agent
-          轨迹通常在阶段结束后导入；这里不是实时对话。私有评测事件不展示。
-        </p>
-        <div className="section-line">
-          <label>
-            筛选当前页
-            <input
-              placeholder="事件类型或内容"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
-          </label>
-          <button type="button" onClick={events.refresh}>
-            刷新当前页
-          </button>
-        </div>
-        <Notice error={events.error} loading={!events.data} />
-        {events.data?.items
-          .filter((event) =>
-            `${event.type} ${event.text} ${pretty(event.payload)}`
-              .toLowerCase()
-              .includes(filter.toLowerCase()),
-          )
-          .map((event) => (
-            <article className="event" key={event.id}>
-              <div className="section-line">
-                <strong>{event.type}</strong>
-                <time>{new Date(event.at).toLocaleString()}</time>
-              </div>
-              <p className="muted">
-                {event.producer} · 采集 {event.capture_status}
-              </p>
-              {event.text && <pre>{event.text}</pre>}
-              {pretty(event.payload) !== "{}" && (
-                <pre>{pretty(event.payload)}</pre>
-              )}
-            </article>
-          ))}
-        {events.data?.items.length === 0 && (
-          <Empty>
-            本页没有可展示事件。执行可能尚未产出记录，或事件属于私有评测范围。
-          </Empty>
-        )}
-        <div className="actions">
-          <button
-            type="button"
-            disabled={!cursor}
-            onClick={() => setCursor(null)}
-          >
-            回到开始
-          </button>
-          <button
-            type="button"
-            disabled={!events.data?.next_cursor}
-            onClick={() => setCursor(events.data?.next_cursor ?? null)}
-          >
-            下一页
-          </button>
-          <small>本页刷新于 {events.updated || "—"}</small>
-        </div>
-      </Panel>
+      <ExecutionEvents token={token} path={path} />
       <Panel title="产物索引">
         <Notice error={artifacts.error} />
         {artifacts.data?.items.length ? (

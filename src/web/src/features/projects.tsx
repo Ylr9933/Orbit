@@ -29,6 +29,8 @@ const statuses = {
 export function ProjectsPage({ token }: { token: string }) {
   const capabilities = useData<Capabilities>(token, "capabilities");
   const [creating, setCreating] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const projects = useData<{ items: Project[] }>(token, "projects");
   const tasks = useData<{ items: Task[] }>(token, "tasks");
   const runs = useData<{ items: Run[] }>(token, "runs");
@@ -64,6 +66,14 @@ export function ProjectsPage({ token }: { token: string }) {
     setMessage("");
     setMilestone("");
   };
+  const visible =
+    projects.data?.items.filter(
+      (project) =>
+        `${project.name} ${project.goal}`
+          .toLowerCase()
+          .includes(search.toLowerCase()) &&
+        (!statusFilter || project.status === statusFilter),
+    ) ?? [];
   return (
     <>
       <div className="section-line">
@@ -258,8 +268,50 @@ export function ProjectsPage({ token }: { token: string }) {
           还没有科研项目。新建项目后，可以记录目标、维护里程碑并关联已有运行。
         </Empty>
       )}
+      {!!projects.data?.items.length && (
+        <div className="project-filters">
+          <label>
+            搜索科研项目
+            <input
+              type="search"
+              placeholder="项目名称或研究目标"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </label>
+          <label>
+            项目状态
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="">全部项目</option>
+              {Object.entries(statuses).map(([value, name]) => (
+                <option key={value} value={value}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="muted">{visible.length} 个项目</span>
+        </div>
+      )}
+      {!!projects.data?.items.length && !visible.length && (
+        <Empty>
+          没有匹配的项目。
+          <button
+            type="button"
+            onClick={() => {
+              setSearch("");
+              setStatusFilter("");
+            }}
+          >
+            清除筛选
+          </button>
+        </Empty>
+      )}
       <div className="cards">
-        {projects.data?.items.map((project) => {
+        {visible.map((project) => {
           const done = project.milestones.filter((m) => m.done).length;
           return (
             <Panel key={project.id} title={project.name}>
@@ -284,7 +336,7 @@ export function ProjectsPage({ token }: { token: string }) {
                 {project.task_keys.length} 个任务 · {project.run_ids.length}{" "}
                 次运行
               </p>
-              {project.run_ids.map((id) => (
+              {project.run_ids.slice(0, 3).map((id) => (
                 <a
                   className="run-link"
                   key={id}
@@ -293,6 +345,20 @@ export function ProjectsPage({ token }: { token: string }) {
                   {id} ↗
                 </a>
               ))}
+              {project.run_ids.length > 3 && (
+                <details>
+                  <summary>其余 {project.run_ids.length - 3} 次运行</summary>
+                  {project.run_ids.slice(3).map((id) => (
+                    <a
+                      key={id}
+                      className="run-link"
+                      href={`#runs/${encodeURIComponent(id)}`}
+                    >
+                      {id} ↗
+                    </a>
+                  ))}
+                </details>
+              )}
               {project.source && (
                 <p className="muted">
                   {project.source === "legacy" ? "旧项目" : "科研工作区"} ·{" "}

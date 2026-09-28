@@ -1,6 +1,6 @@
 # Benchmark 实验工作台
 
-状态：`feat/benchmark-web-workspace` 的实现说明；集成事实以 Git 为准。面向本机单管理员，复用现有 Batch、Run、Records；不启动模型，不改变原生评分。
+状态：工作台实现说明，包含 2026-09-28 的页面与易用性优化；集成事实以 Git 为准。面向本机单管理员，复用现有 Batch、Run、Records；不启动模型，不改变原生评分。
 
 ## 打开与登记
 
@@ -11,19 +11,22 @@ pnpm build
 uv run --locked agent-infra web --state-dir /absolute/path/to/console-state
 ```
 
-打开服务输出的本机访问地址，进入 Benchmark。默认显示这个状态目录内的 Benchmark Run，按候选配置分组。点击「登记已有批次」，填写包含 `batch.json` 的**服务器绝对目录**。批次可以来自不同状态目录；登记会验证清单和冻结执行计划，不复制运行数据、不提交作业。最多登记 100 个目录，目录及状态路径不接受符号链接。
+打开服务输出的本机访问地址，默认进入「实验」列表。主导航保留实验、科研项目、资源和设置；旧运行、注册任务、Agent 与记录入口可从设置进入，已有深链接继续有效。未登记的 Run、Campaign 和兼容性信息在列表底部的高级诊断中查看。点击「登记已有批次」，填写包含 `batch.json` 的**服务器绝对目录**。批次可以来自不同状态目录；登记会验证清单和冻结执行计划，不复制运行数据、不提交作业。最多登记 100 个目录，目录及状态路径不接受符号链接。
 
 登记信息、名称、笔记、项目标签和默认基线保存在 Web 状态目录的 `benchmarks/console/workspace.sqlite3`。批次的 `state/benchmarks` 和原始 Records 仍是执行证据来源。移动已登记目录会显示读取错误，应登记其新位置；不要为消除错误而删除执行状态。数据库中的笔记单独备份，和原批次目录一起保存即可恢复工作台。
 
 ## 一次完整复盘
 
-1. 登记基线和新版批次，选择基线并点击「设为基线」。给新版写清名称、改动说明和研究项目。
-2. 选择指标，查看完成数、有效评分覆盖、趋势及逐题对比。支持越大/越小越好的指标方向，按退步、提升或任务名排序。
-3. 搜索退步题，点击「并排查看轨迹」。两侧分别搜索、筛选和翻页；只有明确调用 ID 的工具请求与结果才配对，缺少关联时保留原始步骤。
-4. 使用「定位错误」、搜索命令或输出，复制具体步骤链接。文件页可查看代码、JSON、CSV、图片与原生评分产物，下载原始记录。
-5. 保存任务笔记，导出逐题 CSV、对比 CSV、Markdown 摘要和 SVG 图表。配置页可查看/复制冻结候选、参数、版本、资源与预算；Web 不会因为复制配置而创建或执行新 Run。
+1. 在实验列表登记基线和新版批次，点击名称进入详情。顶部显示完整实验的均分、中位数、有效评分覆盖、零分数量与运行耗时中位数；点击零分数量可直接筛选。
+2. 默认「任务结果」页支持名称/笔记搜索、领域（如任务标识包含已知领域）、状态与零分筛选、数值排序、20/50 条分页和 CSV。搜索、筛选、排序和页码写入 URL，刷新或返回仍可继续查看；筛选不改变顶部实验均分。
+3. 点击任务名称进入详情。已完成任务默认看结果，未结束任务默认看已采集日志；轨迹深链接直接打开对应步骤。求解时限来自冻结配置，外层预算在技术信息中显示，两者都不当成实际耗时。
+4. 在「Agent 轨迹」搜索命令、输出或错误，复制具体步骤链接。「文件与评分证据」优先列评分与提交文件，可以预览文本/图片并下载原始文件；「运行配置」用可读字段展示模型、版本与资源，完整 JSON 按需展开。
+5. 在「实验笔记」保存实验名称、改动说明和项目标签。在「实验比较」选择另一组结果作为基线，查看共同有效任务的均分、逐题差值、提升/退步数量和配置差异；可只看有变化或不可比的任务。需要时进入「并排查看轨迹」。
+6. 导出逐题 CSV、对比 CSV、Markdown 摘要；同任务集历史均分与 SVG 导出收在比较页的展开项中。只有一组实验时显示比较空状态。
 
-任务列表每页 50 条，所有冻结成员包括尚未提交的任务均可查询。任务详情有前后切换；筛选失败、未评分、排队和运行中的任务可以减少逐页查找。
+所有冻结成员包括未提交任务均可查询。零分是有效评分，执行失败、缺失评分、取消和清理未完成分别标示。已完成实验与任务停止周期读取，使用「刷新结果」或「刷新任务」按需获取；运行中每 5 秒读取持久记录。运行期间刷新失败保留上次数据，并显示读取错误。
+
+科研项目页支持名称/目标搜索和状态筛选，继续提供初始化、方案、实验与结果入口。旧 Records 事件页与科研执行页共用可读事件组件，支持重点、全部、工具和 Agent 筛选；平台记录仍与原生 Codex 会话区分。
 
 ## 如何解释图表
 
@@ -35,7 +38,7 @@ uv run --locked agent-infra web --state-dir /absolute/path/to/console-state
 
 ## 日志、轨迹和取消
 
-页面会提示观察到的批次完成变化；可显式开启浏览器完成通知。页面关闭时不提供后台通知服务。
+实验列表会提示观察到的批次完成变化；可显式开启浏览器完成通知。页面关闭时不提供后台通知服务。
 
 运行日志展示 worker 已写入 Records 的 combined stream 最后 64 KiB，可暂停显示更新。它不是容器实时 stdout 直连；worker 未推进时没有新日志。读取页面不推进队列、不恢复/重启任务。
 
@@ -62,7 +65,7 @@ uv run --locked agent-infra web --state-dir /absolute/path/to/console-state
 
 成员文件通过该 Run 自有 artifact manifest 与 Records blob 引用读取，不接受宿主机任意文件路径。私有评测、凭据与 secret 类 artifact/stream 不通过这些入口提供。笔记使用独立表和 revision；更新冲突需要刷新核对后保存。
 
-源码分工：`projects/benchmark_workspace.py` 保存用户元数据；`runs/benchmark_views.py` 提供纯投影/比较，`runs/benchmark_evidence.py` 读取有界证据；`bootstrap/benchmark_workspace.py` 组装状态与 Records；`features/benchmark/` 分离结果、比较、图表、笔记和证据阅读组件。不引入图表库、第二套执行器或独立前端状态管理依赖。
+源码分工：`projects/benchmark_workspace.py` 保存用户元数据；`runs/benchmark_views.py` 提供纯投影/比较，`runs/benchmark_evidence.py` 读取有界证据；`bootstrap/benchmark_workspace.py` 组装状态与 Records；`features/benchmarks.tsx` 负责路由与数据组装；`features/benchmark/` 的 `batch-list`、`batch-header`、`batch-detail`、`batch-summary` 分离列表、详情标题、任务表与统计，`presentation.ts` 集中处理展示数据和筛选；`run-result`、`trace-reader` 与 `evidence-files` 负责复盘。科研与旧记录共用 `features/execution-events.tsx`。不引入图表库、第二套执行器或独立前端状态管理依赖。
 
 ## 验证范围
 
@@ -77,4 +80,4 @@ PLAYWRIGHT_CHROMIUM_EXECUTABLE=/absolute/path/to/chrome \
 node tests/web/benchmark.smoke.cjs
 ```
 
-详见 [本轮任务记录](../changes/20260926-benchmark-web-4f82c1.md)。
+详见 [原工作台记录](../changes/20260926-benchmark-web-4f82c1.md)与[页面优化记录](../changes/20260928-web-workbench-usability-9a2c6e.md)。

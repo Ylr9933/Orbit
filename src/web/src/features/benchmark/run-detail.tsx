@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { request, useData } from "../../api/console";
 import { Notice, Panel } from "../../components/common";
 import { EvidenceFiles } from "./evidence-files";
 import { Notes } from "./notes";
+import { taskLabel } from "./presentation";
+import { RunConfig, RunResult } from "./run-result";
 import { TraceReader } from "./trace-reader";
 import type { Annotation, BenchmarkRun } from "./types";
-import { duration, link, number, outcome, workspace } from "./utils";
+import { link, outcome, workspace } from "./utils";
 
 export function RunDetail({
   token,
@@ -30,43 +32,57 @@ export function RunDetail({
     error,
     refresh,
   } = useData<BenchmarkRun>(token, `${path}/detail`, 5000, finished);
-  const [tab, setTab] = useState("auto");
+  const [tab, setTab] = useState(
+    params.view ?? (params.step ? "trace" : "auto"),
+  );
+  useEffect(() => {
+    setTab(params.view ?? (params.step ? "trace" : "auto"));
+  }, [params.view, params.step]);
+  const selectTab = (value: string) => {
+    setTab(value);
+    if (title !== "基线实验") {
+      history.replaceState(
+        null,
+        "",
+        `${location.pathname}${location.search}${link({ ...params, view: value, step: null, cursor: null })}`,
+      );
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    }
+  };
   const [failure, setFailure] = useState("");
   const [busy, setBusy] = useState(false);
+  const [evidenceRevision, setEvidenceRevision] = useState(0);
   const view =
-    tab === "auto" ? (run?.state !== "finished" ? "logs" : "trace") : tab;
+    tab === "auto" ? (run?.state !== "finished" ? "logs" : "result") : tab;
   return (
     <Panel title={title}>
       <Notice error={error || failure} loading={!run} />
       {run && (
         <>
-          <h3 className="break">{run.unit_id}</h3>
+          <div className="section-line">
+            <h3 className="task-title" title={run.unit_id}>
+              {taskLabel(run.unit_id)}
+            </h3>
+            <button
+              type="button"
+              onClick={() => {
+                refresh();
+                setEvidenceRevision((n) => n + 1);
+              }}
+            >
+              刷新任务
+            </button>
+          </div>
           <div className="bench-run-summary">
-            <strong>{outcome(run)}</strong>
+            <span className="badge">{outcome(run)}</span>
             <span>
               {run.model} · {run.agent}
             </span>
-            <span>
-              耗时 {duration(run.elapsed_seconds)} / 预算{" "}
-              {duration(run.budget_seconds)}
-            </span>
-          </div>
-          <div className="bench-score-list">
-            {Object.entries(run.metrics).map(([name, value]) => (
-              <span key={name}>
-                {name} <strong>{number(value)}</strong>
-                {!run.score_valid && "（无效评分）"}
-              </span>
-            ))}
+            <small>最后活动：{new Date(run.updated_at).toLocaleString()}</small>
           </div>
           {run.failure_reason && (
             <p className="bench-warning">{run.failure_reason}</p>
           )}
-          <small>
-            最后活动：{new Date(run.updated_at).toLocaleString()} · 执行{" "}
-            {run.execution ?? "进行中"} / 评测 {run.evaluation ?? "未评分"} /
-            协议 {run.protocol ?? "未核验"}
-          </small>
           {run.state !== "finished" && (
             <p className="muted">
               页面只读取持久状态；队列推进和取消由该批次的 worker
@@ -75,6 +91,7 @@ export function RunDetail({
           )}
           <div className="bench-tabs">
             {[
+              ["result", "结果"],
               ["trace", "Agent 轨迹"],
               ["logs", "运行日志"],
               ["files", "文件与评分证据"],
@@ -84,15 +101,22 @@ export function RunDetail({
                 type="button"
                 key={key}
                 aria-pressed={view === key}
-                onClick={() => setTab(key)}
+                onClick={() => selectTab(key)}
               >
                 {label}
               </button>
             ))}
           </div>
+          {view === "result" && (
+            <RunResult
+              run={run}
+              files={() => selectTab("files")}
+              trace={() => selectTab("trace")}
+            />
+          )}
           {view === "trace" && (
             <TraceReader
-              key={`${runId}-${run.has_evidence}`}
+              key={`${runId}-${run.has_evidence}-${evidenceRevision}`}
               token={token}
               path={`${path}/trajectory`}
               runId={runId}
@@ -103,6 +127,7 @@ export function RunDetail({
           )}
           {view === "logs" && (
             <RunLog
+              key={evidenceRevision}
               token={token}
               path={`${path}/logs`}
               active={run.state !== "finished"}
@@ -110,46 +135,12 @@ export function RunDetail({
           )}
           {view === "files" && (
             <EvidenceFiles
-              key={`${runId}-${run.has_evidence}`}
+              key={`${runId}-${run.has_evidence}-${evidenceRevision}`}
               token={token}
               path={`${path}/files`}
             />
           )}
-          {view === "config" && (
-            <>
-              <pre>{JSON.stringify(run.config, null, 2)}</pre>
-              <details>
-                <summary>资源与清理记录</summary>
-                <pre>
-                  {JSON.stringify(
-                    {
-                      resources: run.resources,
-                      cleanup_complete: run.cleanup_complete,
-                      run_id: run.run_id,
-                      attempt_id: run.attempt_id,
-                    },
-                    null,
-                    2,
-                  )}
-                </pre>
-              </details>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(
-                      JSON.stringify(run.config, null, 2),
-                    );
-                    setFailure("");
-                  } catch {
-                    setFailure("无法复制，请从配置文本中复制");
-                  }
-                }}
-              >
-                复制实验配置
-              </button>
-            </>
-          )}
+          {view === "config" && <RunConfig run={run} />}
           <Notes
             key={`${batch}-${run.unit_id}`}
             token={token}
@@ -181,9 +172,14 @@ export function RunDetail({
               </button>
             </details>
           )}
-          <small className="break">
-            Run {runId} · <a href={link({ batch, run: runId })}>独立详情链接</a>
-          </small>
+          <details>
+            <summary>任务标识与链接</summary>
+            <p className="break">{run.unit_id}</p>
+            <small className="break">
+              Run {runId} ·{" "}
+              <a href={link({ batch, run: runId, view })}>独立详情链接</a>
+            </small>
+          </details>
         </>
       )}
     </Panel>

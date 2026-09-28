@@ -4,10 +4,34 @@ import { Empty, Notice } from "../../components/common";
 import type { Step, Trajectory } from "./types";
 import { groupSteps, isError, link } from "./utils";
 
+const stepLabels: Record<string, string> = {
+  llm_response: "Agent 消息",
+  agent_message: "Agent 消息",
+  user_message: "用户消息",
+  command_execution: "执行命令",
+  tool_call: "工具调用",
+  tool_result: "工具返回",
+  file_change: "文件修改",
+  reasoning: "已记录的思考",
+  llm_request: "模型请求",
+};
+const captureLabels: Record<string, string> = {
+  complete: "完整",
+  partial: "部分采集",
+  truncated: "有截断",
+  unavailable: "不可用",
+  missing: "缺失",
+};
 function StepContent({ step }: { step: Step }) {
   return (
     <>
-      <pre>{step.content}</pre>
+      {["llm_response", "agent_message", "user_message"].includes(
+        step.step_type,
+      ) ? (
+        <div className="trace-message">{step.content}</div>
+      ) : (
+        <pre>{step.content}</pre>
+      )}
       {step.content_truncated && (
         <small>此步骤显示前 64 KiB，完整内容见原始证据。</small>
       )}
@@ -113,7 +137,7 @@ export function TraceReader({
           {data.calls.last_reported_usage && (
             <details>
               <summary>已采集的模型用量</summary>
-              <dl>
+              <dl className="readable-config">
                 {Object.entries(data.calls.last_reported_usage).map(
                   ([name, value]) => (
                     <div key={name}>
@@ -127,12 +151,16 @@ export function TraceReader({
             </details>
           )}
           <small>
-            匹配 {data.matched_steps} 步 · 采集 {data.trajectory.capture_status}{" "}
+            匹配 {data.matched_steps} 步 · 采集{" "}
+            {captureLabels[data.trajectory.capture_status] ??
+              data.trajectory.capture_status}{" "}
             · {data.trajectory.origin ?? "原生轨迹"}
           </small>
-          {data.trajectory.capture_status === "truncated" && (
+          {["truncated", "partial", "missing"].includes(
+            data.trajectory.capture_status,
+          ) && (
             <p className="bench-warning">
-              归档视图有截断。搜索覆盖已保存的规范轨迹；完整性以原始证据为准。
+              轨迹采集不完整或存在截断。搜索仅覆盖已归档内容；可在文件页查看原始证据。
             </p>
           )}
           {groups.length === 0 && (
@@ -142,7 +170,7 @@ export function TraceReader({
                 : "轨迹尚未归档或该运行没有可用的 Agent 轨迹。"}
             </Empty>
           )}
-          <div className="bench-steps">
+          <section className="bench-steps" aria-label="归档轨迹步骤">
             {groups.map(({ step, response }) => (
               <article
                 className={`bench-step ${isError(step) || (response && isError(response)) ? "bench-step-error" : ""}`}
@@ -154,6 +182,7 @@ export function TraceReader({
                     #{step.step_index} ·{" "}
                     {step.metadata.tool_name ??
                       step.metadata.parent_tool_name ??
+                      stepLabels[step.step_type] ??
                       step.step_type}
                   </strong>
                   <button
@@ -162,6 +191,7 @@ export function TraceReader({
                       const hash = link({
                         ...locationParams,
                         cursor,
+                        view: "trace",
                         traceSearch: query,
                         traceKind: kind,
                         step: step.step_index,
@@ -211,7 +241,7 @@ export function TraceReader({
                 )}
               </article>
             ))}
-          </div>
+          </section>
           <div className="actions">
             <button
               type="button"
@@ -221,8 +251,8 @@ export function TraceReader({
               上一页轨迹
             </button>
             <span>
-              {cursor + 1}–{cursor + (data.steps.length ?? 0)} /{" "}
-              {data.matched_steps}
+              {data.matched_steps ? cursor + 1 : 0}–
+              {cursor + (data.steps.length ?? 0)} / {data.matched_steps}
             </span>
             <button
               type="button"

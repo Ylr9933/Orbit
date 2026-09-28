@@ -1,280 +1,273 @@
-import { useState } from "react";
-import { Empty, Panel } from "../../components/common";
-import { Notes } from "./notes";
-import type { BatchDetail } from "./types";
+import { useLayoutEffect } from "react";
+import { Empty } from "../../components/common";
 import {
-  csv,
-  download,
-  duration,
-  link,
-  number,
-  outcome,
-  stateLabels,
-} from "./utils";
+  metricLabel,
+  pageNumber,
+  resultRows,
+  score,
+  taskDomain,
+  taskLabel,
+  type ViewParams,
+} from "./presentation";
+import type { BatchDetail } from "./types";
+import { csv, download, duration, link, number, outcome } from "./utils";
 
 export function BatchResults({
-  token,
   batch,
   metric,
-  baseline,
-  saved,
+  params,
+  update,
 }: {
-  token: string;
   batch: BatchDetail;
   metric: string;
-  baseline: string;
-  saved: () => void;
+  params: ViewParams;
+  update: (values: Record<string, string | null>) => void;
 }) {
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
-  const [sort, setSort] = useState("task");
-  const [page, setPage] = useState(0);
-  const rows = batch.runs
-    .filter(
-      (r) =>
-        `${r.unit_id} ${r.model} ${r.annotation.notes ?? ""}`
-          .toLowerCase()
-          .includes(search.toLowerCase()) &&
-        (filter === "all" ||
-          (filter === "unscored"
-            ? !r.score_valid
-            : filter === "failed"
-              ? r.execution === "failed" || r.execution === "timed_out"
-              : r.state === filter)),
-    )
-    .sort((a, b) =>
-      sort === "score"
-        ? (a.metrics[metric] ?? Infinity) - (b.metrics[metric] ?? Infinity)
-        : sort === "duration"
-          ? (b.elapsed_seconds ?? -1) - (a.elapsed_seconds ?? -1)
-          : a.unit_id.localeCompare(b.unit_id),
-    );
-  const current = Math.min(page, Math.max(0, Math.ceil(rows.length / 50) - 1));
-  const failed = batch.runs.filter((r) => r.failure_reason);
-  const reasons = new Map<string, number>();
-  for (const run of failed) {
-    const reason = run.failure_reason as string;
-    reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
-  }
+  const rows = resultRows(batch.runs, metric, params);
+  const size = params.size === "50" ? 50 : 20;
+  const current = pageNumber(params.page, rows.length, size);
+  const domains = [
+    ...new Set(batch.runs.map((r) => taskDomain(r.unit_id)).filter(Boolean)),
+  ];
+  const scrollKey = `bench-scroll-${batch.id}`;
+  useLayoutEffect(() => {
+    const saved = sessionStorage.getItem(scrollKey);
+    if (saved != null) {
+      window.scrollTo(0, Number(saved) || 0);
+      sessionStorage.removeItem(scrollKey);
+    }
+  }, [scrollKey]);
+  const change = (values: Record<string, string | null>) =>
+    update({ ...values, page: null });
   return (
-    <>
+    <section aria-label="任务结果" className="batch-results">
+      <h2 className="sr-only">任务结果</h2>
       {batch.duplicate_tasks && (
         <p className="bench-warning">
-          本组包含同任务的多次尝试，逐项保留；不会自动挑选最高分参与比较或趋势。
+          本组包含同任务的多次尝试，逐项保留；不会自动挑选最高分。
         </p>
       )}
-      <Notes
-        key={batch.id}
-        token={token}
-        batch={batch.id}
-        initial={batch.annotation}
-        saved={saved}
-      />
-      <div className="bench-status-line">
-        {Object.entries(batch.states).map(([state, count]) => (
-          <span key={state}>
-            {stateLabels[state] ?? state} <strong>{count}</strong>
-          </span>
-        ))}
-        <small>
-          最近活动：
-          {batch.updated_at
-            ? new Date(batch.updated_at).toLocaleString()
-            : "尚未提交"}
-        </small>
-      </div>
-      {reasons.size > 0 && (
-        <details className="bench-warning">
-          <summary>{failed.length} 个任务有失败或诊断信息</summary>
-          {[...reasons]
-            .sort((a, b) => b[1] - a[1])
-            .map(([reason, count]) => (
-              <p key={reason}>
-                {count} 项 · {reason}
-              </p>
-            ))}
-        </details>
-      )}
-      <Panel title="任务结果">
-        <div className="bench-filters">
+      <div className="bench-filters result-filters">
+        <label className="search-field">
+          搜索任务
+          <input
+            type="search"
+            placeholder="任务名称、领域或笔记"
+            value={params.search ?? ""}
+            onChange={(e) => change({ search: e.target.value })}
+          />
+        </label>
+        {domains.length > 0 && (
           <label>
-            搜索任务
-            <input
-              type="search"
-              placeholder="任务名称、模型或笔记"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(0);
-              }}
-            />
-          </label>
-          <label>
-            结果筛选
+            领域
             <select
-              value={filter}
-              onChange={(e) => {
-                setFilter(e.target.value);
-                setPage(0);
-              }}
+              value={params.domain ?? ""}
+              onChange={(e) => change({ domain: e.target.value })}
             >
-              <option value="all">全部任务</option>
-              <option value="failed">失败与超时</option>
-              <option value="unscored">无有效评分</option>
-              <option value="running">运行中</option>
-              <option value="queued">排队中</option>
-              <option value="not_submitted">未提交</option>
+              <option value="">全部领域</option>
+              {domains.map((d) => (
+                <option key={d}>{d}</option>
+              ))}
             </select>
           </label>
-          <label>
-            任务排序
-            <select
-              value={sort}
-              onChange={(e) => {
-                setSort(e.target.value);
-                setPage(0);
-              }}
-            >
-              <option value="task">任务名称</option>
-              <option value="score">低分优先</option>
-              <option value="duration">耗时最长</option>
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={() =>
-              download(
-                "benchmark-results.csv",
-                csv([
-                  [
-                    "task",
-                    "model",
-                    "state",
-                    "execution",
-                    "evaluation",
-                    metric,
-                    "elapsed_seconds",
-                    "run_id",
-                    "notes",
-                  ],
-                  ...rows.map((r) => [
-                    r.unit_id,
-                    r.model,
-                    r.state,
-                    r.execution,
-                    r.evaluation,
-                    r.score_valid ? r.metrics[metric] : null,
-                    r.elapsed_seconds,
-                    r.run_id,
-                    r.annotation.notes,
-                  ]),
-                ]),
-                "text/csv;charset=utf-8",
-              )
-            }
-          >
-            导出结果 CSV
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              download(
-                "benchmark-experiment.md",
-                `# ${batch.name}\n\n${batch.annotation.notes ?? ""}\n\n模型：${batch.models.join(", ")}\n\n已结束 ${batch.finished}/${batch.total}；有效评分 ${batch.scored}/${batch.total}\n\n${metric}：${number(batch.metrics[metric]?.mean)}（已评分任务描述性均值，不是官方总分）\n\n${location.href}\n`,
-              )
-            }
-          >
-            导出实验摘要
-          </button>
-        </div>
-        <small>
-          {rows.length} / {batch.total} 个任务 · 每页 50 条，所有成员均可查询
-        </small>
-        {rows.length ? (
-          <div className="table-wrap bench-result-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>任务</th>
-                  <th>结果</th>
-                  <th>{metric || "得分"}</th>
-                  <th>耗时 / 预算</th>
-                  <th>模型</th>
-                  <th>复盘</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.slice(current * 50, (current + 1) * 50).map((run, i) => (
-                  <tr key={run.run_id ?? `${run.unit_id}-${i}`}>
-                    <td>
-                      {run.unit_id}
-                      {run.annotation.notes && (
-                        <small title={run.annotation.notes}>有实验笔记</small>
-                      )}
-                    </td>
-                    <td>
-                      {outcome(run)}
-                      {run.failure_reason && (
-                        <small
-                          className="bench-reason"
-                          title={run.failure_reason}
-                        >
-                          {run.failure_reason}
-                        </small>
-                      )}
-                    </td>
-                    <td>
-                      {number(run.score_valid ? run.metrics[metric] : null)}
-                    </td>
-                    <td>
-                      {duration(run.elapsed_seconds)}
-                      <small>预算 {duration(run.budget_seconds)}</small>
-                    </td>
-                    <td>{run.model}</td>
-                    <td>
-                      {run.run_id ? (
-                        <a
-                          href={link({
-                            batch: batch.id,
-                            run: run.run_id,
-                            baseline,
-                            metric,
-                          })}
-                        >
-                          查看详情
-                        </a>
-                      ) : (
-                        "等待提交"
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <Empty>没有匹配的任务，试试调整筛选条件。</Empty>
         )}
+        <label>
+          结果筛选
+          <select
+            value={params.filter ?? "all"}
+            onChange={(e) => change({ filter: e.target.value })}
+          >
+            <option value="all">全部任务</option>
+            <option value="zero">零分任务</option>
+            <option value="failed">失败与超时</option>
+            <option value="unscored">无有效评分</option>
+            <option value="running">运行中</option>
+            <option value="queued">排队中</option>
+            <option value="not_submitted">未提交</option>
+            <option value="cancelled">已取消</option>
+            <option value="cleanup">清理未完成</option>
+          </select>
+        </label>
+        <label>
+          任务排序
+          <select
+            value={params.sort ?? "score"}
+            onChange={(e) => change({ sort: e.target.value })}
+          >
+            <option value="score">得分从低到高</option>
+            <option value="high">得分从高到低</option>
+            <option value="duration">耗时从长到短</option>
+            <option value="task">任务名称</option>
+          </select>
+        </label>
+      </div>
+      <div className="section-line result-count">
+        <small role="status">
+          {rows.length} / {batch.total} 个任务 · 筛选不改变实验均分
+        </small>
+        <button
+          type="button"
+          onClick={() =>
+            download(
+              "benchmark-results.csv",
+              csv([
+                [
+                  "task",
+                  "model",
+                  "state",
+                  "execution",
+                  "evaluation",
+                  metric,
+                  "elapsed_seconds",
+                  "run_id",
+                  "notes",
+                ],
+                ...rows.map((r) => [
+                  r.unit_id,
+                  r.model,
+                  r.state,
+                  r.execution,
+                  r.evaluation,
+                  score(r, metric),
+                  r.elapsed_seconds,
+                  r.run_id,
+                  r.annotation.notes,
+                ]),
+              ]),
+              "text/csv;charset=utf-8",
+            )
+          }
+        >
+          导出结果 CSV
+        </button>
+      </div>
+      {rows.length ? (
+        <div className="table-wrap workbench-table bench-result-table">
+          <table>
+            <thead>
+              <tr>
+                <th>任务</th>
+                {domains.length > 0 && <th>领域</th>}
+                <th className="numeric">{metricLabel(metric)}</th>
+                <th>结果</th>
+                <th className="numeric">运行耗时</th>
+                <th>
+                  <span className="sr-only">查看详情</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows
+                .slice(current * size, (current + 1) * size)
+                .map((run, i) => {
+                  const href = link({
+                    ...params,
+                    batch: batch.id,
+                    run: run.run_id,
+                    view: null,
+                    step: null,
+                    cursor: null,
+                  });
+                  const saveScroll = () =>
+                    sessionStorage.setItem(scrollKey, String(window.scrollY));
+                  return (
+                    <tr key={run.run_id ?? `${run.unit_id}-${i}`}>
+                      <th scope="row">
+                        <a
+                          href={run.run_id ? href : undefined}
+                          onClick={saveScroll}
+                          title={run.unit_id}
+                        >
+                          {taskLabel(run.unit_id)}
+                        </a>
+                        {run.annotation.notes && (
+                          <small title={run.annotation.notes}>有实验笔记</small>
+                        )}
+                      </th>
+                      {domains.length > 0 && (
+                        <td>{taskDomain(run.unit_id) || "—"}</td>
+                      )}
+                      <td className="numeric score-value">
+                        {number(score(run, metric))}
+                      </td>
+                      <td>
+                        <span
+                          className={`result-state ${["failed", "timed_out"].includes(run.execution ?? "") ? "result-failed" : ""}`}
+                        >
+                          {outcome(run)}
+                        </span>
+                        {run.cleanup_complete === false && (
+                          <small>清理未完成</small>
+                        )}
+                        {run.failure_reason && (
+                          <small
+                            className="bench-reason"
+                            title={run.failure_reason}
+                          >
+                            {run.failure_reason}
+                          </small>
+                        )}
+                      </td>
+                      <td className="numeric muted">
+                        {duration(run.elapsed_seconds)}
+                      </td>
+                      <td>
+                        {run.run_id ? (
+                          <a href={href} onClick={saveScroll}>
+                            查看详情
+                          </a>
+                        ) : (
+                          "等待提交"
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <Empty>
+          没有匹配的任务。
+          <button
+            type="button"
+            onClick={() => change({ search: null, filter: null, domain: null })}
+          >
+            清除筛选
+          </button>
+        </Empty>
+      )}
+      <div className="table-pagination">
+        <label className="inline">
+          每页
+          <select
+            value={size}
+            onChange={(e) => change({ size: e.target.value })}
+          >
+            <option value="20">20 条</option>
+            <option value="50">50 条</option>
+          </select>
+        </label>
         <div className="actions">
           <button
             type="button"
             disabled={current === 0}
-            onClick={() => setPage(current - 1)}
+            onClick={() => update({ page: String(current - 1) })}
           >
             上一页任务
           </button>
           <span>
-            {current + 1} / {Math.max(1, Math.ceil(rows.length / 50))}
+            {current + 1} / {Math.max(1, Math.ceil(rows.length / size))}
           </span>
           <button
             type="button"
-            disabled={(current + 1) * 50 >= rows.length}
-            onClick={() => setPage(current + 1)}
+            disabled={(current + 1) * size >= rows.length}
+            onClick={() => update({ page: String(current + 1) })}
           >
             下一页任务
           </button>
         </div>
-      </Panel>
-    </>
+      </div>
+    </section>
   );
 }

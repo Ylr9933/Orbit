@@ -23,7 +23,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     });
     const base = `http://127.0.0.1:${port}`;
     await page.goto(`${base}/#token=browser-fixture-only-not-a-production-secret`);
-    await page.getByRole("heading", { name: "总览", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "实验", exact: true }).first().waitFor();
     assert(!page.url().includes("token="));
     await page.getByRole("link", { name: "科研项目", exact: true }).click();
     await page.getByRole("button", { name: "＋ 新建项目" }).click();
@@ -53,10 +53,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
     await page.getByRole("link", { name: "资源", exact: true }).click();
     await page.getByRole("heading", { name: "CPU 使用率", exact: true }).waitFor();
     await page.screenshot({ path: "/tmp/agent-infra-web-resources.png", fullPage: true });
-    await page.getByRole("link", { name: "任务", exact: true }).click();
+    await page.goto(`${base}/#tasks`);
     await page.getByRole("heading", { name: "example-file-result", exact: true }).waitFor();
-    for (const name of ["Agents", "记录", "设置", "总览"]) {
-      await page.getByRole("link", { name, exact: true }).click();
+    for (const [route, name] of [
+      ["agents", "Agent 配置"],
+      ["records", "运行记录"],
+      ["settings", "设置"],
+      ["overview", "总览"],
+    ]) {
+      await page.goto(`${base}/#${route}`);
       await page.getByRole("heading", { name, exact: true }).waitFor();
     }
     await page.screenshot({ path: "/tmp/agent-infra-web-overview.png", fullPage: true });

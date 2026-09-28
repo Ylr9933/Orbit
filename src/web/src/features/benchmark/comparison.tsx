@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useData } from "../../api/console";
 import { Notice, Panel } from "../../components/common";
 import { ScoreMatrix } from "./charts";
+import { taskLabel } from "./presentation";
 import type { Batch, Comparison } from "./types";
 import {
   comparisonCsv,
@@ -34,9 +35,14 @@ export function ComparisonPanel({
   const [search, setSearch] = useState("");
   const [direction, setDirection] = useState("maximize");
   const [sort, setSort] = useState("regression");
+  const [onlyChanged, setOnlyChanged] = useState(false);
   const rows =
     data?.rows
-      .filter((r) => r.unit_id.toLowerCase().includes(search.toLowerCase()))
+      .filter(
+        (r) =>
+          r.unit_id.toLowerCase().includes(search.toLowerCase()) &&
+          (!onlyChanged || r.delta !== 0),
+      )
       .sort((a, b) => {
         if (sort === "task") return a.unit_id.localeCompare(b.unit_id);
         if (a.delta == null) return b.delta == null ? 0 : 1;
@@ -107,6 +113,62 @@ export function ComparisonPanel({
               </select>
             </label>
           </div>
+          <label className="inline">
+            <input
+              type="checkbox"
+              checked={onlyChanged}
+              onChange={(e) => setOnlyChanged(e.target.checked)}
+            />
+            只看有变化或不可比的任务
+          </label>
+          <p className="muted">
+            {
+              data.rows.filter(
+                (r) =>
+                  r.delta != null &&
+                  r.delta * (direction === "minimize" ? -1 : 1) > 0,
+              ).length
+            }{" "}
+            项提升 ·{" "}
+            {
+              data.rows.filter(
+                (r) =>
+                  r.delta != null &&
+                  r.delta * (direction === "minimize" ? -1 : 1) < 0,
+              ).length
+            }{" "}
+            项退步 · {data.rows.filter((r) => r.delta === 0).length} 项不变 ·{" "}
+            {data.total - data.paired} 项不可比
+          </p>
+          <details className="comparison-config">
+            <summary>
+              配置差异（首个共同任务） · {differences.length} 项
+            </summary>
+            <p className="muted">
+              任务版本核对不替代实验条件审查。比较前请确认提示级别、资源、时限等变化符合你的实验目的。
+            </p>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>字段</th>
+                    <th>基线</th>
+                    <th>当前</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {differences.map((d) => (
+                    <tr key={d.field}>
+                      <td>{d.field}</td>
+                      <td className="break">{d.left}</td>
+                      <td className="break">{d.right}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {!differences.length && <p>此任务未发现配置差异。</p>}
+          </details>
           <div className="actions">
             <button
               type="button"
@@ -147,7 +209,7 @@ export function ComparisonPanel({
                 {rows.map((row) => (
                   <tr key={row.unit_id}>
                     <td>
-                      {row.unit_id}
+                      <span title={row.unit_id}>{taskLabel(row.unit_id)}</span>
                       {row.reason && <small>{row.reason}</small>}
                     </td>
                     <td>
@@ -183,6 +245,8 @@ export function ComparisonPanel({
                             peer: row.left.run_id,
                             baseline: baseline.id,
                             metric,
+                            view: "trace",
+                            tab: "comparison",
                           })}
                         >
                           并排查看轨迹
@@ -194,33 +258,14 @@ export function ComparisonPanel({
               </tbody>
             </table>
           </div>
-          <ScoreMatrix
-            data={data}
-            baseline={baseline.name}
-            candidate={candidate.name}
-          />
+          {!rows.length && <p className="empty">没有匹配的对比任务。</p>}
           <details>
-            <summary>配置差异（首个共同任务）</summary>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>字段</th>
-                    <th>基线</th>
-                    <th>当前</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {differences.map((d) => (
-                    <tr key={d.field}>
-                      <td>{d.field}</td>
-                      <td className="break">{d.left}</td>
-                      <td className="break">{d.right}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <summary>得分矩阵</summary>
+            <ScoreMatrix
+              data={data}
+              baseline={baseline.name}
+              candidate={candidate.name}
+            />
           </details>
         </>
       )}

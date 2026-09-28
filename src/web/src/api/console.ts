@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface Project {
   id?: string;
@@ -123,11 +123,16 @@ export function useData<T>(
   const [error, setError] = useState("");
   const [updated, setUpdated] = useState("");
   const [revision, setRevision] = useState(0);
+  const identity = useRef<string | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: revision explicitly requests a refresh.
   useEffect(() => {
-    setData(undefined);
+    const key = JSON.stringify([token, path]);
+    if (identity.current !== key) {
+      setData(undefined);
+      setUpdated("");
+      identity.current = key;
+    }
     setError("");
-    setUpdated("");
     if (!path) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;

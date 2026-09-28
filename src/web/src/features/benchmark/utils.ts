@@ -1,15 +1,21 @@
 import type { BenchmarkRun, Comparison, Step } from "./types";
 export const workspace = "benchmarks/workspace";
 export const number = (value: number | null | undefined) =>
-  value == null
+  value == null || !Number.isFinite(value)
     ? "—"
-    : value.toLocaleString(undefined, { maximumFractionDigits: 3 });
-export const duration = (seconds: number | null | undefined) =>
-  seconds == null
-    ? "—"
-    : seconds < 60
-      ? `${Math.round(seconds)} 秒`
-      : `${Math.floor(seconds / 60)} 分 ${Math.round(seconds % 60)} 秒`;
+    : value !== 0 && Math.abs(value) < 0.01
+      ? value.toExponential(2)
+      : value.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        });
+export const duration = (seconds: number | null | undefined) => {
+  if (seconds == null || !Number.isFinite(seconds)) return "—";
+  const rounded = Math.max(0, Math.round(seconds));
+  return rounded < 60
+    ? `${rounded} 秒`
+    : `${Math.floor(rounded / 60)} 分 ${rounded % 60} 秒`;
+};
 export const stateLabels: Record<string, string> = {
   queued: "排队",
   accepted: "已准入",

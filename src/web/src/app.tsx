@@ -17,21 +17,24 @@ import { ResourcesPage } from "./features/resources";
 import { RunsPage } from "./features/runs";
 
 const navigation = [
-  ["overview", "总览", "◫"],
+  ["benchmarks", "实验", "▤"],
   ["projects", "科研项目", "◇"],
-  ["tasks", "任务", "▤"],
-  ["runs", "运行", "▷"],
-  ["benchmarks", "Benchmark", "▣"],
   ["resources", "资源", "▥"],
-  ["agents", "Agents", "⌘"],
-  ["records", "记录", "≡"],
   ["settings", "设置", "⚙"],
 ];
+const secondaryPages: Record<string, string> = {
+  overview: "总览",
+  tasks: "注册任务",
+  runs: "科研运行",
+  execution: "科研运行",
+  agents: "Agent 配置",
+  records: "运行记录",
+};
 function initialToken() {
   const token = new URLSearchParams(location.hash.slice(1)).get("token");
   if (token) {
     sessionStorage.setItem("console-token", token);
-    history.replaceState(null, "", `${location.pathname}#overview`);
+    history.replaceState(null, "", `${location.pathname}#benchmarks`);
   }
   return token ?? sessionStorage.getItem("console-token") ?? "";
 }
@@ -92,7 +95,7 @@ function TasksPage({ token }: { token: string }) {
   return (
     <>
       <p className="muted">
-        仅展示注册任务的 Agent 可见描述。私有评测材料不会通过此页面提供。
+        这里只展示注册科研任务的公开描述。Benchmark 中的任务请从实验详情查看。
       </p>
       <Notice error={error} loading={!data} />
       {data?.items.length === 0 && (
@@ -162,38 +165,54 @@ function AgentsPage({ token }: { token: string }) {
 function Settings({ token }: { token: string }) {
   const capabilities = useData<unknown>(token, "capabilities");
   return (
-    <Panel title="本机控制台">
-      <p>
-        当前为单管理员、单节点控制台。服务只监听
-        127.0.0.1，访问令牌随服务重启更换。
-      </p>
-      <p>
-        访问令牌仅保存在当前标签页的 sessionStorage；退出会清除。远程使用请通过
-        SSH 本地端口转发。
-      </p>
-      <p>
-        工作区项目与 Controller 共用 --state-dir；旧项目保存在 --console-dir。
-        --records-root 可额外指定旧运行记录；--task 注册旧任务。
-      </p>
-      <p>
-        可初始化项目、查看研究方案、提交已采用实验、取消运行并查看产物和分析。
-        执行需要启动同一状态目录下的
-        Controller；暂不提供聊天、集群管理或多人权限。
-      </p>
-      <Notice error={capabilities.error} />
-      <details>
-        <summary>服务能力</summary>
-        <pre>{pretty(capabilities.data)}</pre>
-      </details>
-    </Panel>
+    <>
+      <div className="settings-links">
+        {[
+          ["agents", "Agent 配置", "查看安装版本与认证状态"],
+          ["runs", "科研运行", "查看执行、日志与结果"],
+          ["records", "运行记录", "查询历史轨迹和产物"],
+          ["tasks", "注册任务", "查看科研任务输入与资源要求"],
+          ["overview", "项目总览", "查看项目、任务与近期执行"],
+        ].map(([key, title, description]) => (
+          <a href={`#${key}`} key={key}>
+            <strong>{title} →</strong>
+            <small>{description}</small>
+          </a>
+        ))}
+      </div>
+      <Panel title="本机控制台">
+        <p>
+          当前为单管理员、单节点控制台。服务只监听
+          127.0.0.1，访问令牌随服务重启更换。
+        </p>
+        <p>
+          访问令牌仅保存在当前标签页的
+          sessionStorage；退出会清除。远程使用请通过 SSH 本地端口转发。
+        </p>
+        <p>
+          工作区项目与 Controller 共用 --state-dir；旧项目保存在 --console-dir。
+          --records-root 可额外指定旧运行记录；--task 注册旧任务。
+        </p>
+        <p>
+          可初始化项目、查看研究方案、提交已采用实验、取消运行并查看产物和分析。
+          执行需要启动同一状态目录下的
+          Controller；暂不提供聊天、集群管理或多人权限。
+        </p>
+        <Notice error={capabilities.error} />
+        <details>
+          <summary>服务能力</summary>
+          <pre>{pretty(capabilities.data)}</pre>
+        </details>
+      </Panel>
+    </>
   );
 }
 export function App() {
   const [token, setToken] = useState(initialToken);
   const [input, setInput] = useState("");
-  const [route, setRoute] = useState(location.hash.slice(1) || "overview");
+  const [route, setRoute] = useState(location.hash.slice(1) || "benchmarks");
   useEffect(() => {
-    const changed = () => setRoute(location.hash.slice(1) || "overview");
+    const changed = () => setRoute(location.hash.slice(1) || "benchmarks");
     window.addEventListener("hashchange", changed);
     return () => window.removeEventListener("hashchange", changed);
   }, []);
@@ -226,14 +245,24 @@ export function App() {
         </form>
       </main>
     );
-  const [page, id] = route.split("/");
+  const [page, id] = route.split("?")[0].split("/");
   const active = navigation.find(
     ([key]) => key === (page === "execution" ? "runs" : page),
   );
   return (
     <div className="shell">
+      <button
+        type="button"
+        className="skip-link"
+        onClick={(e) => {
+          e.preventDefault();
+          document.getElementById("main-content")?.focus();
+        }}
+      >
+        跳到主要内容
+      </button>
       <aside className="sidebar">
-        <a className="brand" href="#overview">
+        <a className="brand" href="#benchmarks">
           <span className="brand-mark">ai</span>
           <span>
             Agent Infra<small>RESEARCH CONSOLE</small>
@@ -244,7 +273,11 @@ export function App() {
           {navigation.map(([key, label, icon]) => (
             <a
               key={key}
-              className={key === page ? "active" : ""}
+              className={
+                key === page || (key === "settings" && secondaryPages[page])
+                  ? "active"
+                  : ""
+              }
               aria-current={key === page ? "page" : undefined}
               href={`#${key}`}
             >
@@ -270,12 +303,11 @@ export function App() {
       <div className="workspace">
         <header>
           <div>
-            <span className="eyebrow">WORKSPACE / {page.toUpperCase()}</span>
-            <h1>{active?.[1] ?? "页面不存在"}</h1>
+            <h1>{active?.[1] ?? secondaryPages[page] ?? "页面不存在"}</h1>
           </div>
-          <span className="badge">LOCAL · 预览版</span>
+          <span className="muted">本机研究工作台</span>
         </header>
-        <main key={page}>
+        <main key={page} id="main-content" tabIndex={-1}>
           {page === "overview" && <Overview token={token} />}
           {page === "projects" &&
             (id ? (
@@ -304,9 +336,9 @@ export function App() {
             <RunsPage token={token} id={id} records={page === "records"} />
           )}
           {page === "settings" && <Settings token={token} />}
-          {!active && (
+          {!active && !secondaryPages[page] && (
             <Empty>
-              <a href="#overview">返回总览</a>
+              <a href="#benchmarks">返回实验列表</a>
             </Empty>
           )}
         </main>

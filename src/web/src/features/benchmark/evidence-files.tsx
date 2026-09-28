@@ -61,6 +61,14 @@ export function EvidenceFiles({
       setBusy(false);
     }
   }
+  const priority = (name: string) =>
+    /score|grade|result|report|submission|prediction/i.test(name) ? 0 : 1;
+  const files = [...(data?.files ?? [])]
+    .filter((f) => f.path.toLowerCase().includes(search.toLowerCase()))
+    .sort(
+      (a, b) =>
+        priority(a.path) - priority(b.path) || a.path.localeCompare(b.path),
+    );
   return (
     <div>
       <Notice error={failure || error} loading={!data} />
@@ -73,40 +81,49 @@ export function EvidenceFiles({
           onChange={(e) => setSearch(e.target.value)}
         />
       </label>
+      <small>
+        {files.length} / {data?.files.length ?? 0} 个文件 · 评分与提交文件优先
+      </small>
       <div className="bench-file-list">
-        {data?.files
-          .filter((f) => f.path.toLowerCase().includes(search.toLowerCase()))
-          .map((f) => (
-            <div className="section-line" key={f.path}>
-              <span className="break">
-                {f.path}
-                <small>{f.size_bytes.toLocaleString()} B</small>
-              </span>
-              <div className="actions">
-                <button
-                  type="button"
-                  disabled={
-                    busy ||
-                    f.size_bytes > 1024 ** 2 ||
-                    !/\.(jsonl?|csv|txt|md|log|ya?ml|py|sh|toml|png|jpe?g|gif|webp)$/i.test(
-                      f.path,
-                    )
-                  }
-                  onClick={() => void read(f.path, false)}
-                >
-                  预览
-                </button>
-                <button
-                  type="button"
-                  disabled={busy || f.size_bytes > 16 * 1024 ** 2}
-                  onClick={() => void read(f.path, true)}
-                >
-                  下载
-                </button>
-              </div>
+        {files.map((f) => (
+          <div className="section-line" key={f.path}>
+            <span className="break">
+              {f.path}
+              <small>{f.size_bytes.toLocaleString()} B</small>
+            </span>
+            <div className="actions">
+              <button
+                type="button"
+                disabled={
+                  busy ||
+                  f.size_bytes > 1024 ** 2 ||
+                  !/\.(jsonl?|csv|txt|md|log|ya?ml|py|sh|toml|png|jpe?g|gif|webp)$/i.test(
+                    f.path,
+                  )
+                }
+                onClick={() => void read(f.path, false)}
+              >
+                预览
+              </button>
+              <button
+                type="button"
+                disabled={busy || f.size_bytes > 16 * 1024 ** 2}
+                onClick={() => void read(f.path, true)}
+              >
+                下载
+              </button>
             </div>
-          ))}
+          </div>
+        ))}
       </div>
+      {data && data.files.length > 0 && files.length === 0 && (
+        <Empty>
+          没有匹配的文件。
+          <button type="button" onClick={() => setSearch("")}>
+            清除搜索
+          </button>
+        </Empty>
+      )}
       {data?.files.length === 0 && (
         <Empty>尚无归档产物。运行结束并完成采集后可查看。</Empty>
       )}

@@ -1,6 +1,6 @@
 # 项目当前状态
 
-Updated at: 2026-09-28T14:33:34+08:00
+Updated at: 2026-09-28T20:10:22+08:00
 
 Basis: 以本文合并到 `main` 后的版本为集成依据；涵盖 A/B/C/D、H/E/I/W、模块整理、
 GPU 诊断与容器基础链、宿主机 Codex 会话采集，以及 BM00–BM07 的各工程阶段。
@@ -43,6 +43,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 - **BM03**：独立 PAST-Bench 包固定 v1.0.0 revision，把完整 family 的 persistence on/off 配对作为原子任务；冻结 episode 顺序、fresh session、history/state 策略和原生 runner，归档原生 evidence 与聚合结果。无模型 SM01 工程 profile 通过独立 wheel 验收；尚未运行真实 Agent/judge，不代表 Docker sandbox、官方复现或榜单提交。
 - **BM04**：独立 PostTrainBench 包将一个训练 trial 保持为原子 HTCondor job，持久绑定 native job ID；真实模式声明 H100/CPU/内存/磁盘和 GPU 可见性隔离，按 job ID 查询/取消。提交响应不确定时暂停自动重试，等待原生身份对账。final model 进入文件级校验的内容寻址私有存储，Records 保存 handoff manifest、指标、judge 和有界轨迹。无模型 wheel 与模拟 scheduler 生命周期通过；未进行真实 H100/Apptainer/Agent/judge 集群验收。
 - **Benchmark Web 工作台**：登记跨目录批次，查看全部任务与有效评分，比较同任务得分、完整批次描述性趋势，搜索/并排复盘归档轨迹，预览和导出产物、保存笔记与默认基线。运行日志读取已采集内容，取消操作保存意图供 worker 处理；不提供自动重跑、实时 token 流或官方总分聚合。合并后 417 项非集成/E2E 测试通过，已只读检查真实 TB 归档轨迹；浏览器流程在原工作分支通过。
+- **Web 易用性优化**：实验列表/批次/任务分层，真实结果摘要与分布、URL 保留筛选和分页、结果优先的任务详情、可读配置、比较差异筛选；科研项目可搜索筛选，旧 Records 与科研执行共用可读事件组件。已完成任务停止轮询；418 项 Python 测试、8 项前端逻辑测试、三套浏览器流程和真实 ASI 60 项只读页面检查通过。持久重跑仍未提供，设计、使用与验收见[本轮记录](changes/20260928-web-workbench-usability-9a2c6e.md)。
 - **W**：Web 兼容旧 catalog 和新工作区，支持初始化、研究方案查看、实验编译/预检/提交/取消、产物下载和分析展示。
 - **模块整理**：修复 Web-first 启动权限、统一状态目录/研究运行上下文，以及事件/产物/轨迹可见性；拆分 Records 内部实现并保留兼容 API。
   `make verify` 通过（272 项非 E2E）；18 项无模型真实 Docker 集成、两套浏览器流程和独立 wheel 安装通过。
@@ -58,7 +59,7 @@ BM05-B/BM06/BM07 已通过 PR #6/#7/#8 合并，集成维护经 PR #9 合并。�
 
 ## 下一步优先级
 
-1. 在新的明确模型预算下补齐 TB-Science 原生 Codex 求解→verifier 评分验收，检查完整证据归档；随后给一个原生参考适配器增加合规开发反馈与两候选试用。
+1. 补齐工作台持久重跑与尝试选择，避免人工合并运行数据；在新的明确模型预算下补齐 TB-Science 原生 Codex 求解→verifier 评分验收，检查完整证据归档；随后给一个原生参考适配器增加合规开发反馈与两候选试用。
 2. 准备 CUDA 训练镜像，完成冻结 Task + Codex 单 GPU Run 验收；随后补长期科研环境 GPU 入口及大数据/权重入口。
 3. 确定长期状态目录，补齐安装诊断和启动/备份指南，用一个真实科研项目试用完整流程。
 
