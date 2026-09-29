@@ -30,7 +30,7 @@ Web 不自动安装软件、登录账号、启动 Controller 或容器。页面�
 当前 D 执行入口支持 Codex 无评测 CPU 科研 Task；Agents 页面显示其他 provider 的安装状态，不意味着它们也能从这个入口执行。
 
 终端打印带 `#token=...` 的完整访问链接，默认端口 8765。浏览器读取后移除 URL 中的 token，
-保存在当前标签页 sessionStorage。令牌随 Web 重启失效；退出清除令牌。Ctrl+C 停止 Web，不取消 Controller 中的实验。
+保存在当前标签页 sessionStorage。同一标签页重新打开登录链接也会更新令牌并返回实验列表，无需新建标签页。令牌随 Web 重启失效；退出清除令牌。Ctrl+C 停止 Web，不取消 Controller 中的实验。
 不要公开该访问链接。服务器只绑定 `127.0.0.1`，从个人电脑连接远端服务器可运行：
 
 ```sh

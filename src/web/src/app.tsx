@@ -30,11 +30,15 @@ const secondaryPages: Record<string, string> = {
   agents: "Agent 配置",
   records: "运行记录",
 };
-function initialToken() {
+function readToken() {
   const token = new URLSearchParams(location.hash.slice(1)).get("token");
   if (token) {
     sessionStorage.setItem("console-token", token);
-    history.replaceState(null, "", `${location.pathname}#benchmarks`);
+    history.replaceState(
+      null,
+      "",
+      `${location.pathname}${location.search}#benchmarks`,
+    );
   }
   return token ?? sessionStorage.getItem("console-token") ?? "";
 }
@@ -208,11 +212,15 @@ function Settings({ token }: { token: string }) {
   );
 }
 export function App() {
-  const [token, setToken] = useState(initialToken);
+  const [token, setToken] = useState(readToken);
   const [input, setInput] = useState("");
   const [route, setRoute] = useState(location.hash.slice(1) || "benchmarks");
   useEffect(() => {
-    const changed = () => setRoute(location.hash.slice(1) || "benchmarks");
+    const changed = () => {
+      // Login links may change only the fragment of an already mounted page.
+      setToken(readToken());
+      setRoute(location.hash.slice(1) || "benchmarks");
+    };
     window.addEventListener("hashchange", changed);
     return () => window.removeEventListener("hashchange", changed);
   }, []);

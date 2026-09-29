@@ -50,6 +50,49 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
       .getByLabel("访问令牌", { exact: true })
       .fill("benchmark-browser-fixture-token-123456789");
     await page.getByRole("button", { name: "连接控制台" }).click();
+    // A pasted login URL in an existing tab is hash navigation, not an App remount.
+    await page.evaluate(() => {
+      window.loginNavigationMarker = "same-document";
+    });
+    await page.goto(`${base}/#token=benchmark-browser-fixture-token-123456789`);
+    await page.waitForURL(`${base}/#benchmarks`);
+    assert.equal(
+      await page.evaluate(() => window.loginNavigationMarker),
+      "same-document",
+    );
+    await page.getByRole("link", { name: "revised", exact: true }).waitFor();
+    // Simulate a rotated token using an explicit HTTP test double, then restore the real fixture token.
+    const rotated = "rotated-browser-fixture-token-123456789";
+    const seenAuth = [];
+    await page.route("**/api/v1/benchmarks/workspace", async (route) => {
+      seenAuth.push(route.request().headers().authorization);
+      await route.fulfill({ json: { batches: [], errors: [], settings: {} } });
+    });
+    await page.goto(`${base}/#token=${rotated}`);
+    await page.waitForURL(`${base}/#benchmarks`);
+    await page.waitForFunction(
+      (expected) => sessionStorage.getItem("console-token") === expected,
+      rotated,
+    );
+    const tokenRefreshResponse = page.waitForResponse(
+      (r) =>
+        r.url().endsWith("/api/v1/benchmarks/workspace") &&
+        r.request().headers().authorization === `Bearer ${rotated}`,
+    );
+    await page.getByRole("button", { name: "刷新结果", exact: true }).click();
+    await tokenRefreshResponse;
+    assert(seenAuth.includes(`Bearer ${rotated}`));
+    await page.unroute("**/api/v1/benchmarks/workspace");
+    await page.getByRole("button", { name: "退出连接", exact: true }).click();
+    await page.getByRole("heading", { name: "连接你的研究空间" }).waitFor();
+    await page.goto(`${base}/#token=benchmark-browser-fixture-token-123456789`);
+    await page.waitForURL(`${base}/#benchmarks`);
+    await page.getByRole("link", { name: "revised", exact: true }).waitFor();
+    await page.goto(`${base}/#does-not-exist`);
+    await page
+      .getByRole("heading", { name: "页面不存在", exact: true })
+      .waitFor();
+    await page.getByRole("link", { name: "返回实验列表", exact: true }).click();
     await page.getByRole("link", { name: "revised", exact: true }).click();
     await page
       .getByRole("heading", { name: "任务结果", exact: true })
