@@ -4,8 +4,8 @@ task_id: "20260929-web-token-route-71ac9e"
 title: "Consume login links during same-tab hash navigation"
 branch: "fix/web-login-route-20260929"
 base_commit: "2cb4b02786ca6e32c92d038a8e9881575e227c62"
-work_status: in_progress
-updated_at: "2026-09-29T11:10:00.133959+08:00"
+work_status: completed
+updated_at: "2026-09-29T11:12:48.800812+08:00"
 pull_request: null
 ---
 
@@ -33,15 +33,16 @@ pull_request: null
 | `pnpm check`; `pnpm build` | Task source on 2cb4b02; JS index-COy5JaaC.js | passed | Biome, TypeScript and production build. |
 | `node tests/web/benchmark.smoke.cjs` | Same Web source | passed | Same-document login, rotated token via explicit HTTP fixture, logout/reconnect, actual unknown route; existing batch/review/evidence/desktop/mobile workflows. |
 | `uv run --locked python scripts/ci/check_repository.py`; `git diff --check` | Task documentation/source | passed | Policy mirrors, local links, whitespace; user image.png untouched. |
+| Local frontend build and live-asset browser regression | 6cfa30f; index-COy5JaaC.js | passed | Existing Web PID 1902338 still serves port 8765; no restart/token rotation. Isolated browser intercepted API data and verified the actually served script, same-tab login, session update and preserved query string. This is UI acceptance, not a new authenticated production-data check. |
 | Backend/model/Docker/GPU tests | None | not_run | Frontend-only navigation change; no runtime protocol, execution or data change. |
 
 ## Open items and blockers
 
-- Implementation and regression checks passed; local asset delivery remains.
+- None. Existing browser tabs must refresh once to load the new JavaScript.
 
 ## Next steps
 
-- Fix hash navigation, add browser regression coverage and rebuild the locally served frontend.
+- None for the fix. Git history/remote refs record integration and publication; the prior dual-remote delivery authorization applies to this follow-up.
 
 ## Compatibility and rollback
 
