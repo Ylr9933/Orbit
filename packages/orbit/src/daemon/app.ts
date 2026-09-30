@@ -9,15 +9,21 @@ import { z } from "zod";
 import { AuthError, type AuthStore } from "../auth/index.ts";
 import type { BenchmarkRegistry } from "../bench/registry.ts";
 import type { BenchService } from "../bench/service.ts";
+import type { ClusterService } from "../cluster/service.ts";
 import {
   API_PREFIX,
   type AuthProfile,
   type AuthTestResult,
   type Benchmark,
   BenchmarkInput,
+  type Dataset,
+  DatasetInput,
+  type ExposeStatus,
   type Health,
   isTerminal,
   type Ledger,
+  NodeAddInput,
+  type NodeStatus,
   type NotifyTarget,
   type Run,
   RunState,
@@ -27,6 +33,7 @@ import type { Notifier, NotifyStore } from "../notify/index.ts";
 import { listArtifacts, readDiff, readLog, readMetrics, safeJoin } from "../records/index.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { loadTranscript } from "../sessions/index.ts";
+import type { DatasetRegistry } from "../workspace/datasets.ts";
 import { runDoctor } from "./doctor.ts";
 
 export interface AppDeps {
@@ -38,6 +45,8 @@ export interface AppDeps {
   notifier: Notifier;
   bench: BenchService;
   benchmarks: BenchmarkRegistry;
+  cluster: ClusterService;
+  datasets: DatasetRegistry;
   /** Built Web UI directory, or null when not built. */
   webDir: string | null;
 }
@@ -45,7 +54,7 @@ export interface AppDeps {
 const COOKIE = "orbit_token";
 
 export function createApp(deps: AppDeps): Hono {
-  const { runs, auth, notifyStore, notifier, bench, benchmarks } = deps;
+  const { runs, auth, notifyStore, notifier, bench, benchmarks, cluster, datasets } = deps;
   const app = new Hono();
   const api = new Hono();
 
@@ -62,7 +71,11 @@ export function createApp(deps: AppDeps): Hono {
   api.get("/resources", async (c) => c.json(await runs.resources(true)));
   api.get("/doctor", async (c) => c.json(await runDoctor()));
   api.get("/ledger", async (c) =>
-    c.json<Ledger>({ resources: await runs.resources(), ...runs.ledger() }),
+    c.json<Ledger>({
+      resources: await runs.resources(),
+      ...runs.ledger(),
+      nodes: cluster.nodeStatus(),
+    }),
   );
 
   api.get("/runs", (c) => {
@@ -139,14 +152,25 @@ export function createApp(deps: AppDeps): Hono {
     return c.json(await readMetrics(runs.dirs(run.id).metrics));
   });
 
+  // Outputs of a run on another node stay there and are read through it on demand.
   api.get("/runs/:id/artifacts", async (c) => {
     const run = must(runs.get(c.req.param("id")));
+    if (run.remote) return c.json(must(await remoteRecords(() => cluster.artifacts(run))));
     return c.json(await listArtifacts(runs.dirs(run.id).output));
   });
 
   api.get("/runs/:id/files/*", async (c) => {
     const run = must(runs.get(c.req.param("id")));
     const rel = decodeURIComponent(c.req.path.split("/files/")[1] ?? "");
+    if (run.remote) {
+      const res = await remoteRecords(() => cluster.file(run, rel));
+      if (!res || res.status === 404) return c.json({ error: "not found" }, 404);
+      c.header("content-length", res.headers.get("content-length") ?? undefined);
+      c.header("content-type", contentType(rel));
+      if (c.req.query("download"))
+        c.header("content-disposition", `attachment; filename="${rel.split("/").pop()}"`);
+      return c.body(res.body as ReadableStream);
+    }
     const file = safeJoin(runs.dirs(run.id).output, rel);
     const st = file ? await stat(file).catch(() => null) : null;
     if (!file || !st?.isFile()) return c.json({ error: "not found" }, 404);
@@ -167,6 +191,41 @@ export function createApp(deps: AppDeps): Hono {
     if (!run.spec.agent) return c.json({ error: "run has no linked agent session" }, 404);
     const t = await loadTranscript(run.spec.agent);
     return t ? c.json(t) : c.json({ error: "session transcript not found on this node" }, 404);
+  });
+
+  // Cluster: worker nodes this node places runs on, and this node's own listener for a primary.
+  api.get("/cluster/nodes", (c) =>
+    c.json<{ nodes: NodeStatus[] }>({ nodes: cluster.nodeStatus() }),
+  );
+  api.post("/cluster/nodes", async (c) => {
+    const input = NodeAddInput.parse(await c.req.json());
+    return c.json(await cluster.addNode(input.url, input.token), 201);
+  });
+  api.delete("/cluster/nodes/:name", (c) => {
+    if (!cluster.removeNode(c.req.param("name"))) throw new NotFoundError("node not found");
+    return c.json({ ok: true });
+  });
+  api.get("/cluster/expose", (c) => c.json<ExposeStatus>(cluster.exposeStatus()));
+  api.post("/cluster/expose", async (c) => {
+    const { listen } = z.object({ listen: z.string().nullable() }).parse(await c.req.json());
+    return c.json<ExposeStatus>(await cluster.setExpose(listen));
+  });
+  /** The token a primary needs to add this node (local, daemon-token callers only). */
+  api.get("/cluster/token", (c) => c.json({ token: cluster.clusterToken() }));
+  api.post("/cluster/token/rotate", (c) => c.json({ token: cluster.clusterToken(true) }));
+
+  api.get("/datasets", (c) => c.json<{ datasets: Dataset[] }>({ datasets: datasets.list() }));
+  api.post("/datasets", async (c) => {
+    const input = DatasetInput.parse(await c.req.json());
+    try {
+      return c.json(datasets.put(input), 201);
+    } catch (e) {
+      throw new UserError((e as Error).message);
+    }
+  });
+  api.delete("/datasets/:name", (c) => {
+    if (!datasets.remove(c.req.param("name"))) throw new NotFoundError("dataset not found");
+    return c.json({ ok: true });
   });
 
   // Credentials: secrets go in once and never come back out.
@@ -258,6 +317,17 @@ export function createApp(deps: AppDeps): Hono {
   return app;
 }
 
+/** Call the run's node; an unreachable node is a 502 with the reason. */
+async function remoteRecords<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    throw new BadGateway(`node unavailable: ${(e as Error).message}`);
+  }
+}
+
+class BadGateway extends Error {}
+
 function must<T>(v: T | null): T {
   if (v === null) throw new NotFoundError("not found");
   return v;
@@ -265,6 +335,7 @@ function must<T>(v: T | null): T {
 
 function errorResponse(c: Context, err: Error) {
   if (err instanceof NotFoundError) return c.json({ error: err.message }, 404);
+  if (err instanceof BadGateway) return c.json({ error: err.message }, 502);
   if (err instanceof UserError || err instanceof AuthError)
     return c.json({ error: err.message }, 400);
   if (err instanceof z.ZodError) return c.json({ error: z.prettifyError(err) }, 400);

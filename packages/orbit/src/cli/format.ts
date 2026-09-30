@@ -1,4 +1,4 @@
-import type { DoctorReport, Ledger, Run } from "../contracts/index.ts";
+import type { DoctorReport, Lease, Ledger, NodeResources, Run } from "../contracts/index.ts";
 
 export function duration(ms: number): string {
   if (ms < 0) ms = 0;
@@ -25,13 +25,15 @@ function table(rows: string[][]): string {
 
 export function formatRuns(runs: Run[]): string {
   if (runs.length === 0) return "no runs";
+  const multi = new Set(runs.map((r) => r.node)).size > 1 || runs.some((r) => r.remote);
   const rows = [["ID", "STATE", "GROUP", "NAME", "GPUS", "TIME", "COMMIT", "INFO"]];
+  if (multi) rows[0]?.splice(5, 0, "NODE");
   for (const r of runs) {
     const code = r.code ? `${r.code.commit?.slice(0, 7) ?? "-"}${r.code.dirty ? "*" : ""}` : "-";
     const gpus = r.lease?.gpuIds.length
       ? String(r.lease.gpuIds.length)
       : String(r.spec.resources.gpus);
-    rows.push([
+    const row = [
       r.id,
       r.state,
       r.spec.group ?? "-",
@@ -40,7 +42,9 @@ export function formatRuns(runs: Run[]): string {
       runDuration(r),
       code,
       r.reason ?? "",
-    ]);
+    ];
+    if (multi) row.splice(5, 0, r.node);
+    rows.push(row);
   }
   return table(rows);
 }
@@ -52,6 +56,7 @@ export function formatRun(r: Run, summary?: Record<string, number>): string {
     `  command  ${r.spec.command.join(" ")}`,
     `  image    ${r.image ?? r.spec.dockerfile ?? "-"}`,
     `  request  ${r.spec.resources.gpus} GPU, ${r.spec.resources.cpus} CPU, ${r.spec.resources.memGB} GB`,
+    `  node     ${r.node}${r.remote ? " (remote; outputs stay there)" : ""}${r.origin ? ` (from ${r.origin})` : ""}`,
   ];
   if (r.lease) lines.push(`  lease    ${r.lease.state} ${r.lease.gpuIds.join(", ") || "no GPUs"}`);
   if (r.code) {
@@ -90,10 +95,9 @@ export function fmtNum(v: number): string {
   return a !== 0 && (a < 1e-3 || a >= 1e5) ? v.toExponential(3) : String(Number(v.toPrecision(5)));
 }
 
-export function formatLedger(l: Ledger): string {
-  const r = l.resources;
-  const owner = new Map(l.leases.flatMap((x) => x.gpuIds.map((g) => [g, x.runId] as const)));
-  const lines = [`node ${r.node}`];
+function formatNode(r: NodeResources, leases: Lease[], head: string): string[] {
+  const owner = new Map(leases.flatMap((x) => x.gpuIds.map((g) => [g, x.runId] as const)));
+  const lines = [head];
   if (r.gpuError) lines.push(`gpus: unavailable (${r.gpuError})`);
   for (const g of r.gpus) {
     const run = owner.get(g.uuid);
@@ -103,14 +107,30 @@ export function formatLedger(l: Ledger): string {
       `  gpu${g.index} ${g.name}  ${g.memUsedMiB}/${g.memTotalMiB} MiB  util ${util.padStart(4)}  ${state}`,
     );
   }
-  const leasedCpu = l.leases.reduce((n, x) => n + x.cpus, 0);
-  const leasedMem = l.leases.reduce((n, x) => n + x.memGB, 0);
+  const leasedCpu = leases.reduce((n, x) => n + x.cpus, 0);
+  const leasedMem = leases.reduce((n, x) => n + x.memGB, 0);
   lines.push(`cpu     ${r.cpu.count} cores, ${leasedCpu} leased, load ${r.cpu.load1}`);
   lines.push(
     `memory  ${r.memory.totalGB} GB, ${leasedMem} leased, ${r.memory.availableGB} available`,
   );
   lines.push(`disk    ${r.disk.freeGB}/${r.disk.totalGB} GB free (${r.disk.path})`);
-  lines.push(`queue   ${l.queued.length === 0 ? "empty" : ""}`);
+  return lines;
+}
+
+export function formatLedger(l: Ledger): string {
+  const lines = formatNode(l.resources, l.leases, `node ${l.resources.node}`);
+  for (const n of l.nodes) {
+    const state = n.online ? "online" : `offline${n.error ? ` (${n.error})` : ""}`;
+    const head = `\nnode ${n.name}  ${n.url}  ${state}`;
+    if (!n.info) {
+      lines.push(head);
+      continue;
+    }
+    lines.push(...formatNode(n.info.resources, n.info.leases, head));
+    lines.push(`queue   ${n.info.queued} waiting there`);
+    if (n.info.datasets.length) lines.push(`data    ${n.info.datasets.join(", ")}`);
+  }
+  lines.push(`${l.nodes.length ? "\n" : ""}queue   ${l.queued.length === 0 ? "empty" : ""}`);
   for (const q of l.queued) lines.push(`  ${q.runId}  ${q.reason ?? ""}`);
   return lines.join("\n");
 }

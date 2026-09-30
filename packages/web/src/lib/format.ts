@@ -116,7 +116,12 @@ export function cliCommand(r: Run): string {
   if (res.gpus) a.push("--gpus", String(res.gpus));
   if (res.gpuMemGB) a.push("--gpu-mem", String(res.gpuMemGB));
   a.push("--cpus", String(res.cpus), "--mem", String(res.memGB));
-  for (const m of s.mounts) a.push("-m", `${m.source}:${m.target}${m.mode === "rw" ? ":rw" : ""}`);
+  for (const m of s.mounts) {
+    const rw = m.mode === "rw" ? ":rw" : "";
+    if (m.dataset) a.push("-d", `${m.dataset}:${m.target}${rw}`);
+    else a.push("-m", `${m.source}:${m.target}${rw}`);
+  }
+  if (s.resources.node) a.push("--node", s.resources.node);
   for (const [k, v] of Object.entries(s.env)) a.push("-e", `${k}=${v}`);
   if (!s.network) a.push("--no-network");
   else if (s.hostNetwork) a.push("--host-network");

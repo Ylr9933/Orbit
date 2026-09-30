@@ -93,6 +93,7 @@ function Outcome({ run, onTab }: { run: Run; onTab: (t: string) => void }) {
           ) : (
             <>
               <b>Running</b> on {run.node}
+              {run.remote ? " (worker node)" : run.origin ? ` for ${run.origin}` : ""}
               {run.lease?.gpuIds.length ? ` with ${run.lease.gpuIds.length} GPU(s)` : ""}.{" "}
               <a
                 href="?tab=logs"
@@ -291,7 +292,8 @@ function Spec({ run }: { run: Run }) {
               <dd className="mono" style={{ fontSize: 12 }}>
                 {s.mounts.map((m) => (
                   <div key={m.target}>
-                    {m.source} → {m.target} <span className="faint">{m.mode}</span>
+                    {m.source ?? `dataset:${m.dataset}`} → {m.target}{" "}
+                    <span className="faint">{m.mode}</span>
                   </div>
                 ))}
               </dd>

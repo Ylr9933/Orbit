@@ -2,7 +2,7 @@ import { PALETTE } from "../components/Chart.tsx";
 import { IconAlert, IconChip } from "../components/icons.tsx";
 import { TopBar } from "../components/TopBar.tsx";
 import { Empty, Link, Loading, StateIcon } from "../components/ui.tsx";
-import { api, type Gpu, type Lease, type Run } from "../lib/api.ts";
+import { api, type Gpu, type Lease, type NodeStatus, type Run } from "../lib/api.ts";
 import { ago, duration, queuedFor, runTitle } from "../lib/format.ts";
 import { useRuns } from "../lib/runs-store.ts";
 import { useAsync } from "../lib/use.ts";
@@ -134,6 +134,8 @@ export function Resources() {
             )}
           </section>
 
+          {d.nodes.length > 0 && <Nodes nodes={d.nodes} runs={runs} />}
+
           <section className="card">
             <div className="card-h">
               Queue <span className="sub">{d.queued.length}</span>
@@ -180,6 +182,82 @@ export function Resources() {
         </div>
       </div>
     </>
+  );
+}
+
+/** Worker nodes this daemon places runs on: their resources as last reported, and our runs there. */
+function Nodes({ nodes, runs }: { nodes: NodeStatus[]; runs: Run[] }) {
+  return (
+    <section className="card">
+      <div className="card-h">
+        Worker nodes <span className="sub">{nodes.filter((n) => n.online).length} online</span>
+      </div>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Node</th>
+            <th>GPUs free</th>
+            <th className="r">CPUs leased</th>
+            <th className="r">Memory</th>
+            <th className="r">Our runs</th>
+            <th>Datasets</th>
+            <th className="r">Seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {nodes.map((n) => {
+            const i = n.info;
+            const active = i?.leases.filter((l) => l.state === "active") ?? [];
+            const held = new Set(active.flatMap((l) => l.gpuIds));
+            const free = i?.resources.gpus.filter((g) => g.available && !held.has(g.uuid)).length;
+            const ours = runs.filter(
+              (r) =>
+                r.remote && r.node === n.name && (r.state === "running" || r.state === "starting"),
+            ).length;
+            return (
+              <tr key={n.name}>
+                <td>
+                  <div className="row" style={{ gap: 8 }}>
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        flex: "none",
+                        background: n.online ? "var(--st-succeeded)" : "var(--st-failed)",
+                      }}
+                    />
+                    <b>{n.name}</b>
+                    <span className="faint mono" style={{ fontSize: 11 }}>
+                      {n.url}
+                    </span>
+                  </div>
+                  {n.error && (
+                    <div className="faint" style={{ fontSize: 12 }}>
+                      {n.error}
+                    </div>
+                  )}
+                </td>
+                <td className="num">{i ? `${free} / ${i.resources.gpus.length}` : "—"}</td>
+                <td className="r num">
+                  {i ? `${active.reduce((a, l) => a + l.cpus, 0)} / ${i.resources.cpu.count}` : "—"}
+                </td>
+                <td className="r num">
+                  {i
+                    ? `${i.resources.memory.availableGB.toFixed(0)} / ${i.resources.memory.totalGB.toFixed(0)} GB free`
+                    : "—"}
+                </td>
+                <td className="r num">{ours}</td>
+                <td className="mono muted" style={{ fontSize: 12 }}>
+                  {i?.datasets.join(", ") || "—"}
+                </td>
+                <td className="r num muted">{n.lastSeen ? ago(n.lastSeen) : "never"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </section>
   );
 }
 

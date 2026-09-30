@@ -6,13 +6,16 @@ import { type ServerType, serve } from "@hono/node-server";
 import { AuthStore } from "../auth/index.ts";
 import { BenchmarkRegistry } from "../bench/registry.ts";
 import { BenchService } from "../bench/service.ts";
+import { ClusterService } from "../cluster/service.ts";
 import { removeDaemonInfo, writeDaemonInfo } from "../config/daemon-info.ts";
 import { ensureHome, type OrbitPaths } from "../config/paths.ts";
-import { isTerminal } from "../contracts/index.ts";
+import { isTerminal, type NodeProfile } from "../contracts/index.ts";
+import { hostCli } from "../harness/index.ts";
 import { Notifier, NotifyStore } from "../notify/index.ts";
 import { probeNode } from "../resources/probe.ts";
 import { AUTH_TEST_GROUP, RunService } from "../runs/service.ts";
 import { Store } from "../store/index.ts";
+import { DatasetRegistry } from "../workspace/datasets.ts";
 import { createApp } from "./app.ts";
 
 /** Last `n` lines of a text file (reads at most the final 16 KiB). */
@@ -38,6 +41,7 @@ export interface StartedDaemon {
   token: string;
   server: ServerType;
   runs: RunService;
+  cluster: ClusterService;
   stop(): Promise<void>;
 }
 
@@ -53,6 +57,9 @@ export interface DaemonOptions {
   tickMs?: number;
   /** Command running this orbit binary, for the process-run docker shim (default: detected). */
   shim?: string[];
+  /** Worker heartbeat and remote-run sync periods (tests shorten them). */
+  heartbeatMs?: number;
+  syncMs?: number;
 }
 
 /** `node [execArgv] <entry>` when this process is the orbit CLI (not e.g. a test runner). */
@@ -71,14 +78,35 @@ export async function startDaemon(
   const token = randomBytes(24).toString("hex");
   const store = new Store(paths.db);
   const auth = new AuthStore(paths.auth);
+  const datasets = new DatasetRegistry(paths.datasets);
   const runs = new RunService({
     store,
     paths,
     auth,
-    probe: () => probeNode(paths.home),
+    datasets,
+    probe: () => probeNode(paths.home, { node: paths.node, gpus: paths.gpus }),
     tickMs: opts.tickMs,
     shim: opts.shim ?? detectShim(),
   });
+  const cluster = new ClusterService({
+    store,
+    runs,
+    datasets,
+    profiles: () =>
+      Promise.all(
+        auth.list().map(
+          async (p): Promise<NodeProfile> => ({
+            name: p.name,
+            harness: p.harness,
+            cli: Boolean(await hostCli(p.harness)),
+          }),
+        ),
+      ),
+    files: { nodes: paths.nodes, cluster: paths.cluster, bundles: paths.bundles },
+    heartbeatMs: opts.heartbeatMs,
+    syncMs: opts.syncMs,
+  });
+  runs.setRemote(cluster);
   const benchmarks = new BenchmarkRegistry(paths.benchmarks);
   const bench = new BenchService({
     store,
@@ -98,8 +126,14 @@ export async function startDaemon(
     webUrl: () => webUrl,
   });
   runs.on("change", ({ run, event }) => {
-    // The terminal event is saved once, before cleanup; auth checks stay quiet.
-    if (event?.kind !== run.state || !isTerminal(run.state) || run.spec.group === AUTH_TEST_GROUP)
+    // The terminal event is saved once, before cleanup; auth checks stay quiet, and runs sent here
+    // by a primary notify there.
+    if (
+      event?.kind !== run.state ||
+      !isTerminal(run.state) ||
+      run.spec.group === AUTH_TEST_GROUP ||
+      run.origin
+    )
       return;
     void notifier.onTerminal(run);
   });
@@ -112,6 +146,8 @@ export async function startDaemon(
     notifier,
     bench,
     benchmarks,
+    cluster,
+    datasets,
     webDir: findWebDir(),
   });
 
@@ -130,11 +166,13 @@ export async function startDaemon(
   const url = `http://127.0.0.1:${port}`;
   webUrl = url;
   await runs.start();
+  await cluster.start();
   await bench.start();
   writeDaemonInfo(paths, { url, token, pid: process.pid });
 
   const stop = async () => {
     removeDaemonInfo(paths, process.pid);
+    await cluster.stop();
     await runs.stop();
     await new Promise<void>((done) => {
       server.close(() => done());
@@ -142,5 +180,5 @@ export async function startDaemon(
     });
     store.close();
   };
-  return { url, token, server, runs, stop };
+  return { url, token, server, runs, cluster, stop };
 }

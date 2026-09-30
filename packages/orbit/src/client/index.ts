@@ -17,12 +17,18 @@ import {
   BenchmarkList,
   BenchTaskList,
   CodeDiff,
+  Dataset,
+  type DatasetInput,
+  DatasetList,
   DoctorReport,
+  ExposeStatus,
   Health,
   Ledger,
   LogChunk,
   Metrics,
+  NodeList,
   NodeResources,
+  NodeStatus,
   NotifyTarget,
   type NotifyTargetInput,
   Run,
@@ -118,6 +124,24 @@ export class OrbitClient {
     this.call(NotifyTarget, "/notify", { method: "POST", body: t });
   notifyRemove = (name: string) => this.call(Ok, `/notify/${enc(name)}`, { method: "DELETE" });
   notifyTest = (name: string) => this.call(Ok, `/notify/${enc(name)}/test`, { method: "POST" });
+
+  nodes = () => this.call(NodeList, "/cluster/nodes").then((r) => r.nodes);
+  nodeAdd = (url: string, token: string) =>
+    this.call(NodeStatus, "/cluster/nodes", { method: "POST", body: { url, token } });
+  nodeRemove = (name: string) => this.call(Ok, `/cluster/nodes/${enc(name)}`, { method: "DELETE" });
+  exposeStatus = () => this.call(ExposeStatus, "/cluster/expose");
+  expose = (listen: string | null) =>
+    this.call(ExposeStatus, "/cluster/expose", { method: "POST", body: { listen } });
+  clusterToken = (rotate = false) =>
+    this.call(
+      z.object({ token: z.string() }),
+      rotate ? "/cluster/token/rotate" : "/cluster/token",
+      rotate ? { method: "POST" } : {},
+    ).then((r) => r.token);
+
+  datasets = () => this.call(DatasetList, "/datasets").then((r) => r.datasets);
+  datasetPut = (d: DatasetInput) => this.call(Dataset, "/datasets", { method: "POST", body: d });
+  datasetRemove = (name: string) => this.call(Ok, `/datasets/${enc(name)}`, { method: "DELETE" });
 
   benchmarks = () => this.call(BenchmarkList, "/benchmarks").then((r) => r.benchmarks);
   benchmarkPut = (b: BenchmarkInput) =>

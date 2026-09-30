@@ -304,6 +304,8 @@ export class BenchService {
   private async submitRun(job: BenchJob, t: Trial, phase: "solve" | "verify", spec: RunSpecInput) {
     return this.deps.runs.submit({
       ...spec,
+      // Scoring reads run outputs from this node's disk, so benchmark runs stay here.
+      resources: { ...spec.resources, node: this.deps.runs.nodeName },
       name: `${t.task} · ${t.method}${job.spec.seeds > 1 ? ` #${t.seed}` : ""} · ${phase}`,
       group: benchGroup(job.id),
       tags: {

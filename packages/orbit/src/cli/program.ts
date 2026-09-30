@@ -11,6 +11,7 @@ import { VERSION } from "../lib/version.ts";
 import { detectAgent } from "./agent.ts";
 import { kv, registerAuth, registerNotify } from "./auth.ts";
 import { registerBench } from "./bench.ts";
+import { parseDataset, registerCluster } from "./cluster.ts";
 import { formatDoctor, formatLedger, formatRun, formatRuns } from "./format.ts";
 
 export interface ProgramDeps {
@@ -59,6 +60,8 @@ interface RunOpts {
   cpus: number;
   mem: number;
   mount: string[];
+  dataset: string[];
+  node?: string;
   env: string[];
   network: boolean;
   hostNetwork?: boolean;
@@ -85,6 +88,13 @@ function addRunOptions(cmd: Command): Command {
     .option("--cpus <n>", "CPU limit", num, 4)
     .option("--mem <GB>", "memory limit in GB", num, 16)
     .option("-m, --mount <src:dst[:rw]>", "bind mount (read-only unless :rw)", collect, [])
+    .option(
+      "-d, --dataset <name[:dst[:rw]]>",
+      "mount a registered dataset (orbit data ls; default /data/<name>, read-only)",
+      collect,
+      [],
+    )
+    .option("--node <name>", "run on this node (default: any node that can run it)")
     .option("-e, --env <KEY=VALUE>", "environment variable", collect, [])
     .option("--no-network", "disable networking")
     .option("--host-network", "share the host network (e.g. to reach a proxy on 127.0.0.1)")
@@ -122,6 +132,7 @@ async function buildSpec(
     }
     return { source: resolve(source), target, mode: (mode as "rw" | "ro" | undefined) ?? "ro" };
   });
+  const datasets = o.dataset.map(parseDataset);
   return {
     name: o.name,
     group: o.group,
@@ -135,8 +146,9 @@ async function buildSpec(
       gpuIds: o.gpuIds?.split(",").filter(Boolean),
       cpus: o.cpus,
       memGB: o.mem,
+      node: o.node,
     },
-    mounts,
+    mounts: [...mounts, ...datasets],
     env: kv(o.env, "--env"),
     network: o.network,
     hostNetwork: Boolean(o.hostNetwork),
@@ -348,7 +360,7 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
 
   program
     .command("resources")
-    .description("show GPUs, CPU, memory, leases and the queue on this node")
+    .description("show GPUs, CPU, memory, leases and the queue on this node and its workers")
     .option("--json", "print JSON")
     .action(async (o: { json?: boolean }) => {
       const l = await (await client()).ledger();
@@ -368,6 +380,7 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
   registerAuth(program, client, print);
   registerNotify(program, client, print);
   registerBench(program, client, print);
+  registerCluster(program, client, print);
 
   program
     .command("web [id]")

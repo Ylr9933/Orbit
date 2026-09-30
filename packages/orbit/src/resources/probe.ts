@@ -95,16 +95,28 @@ async function probeGpus(): Promise<{ gpus: Gpu[]; error: string | null }> {
   }
 }
 
-export async function probeNode(diskPath: string): Promise<NodeResources> {
+/** Keep only the GPUs named by index or UUID (`ORBIT_GPUS`); null keeps all. */
+export function filterGpus<T extends { index: number; uuid: string }>(
+  gpus: T[],
+  only: string[] | null,
+): T[] {
+  if (!only) return gpus;
+  return gpus.filter((g) => only.includes(String(g.index)) || only.includes(g.uuid));
+}
+
+export async function probeNode(
+  diskPath: string,
+  opts: { node?: string; gpus?: string[] | null } = {},
+): Promise<NodeResources> {
   const [gpu, meminfo, fs] = await Promise.all([
     probeGpus(),
     readFile("/proc/meminfo", "utf8"),
     statfs(diskPath),
   ]);
   return {
-    node: hostname(),
+    node: opts.node ?? hostname(),
     probedAt: new Date().toISOString(),
-    gpus: gpu.gpus,
+    gpus: filterGpus(gpu.gpus, opts.gpus ?? null),
     gpuError: gpu.error,
     cpu: { count: availableParallelism(), load1: round1(loadavg()[0] ?? 0) },
     memory: parseMeminfo(meminfo),

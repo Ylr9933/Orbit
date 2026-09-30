@@ -13,7 +13,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { hostname, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { AuthStore } from "../auth/index.ts";
@@ -23,6 +23,7 @@ import {
   isTerminal,
   type Lease,
   type NodeResources,
+  type RemoteSubmit,
   type Run,
   type RunEvent,
   RunSpec,
@@ -39,10 +40,21 @@ import {
 } from "../harness/index.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { Redactor } from "../lib/redact.ts";
+import { safeJoin } from "../records/index.ts";
 import { allocate, infeasible } from "../resources/allocate.ts";
 import { resolveAgentRef } from "../sessions/index.ts";
 import type { RunFilter, Store } from "../store/index.ts";
+import { bundleDir, isBundleHash } from "../workspace/bundle.ts";
+import type { DatasetRegistry } from "../workspace/datasets.ts";
 import { snapshotProject } from "../workspace/snapshot.ts";
+import {
+  type DispatchResult,
+  joinReasons,
+  nodeLeases,
+  type RemoteNode,
+  type RemotePlacement,
+  remoteBlocker,
+} from "./placement.ts";
 import {
   dockerConfigDir,
   groupAlive,
@@ -63,6 +75,8 @@ export interface RunServiceDeps {
   probe: () => Promise<NodeResources>;
   /** Credential profiles for `spec.auth`; runs with auth are rejected without it. */
   auth?: AuthStore;
+  /** Named datasets on this node, for `dataset` mounts. */
+  datasets?: DatasetRegistry;
   /** Scheduler period; the loop also runs after every submit/finish. */
   tickMs?: number;
   /**
@@ -95,7 +109,11 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   private readonly paths: OrbitPaths;
   private readonly probeFn: () => Promise<NodeResources>;
   private readonly homeLabel: string;
-  private readonly node = hostname();
+  private readonly node: string;
+  /** Worker nodes; set by the daemon when the cluster module starts. */
+  private remote: RemotePlacement | null = null;
+  /** `<run>@<node>` pairs whose node refused the run: not placed there again. */
+  private readonly refused = new Map<string, string>();
   private readonly gpuMode = docker.detectGpuMode();
   private cached: { at: number; value: NodeResources } | null = null;
   private timer: NodeJS.Timeout | null = null;
@@ -112,6 +130,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     this.store = deps.store;
     this.paths = deps.paths;
     this.probeFn = deps.probe;
+    this.node = deps.paths.node;
     this.homeLabel = createHash("sha256")
       .update(resolve(deps.paths.home))
       .digest("hex")
@@ -124,6 +143,19 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     await this.recover();
     this.timer = setInterval(() => void this.tick(), this.deps.tickMs ?? 3000);
     void this.tick();
+  }
+
+  /** This node's name in the cluster. */
+  get nodeName(): string {
+    return this.node;
+  }
+
+  setRemote(remote: RemotePlacement | null): void {
+    this.remote = remote;
+  }
+
+  private remoteNodes(): RemoteNode[] {
+    return [...(this.remote?.nodes() ?? [])].sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async stop(): Promise<void> {
@@ -155,8 +187,6 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
 
   async submit(input: RunSpecInput): Promise<Run> {
     const spec = RunSpec.parse(input);
-    const why = infeasible(spec.resources, await this.resources());
-    if (why) throw new UserError(why);
     if (spec.project && !isAbsolute(spec.project))
       throw new UserError("project must be an absolute path");
     if (spec.backend === "process") {
@@ -175,7 +205,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
         throw new UserError(`agentBundle directory not found: ${spec.agentBundle}`);
     }
     for (const m of spec.mounts) {
-      if (!isAbsolute(m.source) || !existsSync(m.source))
+      if (m.source && (!isAbsolute(m.source) || !existsSync(m.source)))
         throw new UserError(`mount source not found: ${m.source}`);
     }
     if (spec.dockerfile) {
@@ -186,15 +216,21 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       spec.dockerfile = df;
     }
     if (spec.agent) spec.agent = await resolveAgentRef(spec.agent);
-    if (spec.auth) {
-      const entry = this.deps.auth?.get(spec.auth);
-      if (!entry) throw new UserError(`auth profile not found: ${spec.auth}`);
-      if (entry.profile.hostNetwork) spec.hostNetwork = true;
-      if (!(await hostCli(entry.profile.harness)))
-        throw new UserError(`${entry.profile.harness} CLI not found on this node`);
-    }
+    // A node's own auth profile decides host networking; a worker applies its own on arrival.
+    if (spec.auth && this.deps.auth?.get(spec.auth)?.profile.hostNetwork) spec.hostNetwork = true;
     if (spec.hostNetwork && !spec.network)
       throw new UserError("host network conflicts with network disabled");
+    const local = await this.localBlocker(spec);
+    if (local) {
+      const reasons: [string, string][] = [[this.node, local]];
+      let anywhere = false;
+      for (const n of this.remoteNodes()) {
+        const why = remoteBlocker(spec, n);
+        if (why) reasons.push([n.name, why]);
+        else anywhere = true;
+      }
+      if (!anywhere) throw new UserError(joinReasons(reasons));
+    }
 
     const id = newId();
     const dirs = runDirs(this.paths, id);
@@ -223,6 +259,8 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       code,
       proc: null,
       cleanup: "pending",
+      remote: false,
+      origin: null,
       note: "",
       createdAt: nowIso(),
       startedAt: null,
@@ -244,6 +282,13 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     if (isTerminal(run.state)) return run;
     if (run.state === "queued") {
       return this.finalize(run, "cancelled", null, "cancelled while queued");
+    }
+    if (run.remote) {
+      const sync = this.store.getSync(id);
+      if (sync) this.store.putSync({ ...sync, cancel: true });
+      this.store.addEvent(id, "cancel", `cancel requested on ${run.node}`);
+      void this.remote?.cancel(run).catch(() => {});
+      return this.mustGet(id);
     }
     this.requestStop(run, "cancel");
     return this.mustGet(id);
@@ -290,7 +335,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       command,
       auth: name,
       snapshot: false,
-      resources: { gpus: 0, cpus: 1, memGB: 2 },
+      resources: { gpus: 0, cpus: 1, memGB: 2, node: this.node },
       timeoutMin: 5,
       tags: { auth: name },
     });
@@ -349,40 +394,307 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     return this.ticking;
   }
 
+  /** Why `spec` can never run on this node as configured now, or null. */
+  private async localBlocker(spec: RunSpec): Promise<string | null> {
+    if (spec.resources.node && spec.resources.node !== this.node)
+      return `pinned to ${spec.resources.node}`;
+    for (const m of spec.mounts)
+      if (m.dataset && !this.deps.datasets?.path(m.dataset))
+        return `dataset ${m.dataset} not registered on this node`;
+    if (spec.auth) {
+      const entry = this.deps.auth?.get(spec.auth);
+      if (!entry) return `auth profile not found: ${spec.auth}`;
+      if (!(await hostCli(entry.profile.harness)))
+        return `${entry.profile.harness} CLI not found on this node`;
+    }
+    return infeasible(spec.resources, await this.resources());
+  }
+
+  /**
+   * Place queued runs: on this node when it can run them now, else on the first worker node (by
+   * name) that can. Runs received from a primary stay here.
+   */
   private async schedule(): Promise<void> {
     const queued = this.store.queuedRuns();
     if (queued.length === 0) return;
     const res = await this.resources(true);
+    const nodes = this.remoteNodes();
+    const mirrors = nodes.length ? this.mirrors() : [];
     for (const run of queued) {
-      const leases = this.store.activeLeases();
-      const a = allocate(run.spec.resources, res, leases);
-      if (!a.ok) {
-        if (run.reason !== a.reason) {
-          run.reason = a.reason;
-          this.save(run);
+      const reasons: [string, string][] = [];
+      const blocked = await this.localBlocker(run.spec);
+      if (blocked) reasons.push([this.node, blocked]);
+      else {
+        const a = allocate(run.spec.resources, res, this.store.activeLeases());
+        if (a.ok) {
+          this.leaseLocal(run, a.gpuIds);
+          continue;
         }
-        continue;
+        reasons.push([this.node, a.reason]);
       }
-      const lease: Lease = {
-        id: `lease-${run.id}`,
-        runId: run.id,
-        node: this.node,
-        gpuIds: a.gpuIds,
-        cpus: run.spec.resources.cpus,
-        memGB: run.spec.resources.memGB,
-        state: "active",
-        createdAt: nowIso(),
-        releasedAt: null,
-      };
-      run.lease = lease;
-      run.state = "starting";
-      run.reason = null;
-      this.store.tx(() => {
-        this.store.putLease(lease);
-        this.save(run, "leased", a.gpuIds.length ? `GPUs ${a.gpuIds.join(", ")}` : "no GPUs");
-      });
-      void this.launch(run.id);
+      let placed = false;
+      for (const n of run.origin ? [] : nodes) {
+        const why =
+          this.refused.get(`${run.id}@${n.name}`) ??
+          remoteBlocker(run.spec, n) ??
+          (n.online ? null : "offline");
+        if (why) {
+          reasons.push([n.name, why]);
+          continue;
+        }
+        const a = allocate(
+          run.spec.resources,
+          n.resources as NodeResources,
+          nodeLeases(n, mirrors),
+        );
+        if (!a.ok) {
+          reasons.push([n.name, a.reason]);
+          continue;
+        }
+        mirrors.push(this.placeRemote(run, n.name, a.gpuIds));
+        placed = true;
+        break;
+      }
+      if (placed) continue;
+      const reason = joinReasons(reasons);
+      if (run.reason !== reason) {
+        run.reason = reason;
+        this.save(run);
+      }
     }
+  }
+
+  private leaseLocal(run: Run, gpuIds: string[]): void {
+    const lease: Lease = {
+      id: `lease-${run.id}`,
+      runId: run.id,
+      node: this.node,
+      gpuIds,
+      cpus: run.spec.resources.cpus,
+      memGB: run.spec.resources.memGB,
+      state: "active",
+      createdAt: nowIso(),
+      releasedAt: null,
+    };
+    run.lease = lease;
+    run.state = "starting";
+    run.reason = null;
+    this.store.tx(() => {
+      this.store.putLease(lease);
+      this.save(run, "leased", gpuIds.length ? `GPUs ${gpuIds.join(", ")}` : "no GPUs");
+    });
+    void this.launch(run.id);
+  }
+
+  // ---- runs on other nodes (primary side) ----
+
+  /** Non-terminal runs this node placed on workers. */
+  private mirrors(): Run[] {
+    return this.store
+      .listRuns({ states: ["starting", "running"], limit: 100_000 })
+      .filter((r) => r.remote);
+  }
+
+  /**
+   * Mark the run as placed on `node` with a predicted lease (kept in the run record only; it counts
+   * against that node until the node reports its own lease) and send it.
+   */
+  private placeRemote(run: Run, node: string, gpuIds: string[]): Run {
+    run.state = "starting";
+    run.remote = true;
+    run.node = node;
+    run.reason = null;
+    run.lease = {
+      id: `lease-${run.id}`,
+      runId: run.id,
+      node,
+      gpuIds,
+      cpus: run.spec.resources.cpus,
+      memGB: run.spec.resources.memGB,
+      state: "active",
+      createdAt: nowIso(),
+      releasedAt: null,
+    };
+    this.store.tx(() => {
+      this.store.putSync({
+        runId: run.id,
+        node,
+        eventSeq: 0,
+        confirmed: false,
+        cancel: false,
+        done: false,
+      });
+      this.save(run, "placed", `node ${node}${gpuIds.length ? `, GPUs ${gpuIds.join(", ")}` : ""}`);
+    });
+    void this.dispatchRemote(run.id);
+    return run;
+  }
+
+  private async dispatchRemote(id: string): Promise<void> {
+    const run = this.mustGet(id);
+    const remote = this.remote;
+    const r: DispatchResult = remote
+      ? await remote
+          .dispatch(run)
+          .catch((e) => ({ ok: false, kind: "unknown", message: (e as Error).message }) as const)
+      : { ok: false, kind: "unreachable", message: "cluster not running" };
+    const sync = this.store.getSync(id);
+    if (!sync) return;
+    if (r.ok) {
+      this.store.putSync({ ...sync, confirmed: true });
+      this.store.addEvent(id, "dispatched", `accepted by ${run.node}`);
+      if (sync.cancel) void remote?.cancel(run).catch(() => {});
+      return;
+    }
+    if (r.kind === "unknown") {
+      this.store.addEvent(id, "dispatch", `${r.message}; checking with ${run.node}`);
+      return;
+    }
+    if (r.kind === "rejected") this.refused.set(`${id}@${run.node}`, `refused: ${r.message}`);
+    this.requeueRemote(id, `${run.node}: ${r.message}`);
+  }
+
+  /** The run never started on its node: queue it here again (or finish a requested cancel). */
+  requeueRemote(id: string, why: string): void {
+    const run = this.mustGet(id);
+    if (!run.remote || isTerminal(run.state)) return;
+    const sync = this.store.getSync(id);
+    this.store.deleteSync(id);
+    const cancelled = sync?.cancel ?? false;
+    run.remote = false;
+    run.node = this.node;
+    run.lease = null;
+    run.state = cancelled ? "cancelled" : "queued";
+    run.reason = cancelled ? "cancelled" : why;
+    if (cancelled) {
+      run.endedAt = nowIso();
+      run.cleanup = "done";
+    }
+    this.save(run, cancelled ? "cancelled" : "requeued", why);
+    void this.tick();
+  }
+
+  /** The node no longer knows a run it had accepted, or the node was removed. */
+  loseRemote(id: string, why: string): void {
+    const run = this.mustGet(id);
+    const sync = this.store.getSync(id);
+    if (sync) this.store.putSync({ ...sync, done: true });
+    if (!run.remote || isTerminal(run.state)) return;
+    run.state = "lost";
+    run.reason = why;
+    run.endedAt = nowIso();
+    run.cleanup = "done";
+    if (run.lease?.state === "active")
+      run.lease = { ...run.lease, state: "released", releasedAt: nowIso() };
+    this.save(run, "lost", why);
+    void this.tick();
+  }
+
+  /**
+   * Mirror the worker's record of a run: its new events (with their original times), state, outcome,
+   * container and cleanup. Emits "change" per event so notifications and benchmarks see the
+   * terminal event as for a local run.
+   */
+  applyRemote(id: string, remote: Run, events: RunEvent[]): Run {
+    const run = this.mustGet(id);
+    if (!run.remote) return run;
+    const sync = this.store.getSync(id);
+    const queuedThere = remote.state === "queued";
+    run.state = queuedThere ? "starting" : remote.state;
+    run.reason = queuedThere ? `queued on ${run.node}: ${remote.reason ?? ""}` : remote.reason;
+    run.exitCode = remote.exitCode;
+    run.image = remote.image ?? run.image;
+    run.containerId = remote.containerId;
+    run.startedAt = remote.startedAt;
+    run.endedAt = remote.endedAt;
+    run.cleanup = remote.cleanup;
+    if (remote.lease) run.lease = remote.lease;
+    else if (isTerminal(remote.state) && run.lease?.state === "active")
+      run.lease = { ...run.lease, state: "released", releasedAt: remote.endedAt ?? nowIso() };
+    const fresh = events.filter((e) => e.seq > (sync?.eventSeq ?? 0));
+    const saved = this.store.tx(() => {
+      this.store.putRun(run);
+      const out = fresh.map((e) => this.store.addEvent(id, e.kind, e.message, e.at));
+      if (sync)
+        this.store.putSync({
+          ...sync,
+          confirmed: true,
+          eventSeq: fresh.at(-1)?.seq ?? sync.eventSeq,
+          cancel: sync.cancel && !isTerminal(remote.state),
+        });
+      return out;
+    });
+    if (saved.length === 0) this.emit("change", { run });
+    for (const event of saved) this.emit("change", { run, event });
+    if (isTerminal(run.state)) void this.tick();
+    return run;
+  }
+
+  // ---- runs from a primary (worker side) ----
+
+  /**
+   * Accept a run placed here by another node. Idempotent by id. Its code arrives as bundles already
+   * stored under `cache/bundles`; secrets, datasets and auth come from this node's own configuration.
+   */
+  async submitRemote(input: RemoteSubmit): Promise<Run> {
+    const existing = this.store.getRun(input.id);
+    if (existing) {
+      if (existing.origin !== input.origin)
+        throw new UserError(`run ${input.id} already exists on ${this.node}`);
+      return existing;
+    }
+    const spec = RunSpec.parse(input.spec);
+    if (spec.backend !== "docker") throw new UserError("only docker runs can run on another node");
+    if (spec.mounts.some((m) => m.source)) throw new UserError("host path mounts are not portable");
+    if (spec.project && !input.workspace)
+      throw new UserError("a project run needs its code snapshot");
+    const bundle = (hash: string) => {
+      if (!isBundleHash(hash)) throw new UserError(`bad bundle hash: ${hash}`);
+      const dir = bundleDir(this.paths.bundles, hash);
+      if (!existsSync(dir)) throw new UserError(`bundle ${hash.slice(0, 12)} not uploaded`);
+      return dir;
+    };
+    spec.resources.node = this.node;
+    delete spec.agent;
+    if (input.dockerfile) {
+      const df = safeJoin(bundle(input.dockerfile.bundle), input.dockerfile.path);
+      if (!df || !existsSync(df)) throw new UserError("dockerfile missing from its bundle");
+      spec.dockerfile = df;
+    }
+    if (input.agentBundle) spec.agentBundle = bundle(input.agentBundle);
+    if (spec.auth && this.deps.auth?.get(spec.auth)?.profile.hostNetwork) spec.hostNetwork = true;
+    const why = await this.localBlocker(spec);
+    if (why) throw new UserError(why);
+    const workspace = input.workspace ? bundle(input.workspace) : null;
+
+    const dirs = runDirs(this.paths, input.id);
+    mkdirSync(dirs.output, { recursive: true });
+    writeFileSync(dirs.metrics, "");
+    writeFileSync(dirs.log, "");
+    if (workspace) cpSync(workspace, dirs.workspace, { recursive: true, verbatimSymlinks: true });
+    const run: Run = {
+      id: input.id,
+      spec,
+      state: "queued",
+      reason: null,
+      exitCode: null,
+      node: this.node,
+      image: spec.image ?? null,
+      containerId: null,
+      lease: null,
+      code: input.code,
+      proc: null,
+      cleanup: "pending",
+      remote: false,
+      origin: input.origin,
+      note: "",
+      createdAt: nowIso(),
+      startedAt: null,
+      endedAt: null,
+    };
+    this.save(run, "submitted", `from ${input.origin}`);
+    void this.tick();
+    return run;
   }
 
   private async launch(id: string): Promise<void> {
@@ -687,7 +999,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       : GENERIC_DIRS.has(dir)
         ? `${basename(dirname(dirname(df)))}-${dir}`
         : dir;
-    const tag = docker.dockerfileTag(df, dirname(df), name);
+    const tag = this.bundleTag(df, name) ?? docker.dockerfileTag(df, dirname(df), name);
     if (await docker.imageExists(tag)) {
       this.store.addEvent(run.id, "image", `reusing ${tag}`);
       return tag;
@@ -700,6 +1012,21 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     if (code !== 0) throw new Error(`docker build failed with exit code ${code}`);
     appendFileSync(dirs.log, "[orbit] build done\n");
     return tag;
+  }
+
+  /** A Dockerfile inside a received bundle: the bundle hash already names its whole context. */
+  private bundleTag(df: string, name: string): string | null {
+    const rel = df.startsWith(`${this.paths.bundles}/`)
+      ? df.slice(this.paths.bundles.length + 1)
+      : null;
+    if (!rel) return null;
+    const hash = createHash("sha256").update(rel).digest("hex").slice(0, 12);
+    const repo =
+      name
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, "-")
+        .replace(/^[^a-z0-9]+/, "") || "run";
+    return `orbit-local/${repo}:b${hash}`;
   }
 
   private containerSpec(run: Run, dirs: RunDirs, image: string): docker.ContainerSpec {
@@ -715,7 +1042,11 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       mounts.push({ source: s.project, target: "/workspace", mode: "ro" });
       workdir = "/workspace";
     }
-    mounts.push(...s.mounts);
+    for (const m of s.mounts) {
+      const source = m.source ?? this.deps.datasets?.path(m.dataset as string);
+      if (!source) throw new Error(`dataset ${m.dataset} is not registered on ${this.node}`);
+      mounts.push({ source, target: m.target, mode: m.mode });
+    }
     const workdirOut = s.workdir === "image" ? null : (s.workdir ?? workdir);
     const env: Record<string, string> = {
       ...s.env,
@@ -867,6 +1198,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
 
   private async retryCleanup(): Promise<void> {
     for (const run of this.store.pendingCleanup()) {
+      if (run.remote) continue;
       if (!this.active.has(run.id)) await this.cleanup(run);
     }
   }
@@ -874,6 +1206,12 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   /** Reattach to runs that were active when the daemon last stopped. */
   private async recover(): Promise<void> {
     for (const run of this.store.listRuns({ states: ["starting", "running"], limit: 10_000 })) {
+      if (run.remote) {
+        // Mirrored from a worker; the cluster sync resumes it (or re-sends it if never confirmed).
+        const sync = this.store.getSync(run.id);
+        if (sync && !sync.confirmed) void this.dispatchRemote(run.id);
+        continue;
+      }
       if (run.spec.backend === "process") {
         await this.recoverProcess(run);
         continue;

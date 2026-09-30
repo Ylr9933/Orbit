@@ -43,7 +43,31 @@ const MIGRATIONS = [
    );
    CREATE INDEX trials_job ON trials(job_id);
    CREATE INDEX trials_state ON trials(state);`,
+  // A run placed on another node: how far its events and records have been mirrored.
+  `CREATE TABLE remote_sync (
+     run_id TEXT PRIMARY KEY,
+     node TEXT NOT NULL,
+     event_seq INTEGER NOT NULL DEFAULT 0,
+     confirmed INTEGER NOT NULL DEFAULT 0,
+     cancel INTEGER NOT NULL DEFAULT 0,
+     done INTEGER NOT NULL DEFAULT 0
+   );
+   CREATE INDEX remote_sync_open ON remote_sync(done);`,
 ];
+
+/** Mirroring progress of a run placed on another node (primary only). */
+export interface RemoteSync {
+  runId: string;
+  node: string;
+  /** Last event seq copied from the worker. */
+  eventSeq: number;
+  /** The worker has acknowledged the run. */
+  confirmed: boolean;
+  /** Cancellation requested and not yet acknowledged by a terminal state. */
+  cancel: boolean;
+  /** Terminal, cleaned up and fully mirrored: nothing more to fetch. */
+  done: boolean;
+}
 
 export interface RunFilter {
   states?: RunState[];
@@ -138,12 +162,13 @@ export class Store {
     return rows.map((r) => Run.parse(JSON.parse(r.doc)));
   }
 
-  /** Terminal runs whose container has not been confirmed removed. */
+  /** Terminal local runs whose container has not been confirmed removed. */
   pendingCleanup(): Run[] {
     const rows = this.db
       .prepare(
         `SELECT doc FROM runs WHERE state IN ('succeeded','failed','cancelled','lost')
-         AND json_extract(doc, '$.cleanup') != 'done'`,
+         AND json_extract(doc, '$.cleanup') != 'done'
+         AND COALESCE(json_extract(doc, '$.remote'), 0) = 0`,
       )
       .all() as { doc: string }[];
     return rows.map((r) => Run.parse(JSON.parse(r.doc)));
@@ -169,8 +194,7 @@ export class Store {
 
   // events
 
-  addEvent(runId: string, kind: string, message: string): RunEvent {
-    const at = nowIso();
+  addEvent(runId: string, kind: string, message: string, at = nowIso()): RunEvent {
     const r = this.db
       .prepare("INSERT INTO events (run_id, at, kind, message) VALUES (?, ?, ?, ?)")
       .run(runId, at, kind, message);
@@ -192,6 +216,38 @@ export class Store {
     return rows.map((r) =>
       RunEvent.parse({ seq: r.seq, runId: r.run_id, at: r.at, kind: r.kind, message: r.message }),
     );
+  }
+
+  // remote runs
+
+  putSync(s: RemoteSync): void {
+    this.db
+      .prepare(
+        `INSERT INTO remote_sync (run_id, node, event_seq, confirmed, cancel, done)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(run_id) DO UPDATE SET node = excluded.node, event_seq = excluded.event_seq,
+           confirmed = excluded.confirmed, cancel = excluded.cancel, done = excluded.done`,
+      )
+      .run(s.runId, s.node, s.eventSeq, s.confirmed ? 1 : 0, s.cancel ? 1 : 0, s.done ? 1 : 0);
+  }
+
+  getSync(runId: string): RemoteSync | null {
+    const row = this.db.prepare("SELECT * FROM remote_sync WHERE run_id = ?").get(runId) as
+      | SyncRow
+      | undefined;
+    return row ? syncOf(row) : null;
+  }
+
+  deleteSync(runId: string): void {
+    this.db.prepare("DELETE FROM remote_sync WHERE run_id = ?").run(runId);
+  }
+
+  /** Remote runs still being mirrored. */
+  openSyncs(): RemoteSync[] {
+    const rows = this.db
+      .prepare("SELECT * FROM remote_sync WHERE done = 0 ORDER BY run_id")
+      .all() as unknown as SyncRow[];
+    return rows.map(syncOf);
   }
 
   // benchmark jobs and trials
@@ -260,3 +316,21 @@ export class Store {
     return rows.map((r) => Trial.parse(JSON.parse(r.doc)));
   }
 }
+
+interface SyncRow {
+  run_id: string;
+  node: string;
+  event_seq: number;
+  confirmed: number;
+  cancel: number;
+  done: number;
+}
+
+const syncOf = (r: SyncRow): RemoteSync => ({
+  runId: r.run_id,
+  node: r.node,
+  eventSeq: r.event_seq,
+  confirmed: r.confirmed === 1,
+  cancel: r.cancel === 1,
+  done: r.done === 1,
+});

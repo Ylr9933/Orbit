@@ -19,7 +19,7 @@ export const RULES: Record<string, string[]> = {
   sessions: [...CORE, "records", "harness"],
   runs: [...CORE, ...DOMAIN_ALL],
   bench: [...CORE, ...DOMAIN_ALL, "runs"],
-  cluster: [...CORE, "resources", "runs"],
+  cluster: [...CORE, "resources", "workspace", "records", "runs"],
   daemon: [...CORE, ...DOMAIN_ALL, "runs", "bench", "cluster"],
   client: [...BASE, "config"],
   cli: [...BASE, "config", "client"],
