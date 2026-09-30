@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 
 const BASE = ["contracts", "lib"];
 const CORE = [...BASE, "config", "store"];
-const DOMAIN = ["resources", "auth", "images", "workspace", "executor", "records"];
+const DOMAIN = ["resources", "auth", "images", "workspace", "executor", "records", "notify"];
 const DOMAIN_ALL = [...DOMAIN, "harness", "sessions"];
 
 /** module -> modules it may import (itself is always allowed). */

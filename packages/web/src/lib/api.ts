@@ -2,10 +2,13 @@
 // so zod is not bundled); the daemon validates, the Web trusts its own daemon.
 import type {
   Artifacts,
+  AuthProfile,
+  AuthTestResult,
   DoctorReport,
   Ledger,
   LogChunk,
   Metrics,
+  NotifyTarget,
   Run,
   RunEvent,
   SessionTranscript,
@@ -13,12 +16,14 @@ import type {
 
 export type {
   Artifacts,
+  AuthProfile,
   CodeSnapshot,
   Gpu,
   Lease,
   Ledger,
   LogChunk,
   Metrics,
+  NotifyTarget,
   Run,
   RunEvent,
   RunState,
@@ -73,6 +78,15 @@ export const api = {
   session: (id: string) => req<SessionTranscript>(`/runs/${enc(id)}/session`),
   ledger: () => req<Ledger>("/ledger"),
   doctor: () => req<DoctorReport>("/doctor"),
+  authProfiles: () => req<{ profiles: AuthProfile[] }>("/auth").then((r) => r.profiles),
+  authRemove: (name: string) => req<{ ok: boolean }>(`/auth/${enc(name)}`, { method: "DELETE" }),
+  authTest: (name: string) =>
+    req<AuthTestResult>(`/auth/${enc(name)}/test`, { method: "POST", body: "{}" }),
+  notifyTargets: () => req<{ targets: NotifyTarget[] }>("/notify").then((r) => r.targets),
+  notifyRemove: (name: string) =>
+    req<{ ok: boolean }>(`/notify/${enc(name)}`, { method: "DELETE" }),
+  notifyTest: (name: string) =>
+    req<{ ok: boolean }>(`/notify/${enc(name)}/test`, { method: "POST" }),
 };
 
 export const fileUrl = (id: string, path: string, download = false) =>

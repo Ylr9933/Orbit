@@ -74,7 +74,24 @@ orbit cancel <id>...
 Prefer `orbit wait` over polling. For long runs, you can continue other work and check back.
 When a run fails, read `orbit logs <id> --tail 8000` before changing anything; the evidence is kept.
 
-## 5. Record conclusions
+## 5. Run an agent inside a container
+
+When the experiment itself needs Codex or Claude Code (agent benchmarks, agent-driven data work), use a
+profile the human has set up; never pass keys yourself.
+
+```bash
+orbit auth list                              # names, agent, kind; secrets are never shown
+orbit auth test <profile>                    # small real run: checks that the agent answers
+orbit run --image python:3.12-slim --auth <profile> -n agent-try -- \
+  codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "task…"
+orbit run --image python:3.12-slim --auth <profile> -- claude -p --dangerously-skip-permissions "task…"
+```
+
+The host's CLI is mounted read-only and put on `PATH`; the container is the sandbox. If no profile
+fits, ask the human to add one (`orbit auth add`). Completion and failure notifications are sent to
+the targets in `orbit notify list`; a group sends one summary when its last run ends.
+
+## 6. Record conclusions
 
 After analysing a run or a group, attach a short note so the human sees it next to the results:
 

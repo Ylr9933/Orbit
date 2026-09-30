@@ -1,6 +1,6 @@
 # Orbit 设计
 
-状态：R0 已确定的目标设计；R1（单机科研闭环）已按本文实现。实现进度见 [status.md](status.md)。本文是架构与接口的唯一权威来源；
+状态：R0 已确定的目标设计；R1（单机科研闭环）已实现；R2（认证与通知）按 §6 实现中。实现进度见 [status.md](status.md)。本文是架构与接口的唯一权威来源；
 改变模块边界、公共契约或关键决策时，在同一分支更新本文。
 
 ## 1. 定位
@@ -50,7 +50,7 @@ packages/orbit/src/
   lib/         small generic helpers (process exec, ids, time, fs)
   config/      paths (~/.orbit), config file, daemon endpoint/token
   store/       sqlite access and migrations
-  resources/ auth/ images/ workspace/ executor/ harness/ records/ sessions/   domain modules
+  resources/ auth/ images/ workspace/ executor/ harness/ records/ notify/ sessions/   domain modules
   runs/        orchestrates domain modules into a Run
   bench/       builds trials on top of runs
   cluster/     multi-node (R4)
@@ -70,7 +70,7 @@ plugin/        skills/orbit/SKILL.md for Codex / Claude Code (+ .claude-plugin m
 | --- | --- |
 | contracts, lib | 无（contracts 仅依赖 zod） |
 | config, store | contracts, lib |
-| resources, auth, images, workspace, executor, records | contracts, lib, config, store |
+| resources, auth, images, workspace, executor, records, notify | contracts, lib, config, store |
 | harness | 上一行 + auth |
 | sessions | contracts, lib, config, store, records, harness |
 | runs | 以上所有 domain 模块 |
@@ -141,7 +141,8 @@ NVIDIA spec 时），否则 `--gpus device=<UUID>`；启动后核对 `nvidia-smi
 
 `/api/v1`：`health`、`resources`、`doctor`、`ledger`（资源 + 活动租约 + 排队原因）、`GET/POST runs`、
 `runs/:id`、`runs/:id/{cancel,note,wait,events,logs,log.txt,metrics,artifacts,files/*,diff,session}`、
-`stream`（SSE，Run 变化推送）。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
+`stream`（SSE，Run 变化推送）、`GET/POST auth`、`DELETE auth/:name`、`POST auth/:name/test`、
+`GET/POST notify`、`DELETE notify/:name`、`POST notify/:name/test`。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
 `orbit web [id]` 用 token 打开浏览器并定位到 Run。
 
 Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行详情、GitHub 的 diff 视图）：
@@ -152,16 +153,47 @@ Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行�
   Session（Agent 轨迹，标出提交点）、Events。
 - **Compare**：`?ids=` / `?group=`，按 seed 聚合 mean ± std、相对基线的变化、曲线叠加、配置差异。
 - **Resources**：GPU 卡片（Orbit 租约 / 外部占用 / 空闲、显存与利用率）、租约与队列。
+- **Settings**：容器内 Agent 版本、auth profile（掩码、测试、删除）、通知目标（发测试、删除）、浏览器通知开关。
+  Web 不录入密钥：添加 profile / 目标只走 CLI。
 
-## 6. 认证（auth）与 harness
+## 6. 认证（auth）、harness 与通知
 
-- **Auth profile**：`{ name, harness, kind: login | api-key | relay, baseUrl?, secretRef }`，保存在
-  `~/.orbit/auth.json`（0600）。例：Codex 账号登录（`~/.codex/auth.json`）、OpenAI API key、Claude Code
-  经中转站（`ANTHROPIC_BASE_URL` + token）、DeepSeek 兼容接口。
-- 注入容器：只读挂载或环境变量；**永不写入日志、事件、轨迹**（records 写入前按已知 secret 脱敏）。
-- `orbit auth doctor <profile>`：一次低成本请求验证可用性。
-- **Harness**：描述某个 Agent CLI 在容器内如何安装（固定版本）、如何接收认证、如何传入方法包（skills、
-  AGENTS.md/CLAUDE.md、MCP 配置）、如何非交互启动、如何解析其会话/轨迹。首批：`codex`、`claude-code`。
+**Auth profile**（`contracts.AuthProfile`，公开字段不含密钥）：
+
+```
+{ name, harness: codex | claude-code, kind: login | api-key | relay, baseUrl?, model?,
+  env(非密钥附加变量，如 HTTPS_PROXY), hostNetwork, secretHint, createdAt, updatedAt }
+```
+
+- 保存在 `~/.orbit/auth.json`（0600，只有 daemon 写），codex 登录态（Codex 的 `auth.json` 内容）也内联在其中。
+  API 与 Web 只返回公开字段和掩码提示；密钥只经本机 HTTP 提交一次，CLI 从 stdin 或环境变量读取，不走 argv。
+- 注入方式：
+
+| harness / kind | 容器内 |
+| --- | --- |
+| codex login | `$CODEX_HOME/auth.json` 为 profile 登录态的副本；run 结束后若 token 已刷新则写回 profile |
+| codex api-key | `$CODEX_HOME/auth.json` = `{ OPENAI_API_KEY }` |
+| codex relay | `$CODEX_HOME/config.toml` 定义 provider（`base_url`、`env_key = ORBIT_RELAY_API_KEY`），密钥经环境变量 |
+| claude-code login | `CLAUDE_CODE_OAUTH_TOKEN`（`claude setup-token` 生成的长期 token） |
+| claude-code api-key | `ANTHROPIC_API_KEY` |
+| claude-code relay | `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` |
+
+- 密钥环境变量通过 0600 的 `--env-file` 传给 `docker run`，启动后删除（`docker inspect` 仍可见，仅限本机
+  docker 用户）。run 结束后删除容器内写下的凭据文件；日志写入前按当前所有密钥脱敏（`[redacted]`）。
+- `orbit auth test <name>` 用该 profile 提交一个真实的小 Run（`auth-test` 组），让 Agent 回复固定口令并检查日志；
+  结果作为 Run 保留。
+
+**Harness**：`RunSpec.auth = <profile>` 时，Orbit 把宿主机上已安装的 Agent CLI 只读挂载进容器
+（codex 为静态 musl 二进制，挂到 `/opt/orbit/codex`；Claude Code 原生二进制需 glibc，挂到 `/opt/orbit/claude`），
+按镜像的 `PATH` 追加这些目录，并在事件中记录版本。版本固定 = 宿主机当前版本；`orbit doctor` 显示两者版本。
+Agent 的 home 放在 `/orbit/agent/{codex,claude}`（`CODEX_HOME`、`CLAUDE_CONFIG_DIR`），会话轨迹随 Run 记录保留。
+容器本身就是沙箱：容器内 codex 用 `--dangerously-bypass-approvals-and-sandbox`，claude 用
+`--dangerously-skip-permissions`。profile 设置 `hostNetwork` 时 Run 使用宿主网络（例如代理只监听 127.0.0.1）。
+
+**通知**：`~/.orbit/notify.json`（0600）中的目标 `{ name, kind: feishu | dingtalk | wecom | slack | webhook, url, on[] }`，
+`on` ⊆ `succeeded | failed | group`。单个 Run（无 group）结束时按状态通知；group 中的 Run 不单独通知，
+该 group 不再有排队/运行中的 Run 时发一条汇总（成功/失败计数、失败的 Run 与原因）。失败通知附原因与日志最后几行
+（已脱敏）。发送失败只记 daemon 日志，不影响 Run。Web 可开启浏览器通知（页面打开时）。
 
 ## 7. 刷榜（bench）
 

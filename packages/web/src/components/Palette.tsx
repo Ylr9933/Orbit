@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { runTitle } from "../lib/format.ts";
 import { navigate } from "../lib/router.ts";
 import { useRuns } from "../lib/runs-store.ts";
-import { IconChip, IconCompare, IconLayers, IconRuns } from "./icons.tsx";
+import { IconChip, IconCompare, IconLayers, IconRuns, IconSettings } from "./icons.tsx";
 import { StateIcon } from "./ui.tsx";
 
 interface Item {
@@ -45,6 +45,14 @@ export function Palette({ onClose }: { onClose: () => void }) {
         icon: <IconChip size={15} />,
         text: "resources gpu",
         go: "/resources",
+      },
+      {
+        key: "p-set",
+        group: "Pages",
+        label: "Settings",
+        icon: <IconSettings size={15} />,
+        text: "settings auth profiles notifications",
+        go: "/settings",
       },
     ];
     const groups = [...new Set(runs.map((r) => r.spec.group).filter(Boolean))] as string[];

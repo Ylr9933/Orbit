@@ -1,6 +1,7 @@
 // Live run list: one initial fetch, then server-sent `run` events upsert individual runs.
 import { useSyncExternalStore } from "react";
 import { api, authState, type Run } from "./api.ts";
+import { notifyTransition } from "./browser-notify.ts";
 
 interface State {
   runs: Map<string, Run>;
@@ -39,6 +40,7 @@ function connect() {
   });
   source.addEventListener("run", (ev) => {
     const run = JSON.parse((ev as MessageEvent<string>).data) as Run;
+    notifyTransition(state.runs.get(run.id), run, state.runs.values());
     const runs = new Map(state.runs);
     runs.set(run.id, run);
     emit({ runs });

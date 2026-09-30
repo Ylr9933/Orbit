@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { detectAgent } from "../src/cli/agent.ts";
 import { expandGrid, substitute } from "../src/cli/program.ts";
-import { runArgs } from "../src/executor/docker.ts";
+import { envFileText, runArgs } from "../src/executor/docker.ts";
 
 describe("sweep helpers", () => {
   it("expands the cartesian product and substitutes placeholders", () => {
@@ -56,7 +56,7 @@ describe("docker run args", () => {
     mounts: [{ source: "/d", target: "/data", mode: "ro" as const }],
     env: { A: "1" },
     workdir: "/workspace",
-    network: false,
+    network: "none" as const,
     user: "1000:1000",
   };
   it("uses CDI devices when available", () => {
@@ -68,5 +68,13 @@ describe("docker run args", () => {
   });
   it("falls back to --gpus", () => {
     expect(runArgs({ ...base, gpuMode: "gpus" })).toContain('"device=GPU-a,GPU-b"');
+  });
+  it("passes secrets by env file and supports host network", () => {
+    const a = runArgs({ ...base, gpuMode: "cdi", network: "host", envFile: "/t/x.env" }).join(" ");
+    expect(a).toContain("--env-file /t/x.env");
+    expect(a).toContain("--network host");
+    expect(runArgs({ ...base, gpuMode: "cdi", network: "bridge" })).not.toContain("--network");
+    expect(envFileText({ K: "v=1" })).toBe("K=v=1\n");
+    expect(() => envFileText({ K: "a\nb" })).toThrow();
   });
 });

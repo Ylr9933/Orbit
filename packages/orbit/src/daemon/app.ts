@@ -6,15 +6,20 @@ import { type Context, Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { AuthError, type AuthStore } from "../auth/index.ts";
 import {
   API_PREFIX,
+  type AuthProfile,
+  type AuthTestResult,
   type Health,
   isTerminal,
   type Ledger,
+  type NotifyTarget,
   type Run,
   RunState,
 } from "../contracts/index.ts";
 import { VERSION } from "../lib/version.ts";
+import type { Notifier, NotifyStore } from "../notify/index.ts";
 import { listArtifacts, readDiff, readLog, readMetrics, safeJoin } from "../records/index.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { loadTranscript } from "../sessions/index.ts";
@@ -24,6 +29,9 @@ export interface AppDeps {
   token: string;
   startedAt: string;
   runs: RunService;
+  auth: AuthStore;
+  notifyStore: NotifyStore;
+  notifier: Notifier;
   /** Built Web UI directory, or null when not built. */
   webDir: string | null;
 }
@@ -31,7 +39,7 @@ export interface AppDeps {
 const COOKIE = "orbit_token";
 
 export function createApp(deps: AppDeps): Hono {
-  const { runs } = deps;
+  const { runs, auth, notifyStore, notifier } = deps;
   const app = new Hono();
   const api = new Hono();
 
@@ -151,6 +159,37 @@ export function createApp(deps: AppDeps): Hono {
     return t ? c.json(t) : c.json({ error: "session transcript not found on this node" }, 404);
   });
 
+  // Credentials: secrets go in once and never come back out.
+  api.get("/auth", (c) => c.json<{ profiles: AuthProfile[] }>({ profiles: auth.list() }));
+  api.post("/auth", async (c) => c.json(auth.put(await c.req.json()), 201));
+  api.delete("/auth/:name", (c) => {
+    if (!auth.remove(c.req.param("name"))) throw new NotFoundError("auth profile not found");
+    return c.json({ ok: true });
+  });
+  api.post("/auth/:name/test", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { image?: string };
+    return c.json<AuthTestResult>(await runs.testAuth(c.req.param("name"), body.image));
+  });
+
+  api.get("/notify", (c) => c.json<{ targets: NotifyTarget[] }>({ targets: notifyStore.list() }));
+  api.post("/notify", async (c) => c.json(notifyStore.put(await c.req.json()), 201));
+  api.delete("/notify/:name", (c) => {
+    if (!notifyStore.remove(c.req.param("name")))
+      throw new NotFoundError("notify target not found");
+    return c.json({ ok: true });
+  });
+  api.post("/notify/:name/test", async (c) => {
+    const name = c.req.param("name");
+    if (!notifyStore.targets().some((t) => t.name === name))
+      throw new NotFoundError("notify target not found");
+    try {
+      await notifier.test(name);
+    } catch (e) {
+      throw new UserError(`sending failed: ${(e as Error).message}`);
+    }
+    return c.json({ ok: true });
+  });
+
   /** Server-sent events: `run` with the full Run on every change. */
   api.get("/stream", (c) =>
     streamSSE(c, async (stream) => {
@@ -194,7 +233,8 @@ function must<T>(v: T | null): T {
 
 function errorResponse(c: Context, err: Error) {
   if (err instanceof NotFoundError) return c.json({ error: err.message }, 404);
-  if (err instanceof UserError) return c.json({ error: err.message }, 400);
+  if (err instanceof UserError || err instanceof AuthError)
+    return c.json({ error: err.message }, 400);
   if (err instanceof z.ZodError) return c.json({ error: z.prettifyError(err) }, 400);
   if (err instanceof SyntaxError) return c.json({ error: `invalid JSON: ${err.message}` }, 400);
   console.error(err);

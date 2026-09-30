@@ -270,7 +270,13 @@ function Spec({ run }: { run: Run }) {
             ) : null}
           </dd>
           <dt>Network</dt>
-          <dd>{s.network ? "enabled" : "disabled"}</dd>
+          <dd>{!s.network ? "disabled" : s.hostNetwork ? "host network" : "enabled"}</dd>
+          {s.auth && (
+            <>
+              <dt>Agent auth</dt>
+              <dd className="mono">{s.auth}</dd>
+            </>
+          )}
           <dt>User</dt>
           <dd>{s.root ? "root" : "host user"}</dd>
           {s.timeoutMin && (

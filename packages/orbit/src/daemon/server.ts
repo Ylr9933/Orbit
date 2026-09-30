@@ -1,14 +1,35 @@
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ServerType, serve } from "@hono/node-server";
+import { AuthStore } from "../auth/index.ts";
 import { removeDaemonInfo, writeDaemonInfo } from "../config/daemon-info.ts";
 import { ensureHome, type OrbitPaths } from "../config/paths.ts";
+import { isTerminal } from "../contracts/index.ts";
+import { Notifier, NotifyStore } from "../notify/index.ts";
 import { probeNode } from "../resources/probe.ts";
-import { RunService } from "../runs/service.ts";
+import { AUTH_TEST_GROUP, RunService } from "../runs/service.ts";
 import { Store } from "../store/index.ts";
 import { createApp } from "./app.ts";
+
+/** Last `n` lines of a text file (reads at most the final 16 KiB). */
+function tail(file: string, n: number): string {
+  try {
+    const size = statSync(file).size;
+    const len = Math.min(size, 16 * 1024);
+    const buf = Buffer.alloc(len);
+    const fd = openSync(file, "r");
+    try {
+      readSync(fd, buf, 0, len, size - len);
+    } finally {
+      closeSync(fd);
+    }
+    return buf.toString("utf8").trimEnd().split("\n").slice(-n).join("\n");
+  } catch {
+    return "";
+  }
+}
 
 export interface StartedDaemon {
   url: string;
@@ -38,13 +59,38 @@ export async function startDaemon(
   ensureHome(paths);
   const token = randomBytes(24).toString("hex");
   const store = new Store(paths.db);
+  const auth = new AuthStore(paths.auth);
   const runs = new RunService({
     store,
     paths,
+    auth,
     probe: () => probeNode(paths.home),
     tickMs: opts.tickMs,
   });
-  const app = createApp({ token, startedAt: new Date().toISOString(), runs, webDir: findWebDir() });
+  let webUrl: string | undefined;
+  const notifyStore = new NotifyStore(paths.notify);
+  const notifier = new Notifier({
+    store: notifyStore,
+    groupRuns: (group) => store.listRuns({ group, limit: 10_000 }),
+    logTail: (id) => runs.redactor().apply(tail(runs.dirs(id).log, 15)),
+    log: (msg) => console.error(`orbit ${msg}`),
+    webUrl: () => webUrl,
+  });
+  runs.on("change", ({ run, event }) => {
+    // The terminal event is saved once, before cleanup; auth checks stay quiet.
+    if (event?.kind !== run.state || !isTerminal(run.state) || run.spec.group === AUTH_TEST_GROUP)
+      return;
+    void notifier.onTerminal(run);
+  });
+  const app = createApp({
+    token,
+    startedAt: new Date().toISOString(),
+    runs,
+    auth,
+    notifyStore,
+    notifier,
+    webDir: findWebDir(),
+  });
 
   const server = await new Promise<ServerType>((resolve, reject) => {
     const s = serve(
@@ -59,6 +105,7 @@ export async function startDaemon(
   const addr = server.address();
   const port = typeof addr === "object" && addr ? addr.port : (opts.port ?? paths.port);
   const url = `http://127.0.0.1:${port}`;
+  webUrl = url;
   await runs.start();
   writeDaemonInfo(paths, { url, token, pid: process.pid });
 

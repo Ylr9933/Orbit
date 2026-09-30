@@ -9,6 +9,7 @@ import { isTerminal, type Run, type RunSpecInput } from "../contracts/index.ts";
 import { exec } from "../lib/exec.ts";
 import { VERSION } from "../lib/version.ts";
 import { detectAgent } from "./agent.ts";
+import { kv, registerAuth, registerNotify } from "./auth.ts";
 import { formatDoctor, formatLedger, formatRun, formatRuns } from "./format.ts";
 
 export interface ProgramDeps {
@@ -45,16 +46,6 @@ const num = (v: string) => {
   return n;
 };
 
-function kv(list: string[], what: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const item of list) {
-    const i = item.indexOf("=");
-    if (i <= 0) throw new Error(`${what} must be KEY=VALUE: ${item}`);
-    out[item.slice(0, i)] = item.slice(i + 1);
-  }
-  return out;
-}
-
 interface RunOpts {
   name?: string;
   group?: string;
@@ -69,6 +60,8 @@ interface RunOpts {
   mount: string[];
   env: string[];
   network: boolean;
+  hostNetwork?: boolean;
+  auth?: string;
   snapshot: boolean;
   root?: boolean;
   timeout?: number;
@@ -93,6 +86,11 @@ function addRunOptions(cmd: Command): Command {
     .option("-m, --mount <src:dst[:rw]>", "bind mount (read-only unless :rw)", collect, [])
     .option("-e, --env <KEY=VALUE>", "environment variable", collect, [])
     .option("--no-network", "disable networking")
+    .option("--host-network", "share the host network (e.g. to reach a proxy on 127.0.0.1)")
+    .option(
+      "--auth <profile>",
+      "mount the Agent CLI with this credential profile (orbit auth list)",
+    )
     .option("--no-snapshot", "mount the project read-only instead of snapshotting it")
     .option("--root", "run as root instead of your user")
     .option("--timeout <min>", "stop the run after this many minutes", num)
@@ -140,6 +138,8 @@ async function buildSpec(
     mounts,
     env: kv(o.env, "--env"),
     network: o.network,
+    hostNetwork: Boolean(o.hostNetwork),
+    auth: o.auth,
     snapshot: o.snapshot,
     root: o.root ?? false,
     timeoutMin: o.timeout,
@@ -356,13 +356,16 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
 
   program
     .command("doctor")
-    .description("check docker, nvidia-smi, git and node")
+    .description("check docker, nvidia-smi, git, node and the Agent CLIs")
     .option("--json", "print JSON")
     .action(async (o: { json?: boolean }) => {
       const r = await (await client()).doctor();
       print(o.json, r, () => formatDoctor(r));
       if (!r.ok) process.exitCode = 1;
     });
+
+  registerAuth(program, client, print);
+  registerNotify(program, client, print);
 
   program
     .command("web [id]")

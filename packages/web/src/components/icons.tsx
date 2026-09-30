@@ -246,3 +246,22 @@ export const IconEdit = (p: P) => (
     <path d="M4 20h4L19 9l-4-4L4 16z" />
   </I>
 );
+export const IconSettings = (p: P) => (
+  <I {...p}>
+    <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+    <circle cx="16" cy="7" r="2" />
+    <circle cx="10" cy="17" r="2" />
+  </I>
+);
+export const IconBell = (p: P) => (
+  <I {...p}>
+    <path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z" />
+    <path d="M10 20a2 2 0 0 0 4 0" />
+  </I>
+);
+export const IconKey = (p: P) => (
+  <I {...p}>
+    <circle cx="8" cy="15" r="4" />
+    <path d="M11 12l9-9M17 6l3 3M15 8l2 2" />
+  </I>
+);

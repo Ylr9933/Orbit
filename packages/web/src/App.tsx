@@ -6,6 +6,7 @@ import {
   IconLogo,
   IconMoon,
   IconRuns,
+  IconSettings,
   IconSun,
 } from "./components/icons.tsx";
 import { Palette } from "./components/Palette.tsx";
@@ -18,6 +19,7 @@ import { Compare } from "./pages/Compare.tsx";
 import { Resources } from "./pages/Resources.tsx";
 import { RunDetail } from "./pages/RunDetail.tsx";
 import { Runs } from "./pages/Runs.tsx";
+import { Settings } from "./pages/Settings.tsx";
 
 function useUnauthorized() {
   return useSyncExternalStore(
@@ -56,6 +58,7 @@ export function App() {
     "g r": () => navigate("/"),
     "g c": () => navigate("/compare"),
     "g s": () => navigate("/resources"),
+    "g p": () => navigate("/settings"),
     Escape: () => {
       setHelp(false);
       setPalette(false);
@@ -67,6 +70,7 @@ export function App() {
   if (m) page = <RunDetail key={m[1]} id={decodeURIComponent(m[1] as string)} />;
   else if (loc.path === "/compare") page = <Compare />;
   else if (loc.path === "/resources") page = <Resources />;
+  else if (loc.path === "/settings") page = <Settings />;
   else page = <Runs />;
 
   const nav = (
@@ -114,6 +118,7 @@ export function App() {
         {nav("/", "Runs", <IconRuns />, loc.path === "/" || loc.path.startsWith("/runs"), "r")}
         {nav("/compare", "Compare", <IconCompare />, loc.path === "/compare", "c")}
         {nav("/resources", "Resources", <IconChip />, loc.path === "/resources", "s")}
+        {nav("/settings", "Settings", <IconSettings />, loc.path === "/settings", "p")}
         <div className="spacer" />
         <button type="button" onClick={() => setHelp(true)} aria-label="Keyboard shortcuts">
           <IconKeyboard />
@@ -153,7 +158,7 @@ export function App() {
 
 const SHORTCUTS: [string, string][] = [
   ["⌘K / Ctrl K", "Command palette: jump to any run or page"],
-  ["g r · g c · g s", "Go to Runs · Compare · Resources"],
+  ["g r · g c · g s · g p", "Go to Runs · Compare · Resources · Settings"],
   ["j / k", "Move down / up in lists"],
   ["Enter / o", "Open the selected run"],
   ["x", "Select run (for compare)"],

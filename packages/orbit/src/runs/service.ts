@@ -1,11 +1,19 @@
-import type { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import type { AuthStore } from "../auth/index.ts";
 import { type OrbitPaths, type RunDirs, runDirs } from "../config/paths.ts";
 import {
+  type AuthTestResult,
   isTerminal,
   type Lease,
   type NodeResources,
@@ -16,7 +24,15 @@ import {
   type RunState,
 } from "../contracts/index.ts";
 import * as docker from "../executor/docker.ts";
+import {
+  containerPath,
+  finishHarness,
+  hostCli,
+  type Prepared,
+  prepareHarness,
+} from "../harness/index.ts";
 import { newId, nowIso } from "../lib/ids.ts";
+import { Redactor } from "../lib/redact.ts";
 import { allocate, infeasible } from "../resources/allocate.ts";
 import { resolveAgentRef } from "../sessions/index.ts";
 import type { RunFilter, Store } from "../store/index.ts";
@@ -26,6 +42,8 @@ export interface RunServiceDeps {
   store: Store;
   paths: OrbitPaths;
   probe: () => Promise<NodeResources>;
+  /** Credential profiles for `spec.auth`; runs with auth are rejected without it. */
+  auth?: AuthStore;
   /** Scheduler period; the loop also runs after every submit/finish. */
   tickMs?: number;
 }
@@ -36,6 +54,8 @@ export interface RunChange {
 }
 
 const PROBE_TTL_MS = 2000;
+/** Group of the runs created by `testAuth`. */
+export const AUTH_TEST_GROUP = "auth-test";
 const LOG_DRAIN_TIMEOUT_MS = 15_000;
 
 /**
@@ -54,10 +74,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   private ticking: Promise<void> | null = null;
   private tickAgain = false;
   /** Runs with an active launch/watch task in this process. */
-  private readonly active = new Map<
-    string,
-    { cancel?: "cancel" | "timeout"; logs?: ChildProcess }
-  >();
+  private readonly active = new Map<string, Control>();
 
   private readonly deps: RunServiceDeps;
 
@@ -126,6 +143,15 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       spec.dockerfile = df;
     }
     if (spec.agent) spec.agent = await resolveAgentRef(spec.agent);
+    if (spec.auth) {
+      const entry = this.deps.auth?.get(spec.auth);
+      if (!entry) throw new UserError(`auth profile not found: ${spec.auth}`);
+      if (entry.profile.hostNetwork) spec.hostNetwork = true;
+      if (!(await hostCli(entry.profile.harness)))
+        throw new UserError(`${entry.profile.harness} CLI not found on this node`);
+    }
+    if (spec.hostNetwork && !spec.network)
+      throw new UserError("host network conflicts with network disabled");
 
     const id = newId();
     const dirs = runDirs(this.paths, id);
@@ -177,6 +203,64 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     }
     this.requestStop(run, "cancel");
     return this.mustGet(id);
+  }
+
+  /** Resolves with the run once it is terminal and cleaned up (or failed to clean up). */
+  waitDone(id: string): Promise<Run> {
+    const settled = (r: Run) => isTerminal(r.state) && r.cleanup !== "pending";
+    const now = this.mustGet(id);
+    if (settled(now)) return Promise.resolve(now);
+    return new Promise((resolve) => {
+      const onChange = ({ run }: RunChange) => {
+        if (run.id !== id || !settled(run)) return;
+        this.off("change", onChange);
+        resolve(run);
+      };
+      this.on("change", onChange);
+    });
+  }
+
+  /**
+   * Check a profile end to end: a small real run asks the Agent for a fixed answer. The answer is not in
+   * the prompt, so finding it in the log means the model replied.
+   */
+  async testAuth(name: string, image = "python:3.12-slim"): Promise<AuthTestResult> {
+    const entry = this.deps.auth?.get(name);
+    if (!entry) throw new NotFoundError(`auth profile not found: ${name}`);
+    const prompt =
+      "Reply with the word ORBIT_AUTH immediately followed by _OK, as one token, and nothing else.";
+    const command =
+      entry.profile.harness === "codex"
+        ? [
+            "codex",
+            "exec",
+            "--skip-git-repo-check",
+            "--dangerously-bypass-approvals-and-sandbox",
+            prompt,
+          ]
+        : ["claude", "-p", "--dangerously-skip-permissions", prompt];
+    const run = await this.submit({
+      name: `auth-test ${name}`,
+      group: AUTH_TEST_GROUP,
+      image,
+      command,
+      auth: name,
+      snapshot: false,
+      resources: { gpus: 0, cpus: 1, memGB: 2 },
+      timeoutMin: 5,
+      tags: { auth: name },
+    });
+    const done = await this.waitDone(run.id);
+    const log = readFileSync(this.dirs(run.id).log, "utf8");
+    const ok = done.state === "succeeded" && log.includes("ORBIT_AUTH_OK");
+    const tail = log.trim().split("\n").slice(-5).join("\n");
+    return {
+      ok,
+      runId: run.id,
+      detail: ok
+        ? "agent replied ORBIT_AUTH_OK"
+        : `${done.state}: ${done.reason ?? ""}\n${tail}`.trim(),
+    };
   }
 
   setNote(id: string, note: string): Run {
@@ -258,10 +342,11 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   }
 
   private async launch(id: string): Promise<void> {
-    const ctl: { cancel?: "cancel" | "timeout"; logs?: ChildProcess } = {};
+    const ctl: Control = {};
     this.active.set(id, ctl);
     let run = this.mustGet(id);
     const dirs = this.dirs(id);
+    const envFile = join(this.paths.tmp, `${id}.env`);
     try {
       const image = await this.ensureImage(run, dirs);
       run = this.mustGet(id);
@@ -269,7 +354,19 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       if (ctl.cancel)
         return void (await this.finalize(run, "cancelled", null, "cancelled before start"));
 
-      const containerId = await docker.startContainer(this.containerSpec(run, dirs, image));
+      const spec = this.containerSpec(run, dirs, image);
+      if (run.spec.auth) {
+        const h = await this.prepareAuth(run, dirs, image);
+        spec.mounts.push(...h.mounts);
+        Object.assign(spec.env, h.env);
+        if (Object.keys(h.secretEnv).length > 0) {
+          writeFileSync(envFile, docker.envFileText(h.secretEnv), { mode: 0o600 });
+          spec.envFile = envFile;
+        }
+      }
+      const containerId = await docker
+        .startContainer(spec)
+        .finally(() => rmSync(envFile, { force: true }));
       run = this.mustGet(id);
       run.containerId = containerId;
       run.state = "running";
@@ -294,11 +391,29 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       await this.watch(id, containerId, true);
     } catch (e) {
       const msg = (e as Error).message;
-      appendFileSync(dirs.log, `\n[orbit] ${msg}\n`);
+      appendFileSync(dirs.log, `\n[orbit] ${this.redactor().apply(msg)}\n`);
       await this.finalize(this.mustGet(id), "failed", null, msg);
     } finally {
       this.active.delete(id);
     }
+  }
+
+  /** Agent CLI + credentials for `spec.auth`; the secret variables go through a private env file. */
+  private async prepareAuth(run: Run, dirs: RunDirs, image: string): Promise<Prepared> {
+    const name = run.spec.auth as string;
+    const entry = this.deps.auth?.get(name);
+    if (!entry) throw new Error(`auth profile not found: ${name}`);
+    const h = await prepareHarness(entry, dirs.agent);
+    h.env.PATH = containerPath(
+      h.cli.pathDirs,
+      run.spec.env.PATH ?? (await docker.imagePath(image)),
+    );
+    this.store.addEvent(
+      run.id,
+      "harness",
+      `${h.cli.version} · auth ${name} (${entry.profile.kind})${run.spec.hostNetwork ? " · host network" : ""}`,
+    );
+    return h;
   }
 
   private async ensureImage(run: Run, dirs: RunDirs): Promise<string> {
@@ -359,7 +474,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       mounts,
       env,
       workdir,
-      network: s.network,
+      network: !s.network ? "none" : s.hostNetwork ? "host" : "bridge",
       user,
     };
   }
@@ -369,14 +484,14 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     const ctl = this.active.get(id) ?? {};
     this.active.set(id, ctl);
     const dirs = this.dirs(id);
-    const logs = docker.followLogs(containerId, dirs.log, append);
-    ctl.logs = logs;
-    const drained = new Promise<boolean>((r) => logs.once("close", () => r(true)));
+    const logs = docker.followLogs(containerId, dirs.log, append, this.redactor());
+    ctl.logs = logs.proc;
+    const drained = logs.done.then(() => true);
     const exitCode = await docker.waitContainer(containerId);
     // Evidence first: let the log follower reach EOF before the container is removed.
     const complete = await Promise.race([drained, sleep(LOG_DRAIN_TIMEOUT_MS).then(() => false)]);
     if (!complete) {
-      logs.kill();
+      logs.proc.kill();
       appendFileSync(dirs.log, "\n[orbit] log collection timed out; log may be truncated\n");
       this.store.addEvent(id, "log", "log collection timed out; log may be truncated");
     }
@@ -411,12 +526,29 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   ): Promise<Run> {
     run.state = state;
     run.exitCode = exitCode;
-    run.reason = reason;
+    run.reason = reason === null ? null : this.redactor().apply(reason);
     run.endedAt = nowIso();
-    this.save(run, state, reason ?? (exitCode !== null ? `exit code ${exitCode}` : state));
+    if (run.spec.auth) this.finishAuth(run);
+    this.save(run, state, run.reason ?? (exitCode !== null ? `exit code ${exitCode}` : state));
     await this.cleanup(run);
     void this.tick();
     return this.mustGet(run.id);
+  }
+
+  /** Remove credential files from the Agent home; keep a refreshed Codex login. */
+  private finishAuth(run: Run): void {
+    const name = run.spec.auth as string;
+    const entry = this.deps.auth?.get(name) ?? null;
+    const { refreshed } = finishHarness(entry, this.dirs(run.id).agent);
+    if (refreshed) {
+      this.deps.auth?.updateSecret(name, refreshed);
+      this.store.addEvent(run.id, "auth", `refreshed login saved to profile ${name}`);
+    }
+  }
+
+  /** Redacts every stored secret; rebuilt per use so new or changed profiles are covered. */
+  redactor(): Redactor {
+    return new Redactor(this.deps.auth?.allSecrets() ?? []);
   }
 
   private async cleanup(run: Run): Promise<void> {
@@ -487,6 +619,11 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
 }
 
 const containerName = (runId: string) => `orbit-${runId}`;
+
+interface Control {
+  cancel?: "cancel" | "timeout";
+  logs?: { kill(): unknown };
+}
 
 export class UserError extends Error {}
 export class NotFoundError extends Error {}

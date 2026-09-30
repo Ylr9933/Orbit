@@ -27,6 +27,11 @@ orbit wait -g lr                      # block until done; exit 1 if any run did 
 orbit logs <id> [-f] [--tail BYTES]
 orbit show <id> | cancel <id> | note <id> "text"
 orbit web [id]                        # open the local Web UI
+
+orbit auth add claude --harness claude-code --kind relay --from-env   # agent credentials
+orbit auth test claude                # a real run: the agent in a container must answer
+orbit run --auth claude --image python:3.12-slim -- claude -p --dangerously-skip-permissions "…"
+orbit notify add team --kind feishu --url-env FEISHU_HOOK --on failed,group
 ```
 
 Options go before `--`; the command after it runs in `/workspace`, a snapshot of the current git
@@ -35,6 +40,10 @@ repository (including uncommitted changes). Experiments write metrics as JSON li
 
 State lives in `~/.orbit` (override with `ORBIT_HOME`). The daemon starts automatically, listens on
 `127.0.0.1:7717` (`ORBIT_PORT`) and writes its endpoint and token to `~/.orbit/daemon.json` (0600).
+
+Auth profiles (`login`, `api-key`, `relay` for Codex and Claude Code) live in `~/.orbit/auth.json`
+(0600). Secrets are read from stdin, an environment variable or a file, never from argv; logs are
+redacted. Notifications (Feishu, DingTalk, WeCom, Slack, webhook) live in `~/.orbit/notify.json`.
 
 ## Agents
 

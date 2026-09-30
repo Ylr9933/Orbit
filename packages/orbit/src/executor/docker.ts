@@ -1,8 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { openSync, readdirSync, readFileSync } from "node:fs";
+import { createWriteStream, openSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { exec } from "../lib/exec.ts";
+import type { Redactor } from "../lib/redact.ts";
 
 export const LABEL_RUN = "orbit.run";
 export const LABEL_HOME = "orbit.home";
@@ -43,9 +44,11 @@ export interface ContainerSpec {
   mounts: { source: string; target: string; mode: "ro" | "rw" }[];
   env: Record<string, string>;
   workdir: string;
-  network: boolean;
+  network: "bridge" | "host" | "none";
   /** `uid:gid`, or null for the image default user. */
   user: string | null;
+  /** Private `KEY=VALUE` file for secret variables, so they never appear in argv. */
+  envFile?: string;
 }
 
 export interface ContainerStatus {
@@ -74,7 +77,8 @@ export function runArgs(s: ContainerSpec): string[] {
     );
   }
   for (const [k, v] of Object.entries(s.env)) args.push("-e", `${k}=${v}`);
-  if (!s.network) args.push("--network", "none");
+  if (s.envFile) args.push("--env-file", s.envFile);
+  if (s.network !== "bridge") args.push("--network", s.network);
   if (s.user) args.push("--user", s.user);
   args.push("-w", s.workdir, s.image, ...s.command);
   return args;
@@ -96,6 +100,24 @@ export function dockerfileTag(dockerfile: string, project: string): string {
 
 export async function imageExists(image: string): Promise<boolean> {
   return (await docker(["image", "inspect", "--format", "{{.Id}}", image])).code === 0;
+}
+
+/** The image's configured `PATH`, or null when it sets none. */
+export async function imagePath(image: string): Promise<string | null> {
+  const r = await docker(["image", "inspect", "--format", "{{json .Config.Env}}", image]);
+  if (r.code !== 0) return null;
+  const env = (JSON.parse(r.stdout || "null") as string[] | null) ?? [];
+  return env.find((e) => e.startsWith("PATH="))?.slice(5) ?? null;
+}
+
+/** `docker run --env-file` content. Values cannot span lines in that format. */
+export function envFileText(env: Record<string, string>): string {
+  return Object.entries(env)
+    .map(([k, v]) => {
+      if (/[\r\n]/.test(v)) throw new Error(`environment value of ${k} must be a single line`);
+      return `${k}=${v}\n`;
+    })
+    .join("");
 }
 
 /** `docker build`, streaming output to `logFile`. Resolves with the exit code. */
@@ -147,10 +169,36 @@ export async function waitContainer(id: string): Promise<number> {
   return r.code === 0 && Number.isFinite(code) ? code : -1;
 }
 
-/** Follow container logs (stdout + stderr) into `logFile` from the beginning, until EOF. */
-export function followLogs(id: string, logFile: string, append: boolean): ChildProcess {
-  const fd = openSync(logFile, append ? "a" : "w");
-  return spawn("docker", ["logs", "-f", id], { stdio: ["ignore", fd, fd] });
+export interface LogFollower {
+  proc: ChildProcess;
+  /** Resolves once the logs reached EOF and are written. */
+  done: Promise<void>;
+}
+
+/**
+ * Follow container logs (stdout + stderr) into `logFile` from the beginning, until EOF. With a
+ * redactor, known secrets are replaced before anything is written.
+ */
+export function followLogs(
+  id: string,
+  logFile: string,
+  append: boolean,
+  redactor?: Redactor,
+): LogFollower {
+  if (!redactor || redactor.empty) {
+    const fd = openSync(logFile, append ? "a" : "w");
+    const proc = spawn("docker", ["logs", "-f", id], { stdio: ["ignore", fd, fd] });
+    return { proc, done: new Promise((r) => proc.once("close", () => r())) };
+  }
+  const proc = spawn("docker", ["logs", "-f", id], { stdio: ["ignore", "pipe", "pipe"] });
+  const out = createWriteStream(logFile, { flags: append ? "a" : "w" });
+  const filter = redactor.stream();
+  filter.pipe(out);
+  proc.stdout?.pipe(filter, { end: false });
+  proc.stderr?.pipe(filter, { end: false });
+  const done = new Promise<void>((r) => out.once("close", () => r()));
+  proc.once("close", () => filter.end());
+  return { proc, done };
 }
 
 export async function stopContainer(id: string, graceSec = 10): Promise<void> {

@@ -1,9 +1,12 @@
-import type { z } from "zod";
+import { z } from "zod";
 import { type DaemonInfo, readDaemonInfo } from "../config/daemon-info.ts";
 import type { OrbitPaths } from "../config/paths.ts";
 import {
   API_PREFIX,
   Artifacts,
+  AuthProfile,
+  type AuthProfileInput,
+  AuthTestResult,
   CodeDiff,
   DoctorReport,
   Health,
@@ -11,6 +14,8 @@ import {
   LogChunk,
   Metrics,
   NodeResources,
+  NotifyTarget,
+  type NotifyTargetInput,
   Run,
   RunEvents,
   RunList,
@@ -18,6 +23,8 @@ import {
   type RunState,
   SessionTranscript,
 } from "../contracts/index.ts";
+
+const Ok = z.object({ ok: z.boolean() });
 
 export class ApiError extends Error {
   readonly status: number;
@@ -84,6 +91,24 @@ export class OrbitClient {
   artifacts = (id: string) => this.call(Artifacts, `/runs/${enc(id)}/artifacts`);
   diff = (id: string) => this.call(CodeDiff, `/runs/${enc(id)}/diff`);
   session = (id: string) => this.call(SessionTranscript, `/runs/${enc(id)}/session`);
+
+  authList = () =>
+    this.call(z.object({ profiles: z.array(AuthProfile) }), "/auth").then((r) => r.profiles);
+  authPut = (p: AuthProfileInput) => this.call(AuthProfile, "/auth", { method: "POST", body: p });
+  authRemove = (name: string) => this.call(Ok, `/auth/${enc(name)}`, { method: "DELETE" });
+  authTest = (name: string, image?: string) =>
+    this.call(AuthTestResult, `/auth/${enc(name)}/test`, {
+      method: "POST",
+      body: { image },
+      timeoutMs: 15 * 60_000,
+    });
+
+  notifyList = () =>
+    this.call(z.object({ targets: z.array(NotifyTarget) }), "/notify").then((r) => r.targets);
+  notifyPut = (t: NotifyTargetInput) =>
+    this.call(NotifyTarget, "/notify", { method: "POST", body: t });
+  notifyRemove = (name: string) => this.call(Ok, `/notify/${enc(name)}`, { method: "DELETE" });
+  notifyTest = (name: string) => this.call(Ok, `/notify/${enc(name)}/test`, { method: "POST" });
 }
 
 const enc = encodeURIComponent;

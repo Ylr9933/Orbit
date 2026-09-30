@@ -12,6 +12,12 @@ export interface OrbitPaths {
   daemonFile: string;
   daemonLog: string;
   db: string;
+  /** Auth profiles with their secrets (0600, daemon-owned). */
+  auth: string;
+  /** Notification targets (0600). */
+  notify: string;
+  /** Short-lived private files such as `docker run --env-file` inputs (0700). */
+  tmp: string;
   /** Per-run directories: `runs/<id>/{workspace,orbit/output,orbit/metrics.jsonl,log.txt,code.diff}`. */
   runs: string;
 }
@@ -25,12 +31,16 @@ export function orbitPaths(env: NodeJS.ProcessEnv = process.env): OrbitPaths {
     daemonLog: join(home, "daemon.log"),
     db: join(home, "orbit.db"),
     runs: join(home, "runs"),
+    auth: join(home, "auth.json"),
+    notify: join(home, "notify.json"),
+    tmp: join(home, "tmp"),
   };
 }
 
 export function ensureHome(paths: OrbitPaths): void {
   mkdirSync(paths.home, { recursive: true, mode: 0o700 });
   mkdirSync(paths.runs, { recursive: true });
+  mkdirSync(paths.tmp, { recursive: true, mode: 0o700 });
 }
 
 export interface RunDirs {
@@ -43,6 +53,8 @@ export interface RunDirs {
   metrics: string;
   log: string;
   diff: string;
+  /** Agent CLI homes (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`) under /orbit/agent; kept with the run. */
+  agent: string;
 }
 
 export function runDirs(paths: OrbitPaths, runId: string): RunDirs {
@@ -56,5 +68,6 @@ export function runDirs(paths: OrbitPaths, runId: string): RunDirs {
     metrics: join(orbit, "metrics.jsonl"),
     log: join(root, "log.txt"),
     diff: join(root, "code.diff"),
+    agent: join(orbit, "agent"),
   };
 }

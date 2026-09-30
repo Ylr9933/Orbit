@@ -119,6 +119,8 @@ export function cliCommand(r: Run): string {
   for (const m of s.mounts) a.push("-m", `${m.source}:${m.target}${m.mode === "rw" ? ":rw" : ""}`);
   for (const [k, v] of Object.entries(s.env)) a.push("-e", `${k}=${v}`);
   if (!s.network) a.push("--no-network");
+  else if (s.hostNetwork) a.push("--host-network");
+  if (s.auth) a.push("--auth", s.auth);
   if (!s.snapshot) a.push("--no-snapshot");
   if (s.root) a.push("--root");
   if (s.timeoutMin) a.push("--timeout", String(s.timeoutMin));
