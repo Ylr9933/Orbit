@@ -24,11 +24,23 @@ describe("detectAgent", () => {
       sessionId: "abc",
       cwd: "/p",
     });
-    expect(detectAgent({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s1" }, "/p")).toEqual({
+    expect(detectAgent({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s1" }, "/p", [])).toEqual({
       harness: "claude-code",
       sessionId: "s1",
       cwd: "/p",
     });
+  });
+
+  it("lets the nearest agent process win when agents are nested", () => {
+    const env = { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s1", CODEX_THREAD_ID: "t1" };
+    expect(detectAgent(env, "/p", ["bash", "codex", "node", "claude"])).toEqual({
+      harness: "codex",
+      sessionId: "t1",
+      cwd: "/p",
+    });
+    expect(detectAgent(env, "/p", ["bash", "claude", "codex"])?.harness).toBe("claude-code");
+    expect(detectAgent({ CODEX_THREAD_ID: "t1" }, "/p", [])?.sessionId).toBe("t1");
+    expect(detectAgent({}, "/p", ["bash"])).toBeUndefined();
   });
 });
 

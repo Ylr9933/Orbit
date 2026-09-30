@@ -38,4 +38,19 @@ describe("daemon", () => {
     const res = await fetch(`${daemon.url}/api/v1/health`);
     expect(res.status).toBe(401);
   });
+
+  it("logs the browser in with a cookie and only redirects to local paths", async () => {
+    const token = readDaemonInfo(paths)?.token ?? "";
+    const login = (next: string) =>
+      fetch(`${daemon.url}/login?token=${token}&next=${encodeURIComponent(next)}`, {
+        redirect: "manual",
+      });
+    const ok = await login("/runs/x?tab=logs");
+    expect(ok.headers.get("location")).toBe("/runs/x?tab=logs");
+    const cookie = ok.headers.get("set-cookie")?.split(";")[0] ?? "";
+    expect(cookie).toContain("orbit_token=");
+    expect((await fetch(`${daemon.url}/api/v1/health`, { headers: { cookie } })).status).toBe(200);
+    expect((await login("//evil.example")).headers.get("location")).toBe("/");
+    expect((await login("https://evil.example")).headers.get("location")).toBe("/");
+  });
 });

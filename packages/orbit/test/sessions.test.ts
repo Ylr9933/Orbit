@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  codexCallText,
+  codexOutputText,
   findCodexSession,
   loadTranscript,
   parseClaude,
@@ -83,5 +85,30 @@ describe("codex transcripts", () => {
       "tool_call/shell",
       "tool_result/shell",
     ]);
+  });
+
+  it("unwraps the JS exec tool of newer Codex versions", () => {
+    const js =
+      'await Promise.all([tools.exec_command({cmd:"orbit ps -g \\"a b\\"",max:1}), tools.exec_command({ cmd: "ls" })])';
+    expect(codexCallText(js)).toBe('$ orbit ps -g "a b"\n$ ls');
+    expect(codexCallText("print(1)")).toBe("print(1)");
+    const out = [
+      { type: "input_text", text: "Script completed" },
+      {
+        type: "input_text",
+        text: JSON.stringify({ i: 0, value: { exit_code: 0, output: "ok\n" } }),
+      },
+      {
+        type: "input_text",
+        text: JSON.stringify({ i: 1, value: { exit_code: 2, output: "bad" } }),
+      },
+    ];
+    expect(codexOutputText(out)).toBe("Script completed\nok\n\n[exit 2]\nbad");
+    expect(codexOutputText({ content: "x" })).toBe("x");
+    const bare = {
+      type: "input_text",
+      text: JSON.stringify({ chunk_id: "c", exit_code: 0, output: "[]" }),
+    };
+    expect(codexOutputText([bare])).toBe("[]");
   });
 });

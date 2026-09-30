@@ -103,6 +103,19 @@ export function createApp(deps: AppDeps): Hono {
     return c.json(await readLog(runs.dirs(run.id).log, offset, limit, isTerminal(run.state)));
   });
 
+  /** The whole combined log as plain text (for download). */
+  api.get("/runs/:id/log.txt", async (c) => {
+    const run = must(runs.get(c.req.param("id")));
+    const file = runs.dirs(run.id).log;
+    const st = await stat(file).catch(() => null);
+    if (!st) return c.text("");
+    c.header("content-type", "text/plain; charset=utf-8");
+    c.header("content-length", String(st.size));
+    if (c.req.query("download"))
+      c.header("content-disposition", `attachment; filename="${run.id}.log"`);
+    return c.body(Readable.toWeb(createReadStream(file)) as ReadableStream);
+  });
+
   api.get("/runs/:id/metrics", async (c) => {
     const run = must(runs.get(c.req.param("id")));
     return c.json(await readMetrics(runs.dirs(run.id).metrics));
@@ -158,7 +171,9 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/login", (c) => {
     if (c.req.query("token") !== deps.token) return c.text("invalid token; run `orbit web`", 401);
     setCookie(c, COOKIE, deps.token, { httpOnly: true, sameSite: "Strict", path: "/" });
-    return c.redirect("/");
+    // Only same-origin paths, so the login link cannot redirect elsewhere.
+    const next = c.req.query("next") ?? "/";
+    return c.redirect(/^\/(?![/\\])/.test(next) ? next : "/");
   });
   if (deps.webDir && existsSync(deps.webDir)) {
     const root = deps.webDir;

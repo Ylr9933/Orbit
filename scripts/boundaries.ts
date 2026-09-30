@@ -1,5 +1,5 @@
 // Enforces the module dependency table in docs/design.md §3.
-// Usage: node scripts/boundaries.ts [srcDir]
+// Usage: node scripts/boundaries.ts [srcDir [webSrcDir]]
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
@@ -78,6 +78,30 @@ export function checkFile(srcDir: string, file: string, text: string): Violation
   return out;
 }
 
+const PKG_IMPORT_RE =
+  /(?:^|[\s;])(import|export)(\s+type)?\s[^;]*?from\s+["'](@zjunlp\/orbit[^"']*)["']/g;
+
+/** The Web bundle may use the daemon's contracts as types only (no zod, no Node code). */
+export function checkWebFile(srcDir: string, file: string, text: string): Violation[] {
+  const out: Violation[] = [];
+  for (const m of text.matchAll(IMPORT_RE)) {
+    const spec = m[1] ?? m[2];
+    if (!spec?.startsWith(".")) continue;
+    if (relative(srcDir, resolve(dirname(file), spec)).startsWith("..")) {
+      const line = text.slice(0, m.index).split("\n").length;
+      out.push({ file, line, message: `web imports outside its src: ${spec}` });
+    }
+  }
+  for (const m of text.matchAll(PKG_IMPORT_RE)) {
+    const line = text.slice(0, m.index).split("\n").length;
+    if (m[3] !== "@zjunlp/orbit/contracts")
+      out.push({ file, line, message: `web may only import @zjunlp/orbit/contracts: ${m[3]}` });
+    else if (!m[2])
+      out.push({ file, line, message: "web must import contracts with `import type`" });
+  }
+  return out;
+}
+
 function walk(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = join(dir, e.name);
@@ -86,15 +110,18 @@ function walk(dir: string): string[] {
   });
 }
 
-export function checkDir(srcDir: string): Violation[] {
-  return walk(srcDir).flatMap((f) => checkFile(srcDir, f, readFileSync(f, "utf8")));
+export function checkDir(srcDir: string, check = checkFile): Violation[] {
+  return walk(srcDir).flatMap((f) => check(srcDir, f, readFileSync(f, "utf8")));
 }
 
 if (import.meta.main) {
   const srcDir = resolve(process.argv[2] ?? "packages/orbit/src");
-  const violations = checkDir(srcDir);
+  const webDir = resolve(process.argv[3] ?? "packages/web/src");
+  const violations = [...checkDir(srcDir), ...checkDir(webDir, checkWebFile)];
   for (const v of violations)
     console.error(`${relative(process.cwd(), v.file)}:${v.line} ${v.message}`);
   if (violations.length > 0) process.exit(1);
-  console.log(`boundaries ok (${srcDir})`);
+  console.log(
+    `boundaries ok (${relative(process.cwd(), srcDir)}, ${relative(process.cwd(), webDir)})`,
+  );
 }

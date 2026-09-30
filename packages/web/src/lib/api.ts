@@ -1,0 +1,81 @@
+// Typed fetch helpers for the daemon API. Types come from the shared contracts (type-only import,
+// so zod is not bundled); the daemon validates, the Web trusts its own daemon.
+import type {
+  Artifacts,
+  DoctorReport,
+  Ledger,
+  LogChunk,
+  Metrics,
+  Run,
+  RunEvent,
+  SessionTranscript,
+} from "@zjunlp/orbit/contracts";
+
+export type {
+  Artifacts,
+  CodeSnapshot,
+  Gpu,
+  Lease,
+  Ledger,
+  LogChunk,
+  Metrics,
+  Run,
+  RunEvent,
+  RunState,
+  SessionMessage,
+  SessionTranscript,
+} from "@zjunlp/orbit/contracts";
+
+export const API = "/api/v1";
+
+export class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** Set when any request returns 401; the shell then shows the login hint. */
+export const authState = { unauthorized: false, listeners: new Set<() => void>() };
+
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(API + path, {
+    ...init,
+    headers: { "content-type": "application/json", ...init?.headers },
+  });
+  if (res.status === 401) {
+    authState.unauthorized = true;
+    for (const l of authState.listeners) l();
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new HttpError(res.status, body?.error ?? res.statusText);
+  }
+  return (await res.json()) as T;
+}
+
+const enc = encodeURIComponent;
+
+export const api = {
+  runs: (limit = 1000) => req<{ runs: Run[] }>(`/runs?limit=${limit}`).then((r) => r.runs),
+  run: (id: string) => req<Run>(`/runs/${enc(id)}`),
+  cancel: (id: string) => req<Run>(`/runs/${enc(id)}/cancel`, { method: "POST" }),
+  note: (id: string, note: string) =>
+    req<Run>(`/runs/${enc(id)}/note`, { method: "PUT", body: JSON.stringify({ note }) }),
+  events: (id: string) =>
+    req<{ events: RunEvent[] }>(`/runs/${enc(id)}/events`).then((r) => r.events),
+  logs: (id: string, offset: number, limit = 1024 * 1024) =>
+    req<LogChunk>(`/runs/${enc(id)}/logs?offset=${offset}&limit=${limit}`),
+  metrics: (id: string) => req<Metrics>(`/runs/${enc(id)}/metrics`),
+  artifacts: (id: string) => req<Artifacts>(`/runs/${enc(id)}/artifacts`),
+  diff: (id: string) => req<{ patch: string; truncated: boolean }>(`/runs/${enc(id)}/diff`),
+  session: (id: string) => req<SessionTranscript>(`/runs/${enc(id)}/session`),
+  ledger: () => req<Ledger>("/ledger"),
+  doctor: () => req<DoctorReport>("/doctor"),
+};
+
+export const fileUrl = (id: string, path: string, download = false) =>
+  `${API}/runs/${enc(id)}/files/${path.split("/").map(enc).join("/")}${download ? "?download=1" : ""}`;
+export const logUrl = (id: string, download = false) =>
+  `${API}/runs/${enc(id)}/log.txt${download ? "?download=1" : ""}`;

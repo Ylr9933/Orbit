@@ -1,0 +1,11 @@
+{
+  "name": "orbit",
+  "owner": { "name": "ZJUNLP" },
+  "plugins": [
+    {
+      "name": "orbit",
+      "source": "./plugin",
+      "description": "Run and record experiments with Orbit"
+    }
+  ]
+}

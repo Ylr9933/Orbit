@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkDir, checkFile } from "./boundaries.ts";
+import { checkDir, checkFile, checkWebFile } from "./boundaries.ts";
 
 const src = "/x/src";
 const check = (file: string, text: string) => checkFile(src, `${src}/${file}`, text);
@@ -26,7 +26,20 @@ describe("boundaries", () => {
     expect(check("cli/a.ts", 'import { b } from "../bin.ts";')[0]?.message).toContain("roots");
   });
 
+  it("keeps the web bundle on type-only contracts", () => {
+    const web = (text: string) => checkWebFile("/w/src", "/w/src/pages/a.tsx", text);
+    expect(web('import type { Run } from "@zjunlp/orbit/contracts";')).toEqual([]);
+    expect(web('import { Run } from "@zjunlp/orbit/contracts";')[0]?.message).toContain(
+      "import type",
+    );
+    expect(web('import type { X } from "@zjunlp/orbit/src/runs/service.ts";')).toHaveLength(1);
+    expect(web('import { y } from "../../../orbit/src/lib/ids.ts";')[0]?.message).toContain(
+      "outside",
+    );
+  });
+
   it("passes on the real source tree", () => {
     expect(checkDir(resolve(import.meta.dirname, "../packages/orbit/src"))).toEqual([]);
+    expect(checkDir(resolve(import.meta.dirname, "../packages/web/src"), checkWebFile)).toEqual([]);
   });
 });

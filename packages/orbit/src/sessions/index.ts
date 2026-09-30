@@ -165,6 +165,43 @@ export async function findCodexSession(
   return null;
 }
 
+/**
+ * Newer Codex versions call tools through a JS `exec` tool (`tools.exec_command({cmd:"..."})`).
+ * Show the shell commands it ran instead of the script when they can be extracted.
+ */
+export function codexCallText(input: string): string {
+  const cmds: string[] = [];
+  for (const m of input.matchAll(/\bcmd\s*:\s*("(?:[^"\\]|\\.)*")/g)) {
+    try {
+      cmds.push(`$ ${JSON.parse(m[1] as string)}`);
+    } catch {}
+  }
+  return cmds.length ? cmds.join("\n") : input;
+}
+
+/** Tool output as text: content-part arrays are joined, `exec_command` results unwrapped. */
+export function codexOutputText(o: unknown): string {
+  if (typeof o === "object" && o && !Array.isArray(o) && "content" in o) {
+    return codexOutputText((o as { content: unknown }).content);
+  }
+  if (!Array.isArray(o)) return str(o);
+  return o
+    .map((part: { text?: unknown }) => {
+      const text = typeof part?.text === "string" ? part.text : str(part);
+      try {
+        type Result = { output?: unknown; exit_code?: unknown };
+        const v = JSON.parse(text) as Result & { value?: Result };
+        const r = v?.value ?? v;
+        if (typeof r?.output === "string") {
+          const code = r.exit_code;
+          return code === 0 || code === undefined ? r.output : `[exit ${code}]\n${r.output}`;
+        }
+      } catch {}
+      return text;
+    })
+    .join("\n");
+}
+
 export async function parseCodex(file: string): Promise<SessionMessage[]> {
   const out: SessionMessage[] = [];
   const callNames = new Map<string, string>();
@@ -193,17 +230,18 @@ export async function parseCodex(file: string): Promise<SessionMessage[]> {
           role: "assistant",
           kind: "tool_call",
           name,
-          ...clip(str(p.arguments ?? p.input), MAX_TOOL_TEXT),
+          ...clip(
+            p.type === "custom_tool_call" && typeof p.input === "string"
+              ? codexCallText(p.input)
+              : str(p.arguments ?? p.input),
+            MAX_TOOL_TEXT,
+          ),
         });
         break;
       }
       case "function_call_output":
       case "custom_tool_call_output": {
-        const o = p.output as unknown;
-        const text =
-          typeof o === "object" && o && "content" in o
-            ? str((o as { content: unknown }).content)
-            : str(o);
+        const text = codexOutputText(p.output);
         const name = typeof p.call_id === "string" ? callNames.get(p.call_id) : undefined;
         out.push({ at, role: "tool", kind: "tool_result", name, ...clip(text, MAX_TOOL_TEXT) });
         break;

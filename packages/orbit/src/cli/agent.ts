@@ -21,23 +21,35 @@ function ancestors(max = 12): string[] {
 
 /**
  * Identify the coding agent that invoked the CLI, so runs link to its session transcript.
- * `ORBIT_AGENT=<harness>[:<sessionId>]` overrides detection.
+ * `ORBIT_AGENT=<harness>[:<sessionId>]` overrides detection. When agents are nested (Claude Code
+ * starting Codex or vice versa) the child inherits the parent's variables, so the nearest agent
+ * process among the ancestors decides; environment variables are the fallback.
  */
 export function detectAgent(
   env: NodeJS.ProcessEnv = process.env,
   cwd = process.cwd(),
+  parents: string[] = ancestors(),
 ): AgentRef | undefined {
   if (env.ORBIT_AGENT) {
     const [h, sessionId] = env.ORBIT_AGENT.split(":", 2);
     const harness = h === "claude-code" || h === "codex" ? h : "other";
     return { harness, sessionId: sessionId || undefined, cwd };
   }
-  if (env.CLAUDECODE === "1" || env.CLAUDE_CODE_SESSION_ID) {
-    return { harness: "claude-code", sessionId: env.CLAUDE_CODE_SESSION_ID || undefined, cwd };
+  const claude = env.CLAUDECODE === "1" || !!env.CLAUDE_CODE_SESSION_ID;
+  const codexId = env.CODEX_THREAD_ID || env.CODEX_SESSION_ID;
+  const nearest = parents.find((n) => n === "claude" || n.startsWith("codex"));
+  const harness = nearest
+    ? nearest === "claude"
+      ? "claude-code"
+      : "codex"
+    : claude
+      ? "claude-code"
+      : codexId
+        ? "codex"
+        : undefined;
+  if (harness === "claude-code") {
+    return { harness, sessionId: env.CLAUDE_CODE_SESSION_ID || undefined, cwd };
   }
-  const codexId = env.CODEX_SESSION_ID || env.CODEX_THREAD_ID;
-  if (codexId || ancestors().some((n) => n.startsWith("codex"))) {
-    return { harness: "codex", sessionId: codexId || undefined, cwd };
-  }
+  if (harness === "codex") return { harness, sessionId: codexId || undefined, cwd };
   return undefined;
 }

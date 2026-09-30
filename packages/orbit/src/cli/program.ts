@@ -310,11 +310,15 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
   program
     .command("wait")
     .description("wait for runs to finish; exits 1 if any did not succeed")
-    .argument("<ids...>")
+    .argument("[ids...]")
+    .option("-g, --group <group>", "wait for every run in this group")
     .option("--json", "print JSON")
-    .action(async (ids: string[], o: { json?: boolean }) =>
-      waitAll(await client(), ids, Boolean(o.json)),
-    );
+    .action(async (ids: string[], o: { group?: string; json?: boolean }) => {
+      const c = await client();
+      if (o.group) ids = [...ids, ...(await c.list({ group: o.group })).map((r) => r.id)];
+      if (ids.length === 0) throw new Error("give run ids or --group");
+      await waitAll(c, [...new Set(ids)], Boolean(o.json));
+    });
 
   program
     .command("cancel")
@@ -361,12 +365,13 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
     });
 
   program
-    .command("web")
-    .description("print the local Web UI login URL")
+    .command("web [id]")
+    .description("print the local Web UI login URL (optionally deep-linked to a run)")
     .addOption(new Option("--open", "open it in the default browser"))
-    .action(async (o: { open?: boolean }) => {
+    .action(async (id: string | undefined, o: { open?: boolean }) => {
       const c = await client();
-      const url = `${c.info.url}/login?token=${c.info.token}`;
+      const next = id ? `&next=${encodeURIComponent(`/runs/${id}`)}` : "";
+      const url = `${c.info.url}/login?token=${c.info.token}${next}`;
       console.log(url);
       if (o.open)
         spawn("xdg-open", [url], { detached: true, stdio: "ignore" })

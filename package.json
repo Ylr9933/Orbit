@@ -11,7 +11,7 @@
     "check:boundaries": "node scripts/boundaries.ts",
     "format": "biome check --write .",
     "test": "vitest run --dir scripts && pnpm -r test",
-    "build": "pnpm -r build",
+    "build": "pnpm --filter @zjunlp/orbit-web build && pnpm --filter @zjunlp/orbit build",
     "verify": "pnpm check && pnpm test && pnpm build",
     "orbit": "node packages/orbit/src/bin.ts"
   },

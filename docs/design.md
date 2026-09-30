@@ -1,6 +1,6 @@
 # Orbit 设计
 
-状态：R0 已确定的目标设计。实现进度见 [status.md](status.md)。本文是架构与接口的唯一权威来源；
+状态：R0 已确定的目标设计；R1（单机科研闭环）已按本文实现。实现进度见 [status.md](status.md)。本文是架构与接口的唯一权威来源；
 改变模块边界、公共契约或关键决策时，在同一分支更新本文。
 
 ## 1. 定位
@@ -59,8 +59,9 @@ packages/orbit/src/
   cli/         commander commands; talks to daemon through client only
   mcp/         MCP tools; talks to daemon through client only
   bin.ts       composition root of the `orbit` executable (wires cli + daemon); nothing imports it
-packages/web/  React SPA; imports contracts only
-plugin/        skills and hooks for Codex / Claude Code
+packages/web/  React SPA (Vite, uPlot); imports `@zjunlp/orbit/contracts` types only; built into
+               packages/orbit/dist/web and served by the daemon
+plugin/        skills/orbit/SKILL.md for Codex / Claude Code (+ .claude-plugin manifest)
 ```
 
 规则（由 `pnpm check:boundaries` 强制，定义在 `scripts/boundaries.ts`）：
@@ -78,11 +79,12 @@ plugin/        skills and hooks for Codex / Claude Code
 | daemon | 除 cli/mcp/client 外全部 |
 | client | contracts, lib, config |
 | cli, mcp | client, contracts, lib, config |
+| web (`packages/web/src`) | 自身文件；`@zjunlp/orbit` 只能 `import type` 自 `@zjunlp/orbit/contracts` |
 
 - **daemon 是本机状态的唯一写者**。CLI/MCP/Web 只通过 HTTP API 访问；CLI 需要时自动拉起 daemon。
-  daemon 只监听 `127.0.0.1`（默认端口 7717），启动时生成随机 token，与地址一起写入
-  `~/.orbit/daemon.json`（0600）；所有 `/api/v1` 请求需 `Authorization: Bearer <token>`。
-  `ORBIT_HOME` 可覆盖 `~/.orbit`。
+  daemon 只监听 `127.0.0.1`（默认端口 7717，`ORBIT_PORT` 可改），启动时生成随机 token，与地址一起写入
+  `~/.orbit/daemon.json`（0600）；所有 `/api/v1` 请求需 `Authorization: Bearer <token>` 或 Web 登录后的
+  HttpOnly cookie。`ORBIT_HOME` 可覆盖 `~/.orbit`。
 - `src/` 根目录下的文件（如 `bin.ts`）是组合根，可引用任意模块，但不能被模块引用。
 - 同类能力只有一份实现：一个 Run 状态机、一个资源账本、一个记录库。
 - Docker、sqlite 句柄不出现在 contracts 中。
@@ -123,9 +125,35 @@ createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage{peakGpuMem, pea
 **代码快照**：记录 `HEAD` commit、未提交 diff 与未跟踪文件列表；复制 `git ls-files -co --exclude-standard`
 的文件到快照目录。数据和权重不进快照，用命名 dataset 只读挂载。
 
+**容器**：GPU 优先用 CDI（`--device nvidia.com/gpu=<UUID>`，检测到 `/etc/cdi` 或 `/var/run/cdi` 中的
+NVIDIA spec 时），否则 `--gpus device=<UUID>`；启动后核对 `nvidia-smi -L` 与租约一致。默认以宿主用户
+`uid:gid` 运行（产物归属正确），`--root` 例外。每个 Run 的记录目录挂载为 `/orbit`（rw）。
+
+**会话关联**：CLI 提交时识别调用它的 Agent：`ORBIT_AGENT=<harness>[:<id>]` 优先；否则祖先进程中最近的
+`claude` / `codex` 决定 harness（Agent 相互嵌套时子进程会继承父 Agent 的环境变量），会话 ID 取
+`CLAUDE_CODE_SESSION_ID` / `CODEX_THREAD_ID`；Codex 无 ID 时按 cwd 找最近的会话文件。daemon 读取
+`~/.claude/projects/**/<id>.jsonl` 或 `~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`，
+归一为 `SessionMessage`（text / thinking / tool_call / tool_result），Web 标出提交该 Run 的那一步。
+
 **失败也要保留证据**：任何终态都先采集日志与 `$ORBIT_OUTPUT`，再清理容器；日志读到 EOF，截断必须标记。
 
-## 5. 认证（auth）与 harness
+## 5. HTTP API 与 Web
+
+`/api/v1`：`health`、`resources`、`doctor`、`ledger`（资源 + 活动租约 + 排队原因）、`GET/POST runs`、
+`runs/:id`、`runs/:id/{cancel,note,wait,events,logs,log.txt,metrics,artifacts,files/*,diff,session}`、
+`stream`（SSE，Run 变化推送）。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
+`orbit web [id]` 用 token 打开浏览器并定位到 Run。
+
+Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行详情、GitHub 的 diff 视图）：
+
+- **Runs**：按 group 折叠、状态筛选、全文过滤（名称/参数/标签/分支），多选对比，键盘导航。
+- **Run 详情**：Overview（生命周期时间线、清理核对、笔记、指标迷你图、日志尾）、Logs（虚拟列表、ANSI、
+  搜索、跟随）、Metrics（uPlot，平滑、同步十字线）、Artifacts、Code（相对快照 commit 的 diff）、
+  Session（Agent 轨迹，标出提交点）、Events。
+- **Compare**：`?ids=` / `?group=`，按 seed 聚合 mean ± std、相对基线的变化、曲线叠加、配置差异。
+- **Resources**：GPU 卡片（Orbit 租约 / 外部占用 / 空闲、显存与利用率）、租约与队列。
+
+## 6. 认证（auth）与 harness
 
 - **Auth profile**：`{ name, harness, kind: login | api-key | relay, baseUrl?, secretRef }`，保存在
   `~/.orbit/auth.json`（0600）。例：Codex 账号登录（`~/.codex/auth.json`）、OpenAI API key、Claude Code
@@ -135,7 +163,7 @@ createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage{peakGpuMem, pea
 - **Harness**：描述某个 Agent CLI 在容器内如何安装（固定版本）、如何接收认证、如何传入方法包（skills、
   AGENTS.md/CLAUDE.md、MCP 配置）、如何非交互启动、如何解析其会话/轨迹。首批：`codex`、`claude-code`。
 
-## 6. 刷榜（bench）
+## 7. 刷榜（bench）
 
 ```
 AgentProfile = harness + version + model + auth + method bundle (directory)
@@ -153,18 +181,18 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, issues[],
 - **接入验收（任意新 benchmark）**：oracle 满分、空答案零分、抽样与原版结果一致。
 - 首批：ASI（原生包装）→ TerminalBench-Science（Harbor 格式）。
 
-## 7. 多节点（R4）
+## 8. 多节点（R4）
 
 每台机器运行 daemon；Agent 所在节点为主节点，其他节点用 token 加入（Tailscale 或直连）。主节点汇总
 资源并放置 Run；代码快照按内容哈希传输并缓存；数据/权重按"名字 → 节点本地路径"登记，调度只选有数据的
 节点，不自动搬运。日志与指标回传主节点，大产物留在原节点按需读取。不引入 Ray。
 
-## 8. 预留
+## 9. 预留
 
 - 具身：资源类型可扩展为独占设备（如机械臂），executor 可增加设备后端。现在不写代码。
 - 手机监控/对话、Slurm：出现具体需求再设计。
 
-## 9. 路线
+## 10. 路线
 
 | 阶段 | 目标 | 验收 |
 | --- | --- | --- |
@@ -174,7 +202,7 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, issues[],
 | R3 | 刷榜 | ASI 原生包装、TB-Science Harbor 格式在同一 Run/租约上运行；方法对比页面；新 bench 接入指南 |
 | R4 | 多节点 | 一个 Agent 调度两台机器 8 张 GPU |
 
-## 10. 来自 v0（Python 版）的教训
+## 11. 来自 v0（Python 版）的教训
 
 v0 的代码、文档与任务记录保留在标签 `v0-python-final`。
 

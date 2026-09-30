@@ -1,0 +1,295 @@
+import { PALETTE } from "../components/Chart.tsx";
+import { IconAlert, IconChip } from "../components/icons.tsx";
+import { TopBar } from "../components/TopBar.tsx";
+import { Empty, Link, Loading, StateIcon } from "../components/ui.tsx";
+import { api, type Gpu, type Lease, type Run } from "../lib/api.ts";
+import { ago, duration, queuedFor, runTitle } from "../lib/format.ts";
+import { useRuns } from "../lib/runs-store.ts";
+import { useAsync } from "../lib/use.ts";
+
+const pct = (a: number, b: number) => (b > 0 ? Math.min(100, (a / b) * 100) : 0);
+const gib = (mib: number) => (mib / 1024).toFixed(mib >= 10240 ? 0 : 1);
+
+export function Resources() {
+  const ledger = useAsync(() => api.ledger(), [], { poll: true, pollMs: 3000 });
+  const runs = useRuns();
+  const byId = new Map(runs.map((r) => [r.id, r]));
+  const d = ledger.data;
+  if (!d)
+    return ledger.error ? (
+      <Empty title="Could not read resources">{ledger.error}</Empty>
+    ) : (
+      <Loading />
+    );
+
+  const res = d.resources;
+  const active = d.leases.filter((l) => l.state === "active");
+  const owner = new Map<string, Lease>();
+  for (const l of active) for (const g of l.gpuIds) owner.set(g, l);
+  const leaseColor = new Map(active.map((l, i) => [l.id, PALETTE[i % PALETTE.length] as string]));
+  const leasedCpus = active.reduce((a, l) => a + l.cpus, 0);
+  const leasedMem = active.reduce((a, l) => a + l.memGB, 0);
+  const freeGpus = res.gpus.filter((g) => g.available && !owner.has(g.uuid)).length;
+
+  return (
+    <>
+      <TopBar crumbs={[{ label: "Resources" }, { label: res.node }]}>
+        <span className="faint" style={{ fontSize: 12 }}>
+          probed {ago(res.probedAt)} · refreshes every 3 s
+        </span>
+      </TopBar>
+      <div className="page">
+        <div className="page-pad col" style={{ gap: 16 }}>
+          <div className="stats">
+            <Stat
+              v={`${freeGpus} / ${res.gpus.length}`}
+              l="GPUs free"
+              frac={res.gpus.length ? 1 - freeGpus / res.gpus.length : 0}
+            />
+            <Stat
+              v={`${leasedCpus} / ${res.cpu.count}`}
+              l={`CPUs leased · load ${res.cpu.load1.toFixed(1)}`}
+              frac={leasedCpus / res.cpu.count}
+            />
+            <Stat
+              v={`${(res.memory.totalGB - res.memory.availableGB).toFixed(0)} / ${res.memory.totalGB.toFixed(0)} GB`}
+              l={`memory used · ${leasedMem} GB leased`}
+              frac={1 - res.memory.availableGB / res.memory.totalGB}
+            />
+            <Stat
+              v={`${res.disk.freeGB.toFixed(0)} GB`}
+              l={`disk free · ${res.disk.path}`}
+              frac={1 - res.disk.freeGB / res.disk.totalGB}
+            />
+            <Stat v={String(d.queued.length)} l="runs queued" />
+          </div>
+
+          <section className="col" style={{ gap: 8 }}>
+            <h3 className="section-title">GPUs</h3>
+            {res.gpuError && (
+              <div
+                className="callout"
+                style={{ "--c": "var(--st-cancelled)" } as React.CSSProperties}
+              >
+                <IconAlert size={15} /> {res.gpuError}
+              </div>
+            )}
+            {res.gpus.length === 0 ? (
+              <Empty title="No GPUs detected" icon={<IconChip size={28} />} />
+            ) : (
+              <div className="gpus">
+                {res.gpus.map((g) => (
+                  <GpuTile
+                    key={g.uuid}
+                    g={g}
+                    lease={owner.get(g.uuid)}
+                    run={byId.get(owner.get(g.uuid)?.runId ?? "")}
+                    color={leaseColor.get(owner.get(g.uuid)?.id ?? "")}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="card">
+            <div className="card-h">
+              Active leases <span className="sub">{active.length}</span>
+            </div>
+            {active.length === 0 ? (
+              <div className="card-b faint">No active leases.</div>
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Run</th>
+                    <th>GPUs</th>
+                    <th className="r">CPUs</th>
+                    <th className="r">Memory</th>
+                    <th className="r">Held for</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {active.map((l) => {
+                    const r = byId.get(l.runId);
+                    return (
+                      <tr key={l.id}>
+                        <td>
+                          <RunCell id={l.runId} run={r} color={leaseColor.get(l.id)} />
+                        </td>
+                        <td className="mono">
+                          {l.gpuIds
+                            .map((u) => `#${res.gpus.find((g) => g.uuid === u)?.index ?? "?"}`)
+                            .join(" ") || "—"}
+                        </td>
+                        <td className="r num">{l.cpus}</td>
+                        <td className="r num">{l.memGB} GB</td>
+                        <td className="r num muted">
+                          {duration(Date.now() - Date.parse(l.createdAt))}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </section>
+
+          <section className="card">
+            <div className="card-h">
+              Queue <span className="sub">{d.queued.length}</span>
+            </div>
+            {d.queued.length === 0 ? (
+              <div className="card-b faint">
+                Nothing waiting. Runs that cannot get resources wait here instead of failing.
+              </div>
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th style={{ width: 40 }}>#</th>
+                    <th>Run</th>
+                    <th>Requested</th>
+                    <th>Waiting because</th>
+                    <th className="r">Waiting</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.queued.map((q, i) => {
+                    const r = byId.get(q.runId);
+                    const rq = r?.spec.resources;
+                    return (
+                      <tr key={q.runId}>
+                        <td className="faint num">{i + 1}</td>
+                        <td>
+                          <RunCell id={q.runId} run={r} />
+                        </td>
+                        <td className="mono muted">
+                          {rq
+                            ? `${rq.gpus} GPU${rq.gpuMemGB ? ` ≥${rq.gpuMemGB}G` : ""} · ${rq.cpus} CPU · ${rq.memGB} GB`
+                            : "—"}
+                        </td>
+                        <td>{q.reason ?? "—"}</td>
+                        <td className="r num muted">{r ? duration(queuedFor(r)) : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </section>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Stat({ v, l, frac }: { v: string; l: string; frac?: number }) {
+  const f =
+    frac === undefined || !Number.isFinite(frac) ? undefined : Math.max(0, Math.min(1, frac));
+  const c =
+    f === undefined
+      ? undefined
+      : f > 0.9
+        ? "var(--st-failed)"
+        : f > 0.7
+          ? "var(--st-cancelled)"
+          : "var(--accent)";
+  return (
+    <div className="card card-b stat">
+      <span className="v num">{v}</span>
+      <span className="l ellipsis" title={l}>
+        {l}
+      </span>
+      {f !== undefined && (
+        <div className="bar" style={{ marginTop: 6 }}>
+          <span style={{ width: `${f * 100}%`, "--c": c } as React.CSSProperties} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RunCell({ id, run, color }: { id: string; run?: Run; color?: string }) {
+  return (
+    <div className="row" style={{ gap: 8, minWidth: 0 }}>
+      {color && (
+        <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flex: "none" }} />
+      )}
+      {run && <StateIcon state={run.state} size={12} />}
+      <Link href={`/runs/${id}`} className="ellipsis" style={{ color: "var(--text)" }}>
+        {run ? runTitle(run) : id}
+      </Link>
+      <span className="faint mono" style={{ fontSize: 11 }}>
+        {id}
+      </span>
+    </div>
+  );
+}
+
+function GpuTile({ g, lease, run, color }: { g: Gpu; lease?: Lease; run?: Run; color?: string }) {
+  const external = !lease && !g.available;
+  const status = lease ? "leased" : external ? "busy (external)" : "free";
+  const c = lease ? color : external ? "var(--st-cancelled)" : "var(--st-succeeded)";
+  return (
+    <div className="gpu" style={{ "--c": c } as React.CSSProperties}>
+      <div className="row" style={{ gap: 10 }}>
+        <span className="idx">#{g.index}</span>
+        <div className="col" style={{ minWidth: 0, flex: 1 }}>
+          <span className="ellipsis" style={{ fontWeight: 500 }} title={g.name}>
+            {g.name.replace(/^NVIDIA (GeForce )?/, "")}
+          </span>
+          <span className="faint mono ellipsis" style={{ fontSize: 11 }} title={g.uuid}>
+            {g.uuid}
+          </span>
+        </div>
+        <span className="chip" style={{ color: c }}>
+          {status}
+        </span>
+      </div>
+      <div className="col" style={{ gap: 4 }}>
+        <div className="row muted" style={{ fontSize: 12, justifyContent: "space-between" }}>
+          <span>memory</span>
+          <span className="num">
+            {gib(g.memUsedMiB)} / {gib(g.memTotalMiB)} GiB
+          </span>
+        </div>
+        <div className="bar">
+          <span
+            style={
+              {
+                width: `${pct(g.memUsedMiB - g.externalMemMiB, g.memTotalMiB)}%`,
+                "--c": color ?? "var(--accent)",
+              } as React.CSSProperties
+            }
+          />
+          <span
+            style={
+              {
+                width: `${pct(g.externalMemMiB, g.memTotalMiB)}%`,
+                "--c": "var(--st-cancelled)",
+              } as React.CSSProperties
+            }
+          />
+        </div>
+        <div className="row muted" style={{ fontSize: 12, justifyContent: "space-between" }}>
+          <span>utilization</span>
+          <span className="num">{g.utilPct === null ? "—" : `${g.utilPct}%`}</span>
+        </div>
+        <div className="bar">
+          <span style={{ width: `${g.utilPct ?? 0}%` }} />
+        </div>
+      </div>
+      <div style={{ fontSize: 12, minHeight: 18 }}>
+        {lease ? (
+          <RunCell id={lease.runId} run={run} />
+        ) : external ? (
+          <span className="faint">
+            used by a process Orbit does not own ({gib(g.externalMemMiB)} GiB)
+          </span>
+        ) : (
+          <span className="faint">available</span>
+        )}
+      </div>
+    </div>
+  );
+}

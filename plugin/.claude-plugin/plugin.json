@@ -1,0 +1,6 @@
+{
+  "name": "orbit",
+  "version": "0.1.0",
+  "description": "Run experiments in isolated Docker containers with GPU leases, and keep their logs, metrics, outputs and code diff for review.",
+  "author": { "name": "ZJUNLP" }
+}
