@@ -1,0 +1,102 @@
+import { constants } from "node:fs";
+import { copyFile, lstat, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve } from "node:path";
+import type { CodeSnapshot } from "../contracts/index.ts";
+import { exec } from "../lib/exec.ts";
+
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+export const MAX_SNAPSHOT_BYTES = 2 * 1024 ** 3;
+
+async function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
+  const r = await exec("git", ["-C", cwd, ...args], { timeoutMs: 120_000, env });
+  return r;
+}
+
+async function gitOut(cwd: string, args: string[]): Promise<string | null> {
+  const r = await git(cwd, args);
+  return r.code === 0 ? r.stdout.trim() : null;
+}
+
+/**
+ * Copy the working tree of `project`'s repository (tracked + untracked, respecting .gitignore)
+ * into `dest`, and write the full change set relative to HEAD to `diffFile`.
+ * The original repository, its index and its refs are not modified.
+ */
+export async function snapshotProject(
+  project: string,
+  dest: string,
+  diffFile: string,
+): Promise<CodeSnapshot> {
+  const abs = resolve(project);
+  const root = await gitOut(abs, ["rev-parse", "--show-toplevel"]);
+  if (!root) throw new Error(`${abs} is not inside a git repository`);
+  const commit = await gitOut(root, ["rev-parse", "--verify", "-q", "HEAD"]);
+  const branch = commit ? await gitOut(root, ["rev-parse", "--abbrev-ref", "HEAD"]) : null;
+
+  const ls = await git(root, ["ls-files", "-co", "--exclude-standard", "-z"]);
+  if (ls.code !== 0) throw new Error(`git ls-files failed: ${ls.stderr.trim()}`);
+  const files = ls.stdout.split("\0").filter(Boolean);
+
+  let bytes = 0;
+  let fileCount = 0;
+  await mkdir(dest, { recursive: true });
+  for (const f of files) {
+    const src = join(root, f);
+    const st = await lstat(src).catch(() => null);
+    if (!st) continue; // tracked but deleted in the working tree
+    const out = join(dest, f);
+    await mkdir(dirname(out), { recursive: true });
+    if (st.isSymbolicLink()) {
+      await symlink(await readlink(src), out);
+    } else if (st.isFile()) {
+      bytes += st.size;
+      if (bytes > MAX_SNAPSHOT_BYTES) {
+        throw new Error(
+          `snapshot exceeds ${MAX_SNAPSHOT_BYTES / 1024 ** 3} GiB; gitignore data/weights and mount them instead`,
+        );
+      }
+      await copyFile(src, out, constants.COPYFILE_FICLONE);
+    } else continue;
+    fileCount++;
+  }
+
+  // Diff of the whole working tree (including untracked files) against HEAD, via a throwaway index.
+  const tmpIndex = join(tmpdir(), `orbit-index-${process.pid}-${Date.now()}`);
+  const realIndex = await gitOut(root, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-path",
+    "index",
+  ]);
+  if (realIndex) await copyFile(realIndex, tmpIndex).catch(() => undefined);
+  const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
+  try {
+    const add = await git(root, ["add", "-A"], env);
+    if (add.code !== 0) throw new Error(`git add (temp index) failed: ${add.stderr.trim()}`);
+    const diff = await git(
+      root,
+      ["diff", "--cached", "--binary", "--no-color", commit ?? EMPTY_TREE],
+      env,
+    );
+    const names = await git(
+      root,
+      ["diff", "--cached", "--name-only", "-z", commit ?? EMPTY_TREE],
+      env,
+    );
+    await writeFile(diffFile, diff.stdout);
+    const changedFiles = names.stdout.split("\0").filter(Boolean);
+    return {
+      repo: root,
+      subdir: relative(root, abs),
+      commit,
+      branch,
+      dirty: changedFiles.length > 0,
+      changedFiles,
+      fileCount,
+      bytes,
+    };
+  } finally {
+    await rm(tmpIndex, { force: true });
+  }
+}

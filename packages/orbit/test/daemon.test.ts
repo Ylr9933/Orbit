@@ -12,7 +12,7 @@ const paths = orbitPaths({ ORBIT_HOME: home });
 let daemon: StartedDaemon;
 
 beforeAll(async () => {
-  daemon = await startDaemon(paths, 0);
+  daemon = await startDaemon(paths, { port: 0, tickMs: 200 });
 });
 afterAll(async () => {
   await daemon.stop();

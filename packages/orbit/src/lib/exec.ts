@@ -10,13 +10,19 @@ export interface ExecResult {
 export function exec(
   cmd: string,
   args: string[],
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; env?: NodeJS.ProcessEnv; cwd?: string } = {},
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
     execFile(
       cmd,
       args,
-      { timeout: opts.timeoutMs ?? 15_000, maxBuffer: 16 * 1024 * 1024, encoding: "utf8" },
+      {
+        timeout: opts.timeoutMs ?? 15_000,
+        maxBuffer: 256 * 1024 * 1024,
+        encoding: "utf8",
+        env: opts.env,
+        cwd: opts.cwd,
+      },
       (err, stdout, stderr) => {
         if (!err) return resolve({ code: 0, stdout, stderr });
         const e = err as NodeJS.ErrnoException & { code?: number | string };

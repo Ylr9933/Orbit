@@ -1,7 +1,31 @@
 import type { z } from "zod";
 import { type DaemonInfo, readDaemonInfo } from "../config/daemon-info.ts";
 import type { OrbitPaths } from "../config/paths.ts";
-import { API_PREFIX, DoctorReport, Health, NodeResources } from "../contracts/index.ts";
+import {
+  API_PREFIX,
+  Artifacts,
+  CodeDiff,
+  DoctorReport,
+  Health,
+  Ledger,
+  LogChunk,
+  Metrics,
+  NodeResources,
+  Run,
+  RunEvents,
+  RunList,
+  type RunSpecInput,
+  type RunState,
+  SessionTranscript,
+} from "../contracts/index.ts";
+
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
 
 export class OrbitClient {
   readonly info: DaemonInfo;
@@ -10,29 +34,59 @@ export class OrbitClient {
     this.info = info;
   }
 
-  private async get<T extends z.ZodType>(path: string, schema: T): Promise<z.infer<T>> {
+  private async call<T extends z.ZodType>(
+    schema: T,
+    path: string,
+    init: { method?: string; body?: unknown; timeoutMs?: number } = {},
+  ): Promise<z.infer<T>> {
     const res = await fetch(`${this.info.url}${API_PREFIX}${path}`, {
-      headers: { authorization: `Bearer ${this.info.token}` },
-      signal: AbortSignal.timeout(30_000),
+      method: init.method ?? "GET",
+      headers: {
+        authorization: `Bearer ${this.info.token}`,
+        ...(init.body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: AbortSignal.timeout(init.timeoutMs ?? 60_000),
     });
-    const body: unknown = await res.json();
-    if (!res.ok) {
-      const msg = (body as { error?: string }).error ?? res.statusText;
-      throw new Error(`daemon ${path}: ${res.status} ${msg}`);
-    }
+    const body: unknown = await res.json().catch(() => ({}));
+    if (!res.ok)
+      throw new ApiError(res.status, (body as { error?: string }).error ?? res.statusText);
     return schema.parse(body);
   }
 
-  health() {
-    return this.get("/health", Health);
-  }
-  resources() {
-    return this.get("/resources", NodeResources);
-  }
-  doctor() {
-    return this.get("/doctor", DoctorReport);
-  }
+  health = () => this.call(Health, "/health");
+  resources = () => this.call(NodeResources, "/resources");
+  doctor = () => this.call(DoctorReport, "/doctor");
+  ledger = () => this.call(Ledger, "/ledger");
+
+  submit = (spec: RunSpecInput) =>
+    this.call(Run, "/runs", { method: "POST", body: spec, timeoutMs: 600_000 });
+  list = (q: { states?: RunState[]; group?: string; limit?: number } = {}) => {
+    const p = new URLSearchParams();
+    if (q.states?.length) p.set("state", q.states.join(","));
+    if (q.group) p.set("group", q.group);
+    if (q.limit) p.set("limit", String(q.limit));
+    return this.call(RunList, `/runs?${p}`).then((r) => r.runs);
+  };
+  get = (id: string) => this.call(Run, `/runs/${enc(id)}`);
+  cancel = (id: string) => this.call(Run, `/runs/${enc(id)}/cancel`, { method: "POST" });
+  note = (id: string, note: string) =>
+    this.call(Run, `/runs/${enc(id)}/note`, { method: "PUT", body: { note } });
+  wait = (id: string, timeoutSec = 60) =>
+    this.call(Run, `/runs/${enc(id)}/wait?timeout=${timeoutSec}`, {
+      timeoutMs: (timeoutSec + 30) * 1000,
+    });
+  events = (id: string, after = 0) =>
+    this.call(RunEvents, `/runs/${enc(id)}/events?after=${after}`).then((r) => r.events);
+  logs = (id: string, offset: number, limit = 256 * 1024) =>
+    this.call(LogChunk, `/runs/${enc(id)}/logs?offset=${offset}&limit=${limit}`);
+  metrics = (id: string) => this.call(Metrics, `/runs/${enc(id)}/metrics`);
+  artifacts = (id: string) => this.call(Artifacts, `/runs/${enc(id)}/artifacts`);
+  diff = (id: string) => this.call(CodeDiff, `/runs/${enc(id)}/diff`);
+  session = (id: string) => this.call(SessionTranscript, `/runs/${enc(id)}/session`);
 }
+
+const enc = encodeURIComponent;
 
 /** Return a client for a live daemon, or null when none is reachable. */
 export async function tryConnect(paths: OrbitPaths): Promise<OrbitClient | null> {
