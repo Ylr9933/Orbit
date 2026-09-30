@@ -7,10 +7,14 @@ import { getCookie, setCookie } from "hono/cookie";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { AuthError, type AuthStore } from "../auth/index.ts";
+import type { BenchmarkRegistry } from "../bench/registry.ts";
+import type { BenchService } from "../bench/service.ts";
 import {
   API_PREFIX,
   type AuthProfile,
   type AuthTestResult,
+  type Benchmark,
+  BenchmarkInput,
   type Health,
   isTerminal,
   type Ledger,
@@ -32,6 +36,8 @@ export interface AppDeps {
   auth: AuthStore;
   notifyStore: NotifyStore;
   notifier: Notifier;
+  bench: BenchService;
+  benchmarks: BenchmarkRegistry;
   /** Built Web UI directory, or null when not built. */
   webDir: string | null;
 }
@@ -39,7 +45,7 @@ export interface AppDeps {
 const COOKIE = "orbit_token";
 
 export function createApp(deps: AppDeps): Hono {
-  const { runs, auth, notifyStore, notifier } = deps;
+  const { runs, auth, notifyStore, notifier, bench, benchmarks } = deps;
   const app = new Hono();
   const api = new Hono();
 
@@ -108,7 +114,11 @@ export function createApp(deps: AppDeps): Hono {
     const run = must(runs.get(c.req.param("id")));
     const offset = Number(c.req.query("offset") ?? 0);
     const limit = Number(c.req.query("limit") ?? 256 * 1024);
-    return c.json(await readLog(runs.dirs(run.id).log, offset, limit, isTerminal(run.state)));
+    const chunk = await readLog(runs.dirs(run.id).log, offset, limit, isTerminal(run.state));
+    // Process runs write straight to the log; it is redacted in place only when they end.
+    if (run.spec.backend === "process" && !isTerminal(run.state))
+      chunk.text = runs.redactor(run).apply(chunk.text);
+    return c.json(chunk);
   });
 
   /** The whole combined log as plain text (for download). */
@@ -189,6 +199,28 @@ export function createApp(deps: AppDeps): Hono {
     }
     return c.json({ ok: true });
   });
+
+  // Benchmarks: registered checkouts, jobs of trials, and method comparison.
+  api.get("/benchmarks", (c) =>
+    c.json<{ benchmarks: Benchmark[] }>({ benchmarks: benchmarks.list() }),
+  );
+  api.post("/benchmarks", async (c) => {
+    const input = BenchmarkInput.parse(await c.req.json());
+    if (!existsSync(input.path)) throw new UserError(`benchmark path not found: ${input.path}`);
+    return c.json(benchmarks.put(input), 201);
+  });
+  api.delete("/benchmarks/:name", (c) => {
+    if (!benchmarks.remove(c.req.param("name"))) throw new NotFoundError("benchmark not found");
+    return c.json({ ok: true });
+  });
+  api.get("/benchmarks/:name/tasks", (c) => c.json({ tasks: bench.tasks(c.req.param("name")) }));
+  api.get("/bench/jobs", (c) => c.json(bench.jobs(Number(c.req.query("limit") ?? 200))));
+  api.post("/bench/jobs", async (c) => c.json(await bench.submit(await c.req.json()), 201));
+  api.get("/bench/jobs/:id", (c) => c.json(bench.job(c.req.param("id"))));
+  api.post("/bench/jobs/:id/cancel", async (c) => c.json(await bench.cancel(c.req.param("id"))));
+  api.get("/bench/compare", (c) =>
+    c.json(bench.compare((c.req.query("jobs") ?? "").split(",").filter(Boolean))),
+  );
 
   /** Server-sent events: `run` with the full Run on every change. */
   api.get("/stream", (c) =>

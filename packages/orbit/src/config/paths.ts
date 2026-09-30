@@ -18,6 +18,10 @@ export interface OrbitPaths {
   notify: string;
   /** Short-lived private files such as `docker run --env-file` inputs (0700). */
   tmp: string;
+  /** Registered benchmarks (benchmarks.json). */
+  benchmarks: string;
+  /** Per-trial staging copies mounted into bench runs: `bench/<job>/<trial>` (0700). */
+  bench: string;
   /** Per-run directories: `runs/<id>/{workspace,orbit/output,orbit/metrics.jsonl,log.txt,code.diff}`. */
   runs: string;
 }
@@ -34,6 +38,8 @@ export function orbitPaths(env: NodeJS.ProcessEnv = process.env): OrbitPaths {
     auth: join(home, "auth.json"),
     notify: join(home, "notify.json"),
     tmp: join(home, "tmp"),
+    benchmarks: join(home, "benchmarks.json"),
+    bench: join(home, "bench"),
   };
 }
 
@@ -41,6 +47,7 @@ export function ensureHome(paths: OrbitPaths): void {
   mkdirSync(paths.home, { recursive: true, mode: 0o700 });
   mkdirSync(paths.runs, { recursive: true });
   mkdirSync(paths.tmp, { recursive: true, mode: 0o700 });
+  mkdirSync(paths.bench, { recursive: true, mode: 0o700 });
 }
 
 export interface RunDirs {

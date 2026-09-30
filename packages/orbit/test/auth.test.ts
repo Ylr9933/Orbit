@@ -208,6 +208,7 @@ function run(id: string, state: Run["state"], group?: string): Run {
     containerId: null,
     lease: null,
     code: null,
+    proc: null,
     cleanup: "done",
     note: "",
     createdAt: "2026-01-01T00:00:00Z",

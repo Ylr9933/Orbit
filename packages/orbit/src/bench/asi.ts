@@ -1,0 +1,374 @@
+// ASI-Bench (seed31415) wrapped with its native runner: the solve run is `asibench run` for one
+// instance and prompt level as a process run (its own Docker sandbox goes through Orbit's docker
+// shim), the verify run is `asibench score` against the public references.
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Benchmark, BenchTask, Method, RunSpecInput } from "../contracts/index.ts";
+import type { Adapter, ScoreResult, TrialContext } from "./adapter.ts";
+
+export const ASI_SEED_SUFFIX = "__seed31415";
+export const PROMPT_LEVELS = ["b1", "b2", "b3", "b4"];
+
+export interface AsiTaskMeta {
+  id: string;
+  name: string | null;
+  status: string | null;
+  domain: string | null;
+  requiresGpu: boolean;
+  outputs: string[];
+}
+
+const unquote = (v: string) => v.trim().replace(/^(['"])(.*)\1$/, "$2");
+
+/**
+ * The few task_meta.yaml fields Orbit needs, read line by line (top-level scalars,
+ * `difficulty.requires_gpu` and `output.files[].name`) so the daemon needs no YAML dependency.
+ */
+export function parseTaskMeta(text: string): AsiTaskMeta {
+  const meta: AsiTaskMeta = {
+    id: "",
+    name: null,
+    status: null,
+    domain: null,
+    requiresGpu: false,
+    outputs: [],
+  };
+  let section = "";
+  let sub = "";
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\s+#.*$/, "");
+    if (!line.trim() || line.trimStart().startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    const top = /^([A-Za-z_]+):\s*(.*)$/.exec(line);
+    if (indent === 0 && top) {
+      section = top[1] as string;
+      sub = "";
+      const v = unquote(top[2] ?? "");
+      if (section === "id") meta.id = v;
+      else if (section === "name") meta.name = v || null;
+      else if (section === "status") meta.status = v || null;
+      else if (section === "domain") meta.domain = v || null;
+      continue;
+    }
+    const key = /^\s+([A-Za-z_]+):\s*(.*)$/.exec(line);
+    if (section === "difficulty" && key?.[1] === "requires_gpu")
+      meta.requiresGpu = unquote(key[2] ?? "") === "true";
+    if (section === "output") {
+      if (indent === 2 && key) sub = key[1] as string;
+      const item = /^\s*-\s+name:\s*(.+)$/.exec(line);
+      if (sub === "files" && item) meta.outputs.push(unquote(item[1] as string));
+    }
+  }
+  return meta;
+}
+
+export const instancesDir = (b: Benchmark) =>
+  b.instances ?? join(b.path, "bench_runs", "instances_seed31415");
+
+/** Task catalogue: `tasks/<domain>/<name>/task_meta.yaml`, indexed by id. */
+function taskCatalog(b: Benchmark): Map<string, AsiTaskMeta> {
+  const out = new Map<string, AsiTaskMeta>();
+  const root = join(b.path, "tasks");
+  const ls = (d: string) => {
+    try {
+      return readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory());
+    } catch {
+      return [];
+    }
+  };
+  for (const domain of ls(root))
+    for (const task of ls(join(root, domain.name))) {
+      const file = join(root, domain.name, task.name, "task_meta.yaml");
+      if (!existsSync(file)) continue;
+      const meta = parseTaskMeta(readFileSync(file, "utf8"));
+      out.set(meta.id || `${domain.name}.${task.name}`, meta);
+    }
+  return out;
+}
+
+function taskMeta(b: Benchmark, id: string): AsiTaskMeta {
+  const m = taskCatalog(b).get(id);
+  if (!m) throw new Error(`ASI task not found: ${id}`);
+  return m;
+}
+
+function listTasks(b: Benchmark): BenchTask[] {
+  const catalog = taskCatalog(b);
+  let names: string[] = [];
+  try {
+    names = readdirSync(instancesDir(b)).filter((n) => n.endsWith(ASI_SEED_SUFFIX));
+  } catch {
+    return [];
+  }
+  return names.sort().map((n) => {
+    const id = n.slice(0, -ASI_SEED_SUFFIX.length);
+    const meta = catalog.get(id);
+    const problems: string[] = [];
+    if (!meta) problems.push("no task_meta.yaml in tasks/");
+    else if (meta.status !== "final") problems.push(`status ${meta.status ?? "unknown"}`);
+    if (!existsSync(join(instancesDir(b), n, "reference"))) problems.push("no public reference");
+    return {
+      id,
+      title: meta?.name ?? null,
+      supported: problems.length === 0,
+      reason: problems.length ? problems.join("; ") : null,
+      tags: (meta?.domain ? { domain: meta.domain } : {}) as Record<string, string>,
+    };
+  });
+}
+
+const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+
+/** `--agent-cmd` template copying the reference outputs (runner expands `{...}` placeholders). */
+export function oracleTemplate(instances: string, outputs: string[]): string {
+  const copy =
+    'src=$1; dst=$2; shift 2; for f in "$@"; do if [ -e "$src/$f" ]; then ' +
+    'mkdir -p "$(dirname "$dst/$f")"; cp -R "$src/$f" "$dst/$f"; fi; done';
+  return [
+    "sh -c",
+    q(copy),
+    "oracle",
+    `${q(instances)}/{instance_id}/reference`,
+    "{workspace}",
+    ...outputs.map(q),
+  ].join(" ");
+}
+
+function agentArgs(method: Method): string[] {
+  if (method.agent === "oracle" || method.agent === "empty") return [];
+  const config: Record<string, string> = {};
+  if (method.model) config.model = method.model;
+  if (method.effort) config.effort = method.effort;
+  return [
+    "--agent",
+    method.agent === "codex" ? "codex_cli" : "claude_code_cli",
+    "--agent-config",
+    JSON.stringify(config),
+    "--sandbox",
+    "os",
+  ];
+}
+
+/** `sh -c 'exec "$@" <flag> "$ORBIT_OUTPUT/<sub>"'`: output paths are known only at launch. */
+const withOutput = (flag: string, sub: string, argv: string[]) => [
+  "sh",
+  "-c",
+  `exec "$@" ${flag} "$ORBIT_OUTPUT/${sub}"`,
+  "sh",
+  ...argv,
+];
+
+function baseEnv(b: Benchmark): Record<string, string> {
+  return { ...b.env, PYTHONPATH: b.path, PYTHONDONTWRITEBYTECODE: "1" };
+}
+
+function asiCli(b: Benchmark): string[] {
+  return [b.python ?? "python3", "-m", "ai4sci_bench.cli"];
+}
+
+export function asiSolveSpec(ctx: TrialContext & { hostNetwork?: boolean }): RunSpecInput {
+  const b = ctx.benchmark;
+  const meta = taskMeta(b, ctx.task);
+  const level = ctx.options.promptLevel ?? "b1";
+  if (!PROMPT_LEVELS.includes(level)) throw new Error(`unknown ASI prompt level: ${level}`);
+  const m = ctx.method;
+  const argv = [
+    ...asiCli(b),
+    "run",
+    "--tasks",
+    ctx.task,
+    "--prompt-levels",
+    level,
+    "--instances-dir",
+    instancesDir(b),
+    "--tasks-dir",
+    join(b.path, "tasks"),
+    "--parallel",
+    "1",
+    "--retries",
+    "1",
+  ];
+  if (ctx.timeoutMin) argv.push("--timeout", String(Math.round(ctx.timeoutMin * 60)));
+  if (m.agent === "oracle")
+    argv.push("--agent-cmd", oracleTemplate(instancesDir(b), meta.outputs), "--sandbox", "none");
+  else if (m.agent === "empty") argv.push("--agent-cmd", "true", "--sandbox", "none");
+  else argv.push(...agentArgs(m));
+  const env = baseEnv(b);
+  if (ctx.hostNetwork) env.AI4SCI_DOCKER_NETWORK = "host";
+  return {
+    backend: "process",
+    command: withOutput("--output-dir", "native", argv),
+    resources: { gpus: meta.requiresGpu ? 1 : 0, cpus: 2, memGB: 8 },
+    env,
+    auth: m.auth,
+    agentBundle: m.bundle,
+    snapshot: false,
+    // The runner's own timeout ends the agent; this bounds the whole wrapper.
+    timeoutMin: ctx.timeoutMin ? ctx.timeoutMin + 15 : undefined,
+  };
+}
+
+/**
+ * The runner persists `<result>.outputs/` only when the Agent produced a declared output file, and
+ * `asibench score` rejects results without it. The verify run therefore scores a copy of the solve
+ * results in which a missing directory becomes an empty one: "produced nothing" scores through the
+ * real scorer (to 0) instead of failing the run. The solve run's output stays untouched.
+ */
+const PREPARE_RESULTS =
+  'set -e; r="$ORBIT_OUTPUT/results"; cp -R "$1" "$r"; shift; ' +
+  'for f in "$r"/*/*.json; do case "$f" in *.trajectory.*|*.agent_model_output.*) continue;; esac; ' +
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameter expansion
+  '[ -e "$f" ] && mkdir -p "${f%.json}.outputs"; done; ' +
+  'exec "$@" --results-dir "$r" --output "$ORBIT_OUTPUT/score.json"';
+
+export function asiVerifySpec(ctx: TrialContext, solveOutput: string): RunSpecInput {
+  const b = ctx.benchmark;
+  return {
+    backend: "process",
+    command: [
+      "sh",
+      "-c",
+      PREPARE_RESULTS,
+      "sh",
+      join(solveOutput, "native"),
+      ...asiCli(b),
+      "score",
+      "--repo",
+      "seed31415",
+      "--instances-dir",
+      instancesDir(b),
+      "--tasks-dir",
+      join(b.path, "tasks"),
+    ],
+    resources: { gpus: 0, cpus: 1, memGB: 4 },
+    env: baseEnv(b),
+    passEnv: b.passEnv,
+    snapshot: false,
+    priority: 1,
+    timeoutMin: 30,
+  };
+}
+
+interface NativeResult {
+  instance_id?: string;
+  prompt_level?: string;
+  status?: string;
+  agent_output?: { error_message?: unknown };
+}
+
+/** Result JSONs written by `asibench run` (`<native>/<task>/<instance>__<level>.json`). */
+export function nativeResults(nativeDir: string): NativeResult[] {
+  const out: NativeResult[] = [];
+  let tasks: string[] = [];
+  try {
+    tasks = readdirSync(nativeDir);
+  } catch {
+    return out;
+  }
+  for (const t of tasks) {
+    let files: string[] = [];
+    try {
+      files = readdirSync(join(nativeDir, t));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      if (!f.endsWith(".json") || f.includes(".trajectory.") || f.includes(".agent_model_output."))
+        continue;
+      try {
+        const v = JSON.parse(readFileSync(join(nativeDir, t, f), "utf8")) as NativeResult;
+        if (v && typeof v === "object" && v.instance_id) out.push(v);
+      } catch {}
+    }
+  }
+  return out;
+}
+
+/**
+ * A model the harness could not use (unknown model, no access, bad credentials): a zero from such a
+ * run measures the setup, not the method. Reads the JSON event lines the CLI adapters record.
+ */
+export function modelError(message: unknown): string | null {
+  if (typeof message !== "string" || !message) return null;
+  for (const line of message.split("\n")) {
+    const text = line.trim();
+    if (!text.startsWith("{")) continue;
+    let ev: { type?: string; message?: unknown; error?: unknown };
+    try {
+      ev = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    if (ev.type !== "error" && ev.type !== "turn.failed") continue;
+    const detail = JSON.stringify(ev.error ?? ev.message ?? "").toLowerCase();
+    if (/invalid_api_key|authentication_error|unauthorized/.test(detail))
+      return "model_authentication_failed";
+    if (
+      detail.includes("model") &&
+      /not supported|does not exist|do not have access|model_not_found/.test(detail)
+    )
+      return "model_unavailable";
+  }
+  return null;
+}
+
+interface ScoreItem {
+  instance_id?: string;
+  prompt_level?: string;
+  attempt?: number;
+  final_score?: number;
+  max_score?: number;
+  scorer_internal_error?: boolean;
+}
+
+export function asiScore(
+  ctx: TrialContext,
+  solveOutput: string,
+  verifyOutput: string,
+): ScoreResult {
+  const instance = `${ctx.task}${ASI_SEED_SUFFIX}`;
+  const level = ctx.options.promptLevel ?? "b1";
+  const bad = (issue: string): ScoreResult => ({
+    score: null,
+    maxScore: 100,
+    issues: [issue],
+    invalid: true,
+  });
+  const native = nativeResults(join(solveOutput, "native")).filter(
+    (r) => r.instance_id === instance && r.prompt_level === level,
+  );
+  if (native.length === 0) return bad("runner wrote no result for the instance");
+  const reportFile = join(verifyOutput, "score.json");
+  if (!existsSync(reportFile)) return bad("scorer wrote no report");
+  let items: ScoreItem[];
+  try {
+    items =
+      (JSON.parse(readFileSync(reportFile, "utf8")) as { results?: ScoreItem[] }).results ?? [];
+  } catch {
+    return bad("score report is not valid JSON");
+  }
+  const item = items
+    .filter((r) => r.instance_id === instance && r.prompt_level === level)
+    .sort((a, b) => (b.attempt ?? 1) - (a.attempt ?? 1))[0];
+  if (!item || typeof item.final_score !== "number")
+    return bad("instance missing from score report");
+  const maxScore = typeof item.max_score === "number" && item.max_score > 0 ? item.max_score : 100;
+  const issues: string[] = [];
+  if (!existsSync(join(solveOutput, "native", ctx.task, `${instance}__${level}.outputs`)))
+    issues.push("no declared output files produced");
+  if (item.scorer_internal_error) issues.push("scorer_internal_error");
+  const err = modelError(native.at(-1)?.agent_output?.error_message);
+  if (err && item.final_score === 0) issues.push(err);
+  const status = native.at(-1)?.status;
+  if (status && status !== "success" && status !== "completed")
+    issues.push(`runner status ${status}`);
+  const invalid = Boolean(item.scorer_internal_error) || (err !== null && item.final_score === 0);
+  return { score: item.final_score, maxScore, issues, invalid };
+}
+
+export const asiAdapter = (hostNetwork: (method: Method) => boolean): Adapter => ({
+  tasks: listTasks,
+  solveSpec: (ctx) => asiSolveSpec({ ...ctx, hostNetwork: hostNetwork(ctx.method) }),
+  verifySpec: (ctx, _solve, solveOutput) => ({ spec: asiVerifySpec(ctx, solveOutput), issues: [] }),
+  score: (ctx, _solve, solveOutput, verifyOutput) => asiScore(ctx, solveOutput, verifyOutput),
+});

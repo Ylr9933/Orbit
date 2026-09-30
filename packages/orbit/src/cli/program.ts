@@ -10,6 +10,7 @@ import { exec } from "../lib/exec.ts";
 import { VERSION } from "../lib/version.ts";
 import { detectAgent } from "./agent.ts";
 import { kv, registerAuth, registerNotify } from "./auth.ts";
+import { registerBench } from "./bench.ts";
 import { formatDoctor, formatLedger, formatRun, formatRuns } from "./format.ts";
 
 export interface ProgramDeps {
@@ -366,6 +367,7 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
 
   registerAuth(program, client, print);
   registerNotify(program, client, print);
+  registerBench(program, client, print);
 
   program
     .command("web [id]")

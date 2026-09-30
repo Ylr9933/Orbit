@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { Lease, Run, RunEvent, type RunState } from "../contracts/index.ts";
+import { BenchJob, Lease, Run, RunEvent, type RunState, Trial } from "../contracts/index.ts";
 import { nowIso } from "../lib/ids.ts";
 
 const MIGRATIONS = [
@@ -27,6 +27,22 @@ const MIGRATIONS = [
      message TEXT NOT NULL
    );
    CREATE INDEX events_run ON events(run_id, seq);`,
+  `CREATE TABLE bench_jobs (
+     id TEXT PRIMARY KEY,
+     state TEXT NOT NULL,
+     created_at TEXT NOT NULL,
+     doc TEXT NOT NULL
+   );
+   CREATE TABLE trials (
+     id TEXT PRIMARY KEY,
+     job_id TEXT NOT NULL,
+     state TEXT NOT NULL,
+     solve_run TEXT,
+     verify_run TEXT,
+     doc TEXT NOT NULL
+   );
+   CREATE INDEX trials_job ON trials(job_id);
+   CREATE INDEX trials_state ON trials(state);`,
 ];
 
 export interface RunFilter {
@@ -111,10 +127,13 @@ export class Store {
     return rows.map((r) => Run.parse(JSON.parse(r.doc)));
   }
 
-  /** Queued runs in submission order. */
+  /** Queued runs, higher priority first, then in submission order. */
   queuedRuns(): Run[] {
     const rows = this.db
-      .prepare("SELECT doc FROM runs WHERE state = 'queued' ORDER BY created_at, id")
+      .prepare(
+        `SELECT doc FROM runs WHERE state = 'queued'
+         ORDER BY COALESCE(json_extract(doc, '$.spec.priority'), 0) DESC, created_at, id`,
+      )
       .all() as { doc: string }[];
     return rows.map((r) => Run.parse(JSON.parse(r.doc)));
   }
@@ -173,5 +192,71 @@ export class Store {
     return rows.map((r) =>
       RunEvent.parse({ seq: r.seq, runId: r.run_id, at: r.at, kind: r.kind, message: r.message }),
     );
+  }
+
+  // benchmark jobs and trials
+
+  putJob(job: BenchJob): void {
+    this.db
+      .prepare(
+        `INSERT INTO bench_jobs (id, state, created_at, doc) VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET state = excluded.state, doc = excluded.doc`,
+      )
+      .run(job.id, job.state, job.createdAt, JSON.stringify(job));
+  }
+
+  getJob(id: string): BenchJob | null {
+    const row = this.db.prepare("SELECT doc FROM bench_jobs WHERE id = ?").get(id) as
+      | { doc: string }
+      | undefined;
+    return row ? BenchJob.parse(JSON.parse(row.doc)) : null;
+  }
+
+  listJobs(limit = 200): BenchJob[] {
+    const rows = this.db
+      .prepare("SELECT doc FROM bench_jobs ORDER BY created_at DESC, id DESC LIMIT ?")
+      .all(limit) as { doc: string }[];
+    return rows.map((r) => BenchJob.parse(JSON.parse(r.doc)));
+  }
+
+  putTrial(t: Trial): void {
+    this.db
+      .prepare(
+        `INSERT INTO trials (id, job_id, state, solve_run, verify_run, doc) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET state = excluded.state, solve_run = excluded.solve_run,
+           verify_run = excluded.verify_run, doc = excluded.doc`,
+      )
+      .run(t.id, t.jobId, t.state, t.solveRunId, t.verifyRunId, JSON.stringify(t));
+  }
+
+  getTrial(id: string): Trial | null {
+    const row = this.db.prepare("SELECT doc FROM trials WHERE id = ?").get(id) as
+      | { doc: string }
+      | undefined;
+    return row ? Trial.parse(JSON.parse(row.doc)) : null;
+  }
+
+  trials(jobId: string): Trial[] {
+    const rows = this.db
+      .prepare("SELECT doc FROM trials WHERE job_id = ? ORDER BY id")
+      .all(jobId) as { doc: string }[];
+    return rows.map((r) => Trial.parse(JSON.parse(r.doc)));
+  }
+
+  /** The trial that owns a run as its solve or verify run. */
+  trialByRun(runId: string): Trial | null {
+    const row = this.db
+      .prepare("SELECT doc FROM trials WHERE solve_run = ? OR verify_run = ?")
+      .get(runId, runId) as { doc: string } | undefined;
+    return row ? Trial.parse(JSON.parse(row.doc)) : null;
+  }
+
+  openTrials(): Trial[] {
+    const rows = this.db
+      .prepare("SELECT doc FROM trials WHERE state != 'done' ORDER BY id")
+      .all() as {
+      doc: string;
+    }[];
+    return rows.map((r) => Trial.parse(JSON.parse(r.doc)));
   }
 }

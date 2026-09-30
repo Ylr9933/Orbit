@@ -7,6 +7,15 @@ import {
   AuthProfile,
   type AuthProfileInput,
   AuthTestResult,
+  BenchCompare,
+  BenchJob,
+  BenchJobDetail,
+  BenchJobList,
+  type BenchJobSpecInput,
+  Benchmark,
+  type BenchmarkInput,
+  BenchmarkList,
+  BenchTaskList,
   CodeDiff,
   DoctorReport,
   Health,
@@ -109,6 +118,23 @@ export class OrbitClient {
     this.call(NotifyTarget, "/notify", { method: "POST", body: t });
   notifyRemove = (name: string) => this.call(Ok, `/notify/${enc(name)}`, { method: "DELETE" });
   notifyTest = (name: string) => this.call(Ok, `/notify/${enc(name)}/test`, { method: "POST" });
+
+  benchmarks = () => this.call(BenchmarkList, "/benchmarks").then((r) => r.benchmarks);
+  benchmarkPut = (b: BenchmarkInput) =>
+    this.call(Benchmark, "/benchmarks", { method: "POST", body: b });
+  benchmarkRemove = (name: string) =>
+    this.call(Ok, `/benchmarks/${enc(name)}`, { method: "DELETE" });
+  benchTasks = (name: string) =>
+    this.call(BenchTaskList, `/benchmarks/${enc(name)}/tasks`).then((r) => r.tasks);
+  benchSubmit = (spec: BenchJobSpecInput) =>
+    this.call(BenchJob, "/bench/jobs", { method: "POST", body: spec, timeoutMs: 600_000 });
+  benchJobs = (limit = 200) =>
+    this.call(BenchJobList, `/bench/jobs?limit=${limit}`).then((r) => r.jobs);
+  benchJob = (id: string) => this.call(BenchJobDetail, `/bench/jobs/${enc(id)}`);
+  benchCancel = (id: string) =>
+    this.call(BenchJob, `/bench/jobs/${enc(id)}/cancel`, { method: "POST" });
+  benchCompare = (ids: string[]) =>
+    this.call(BenchCompare, `/bench/compare?jobs=${ids.map(enc).join(",")}`);
 }
 
 const enc = encodeURIComponent;

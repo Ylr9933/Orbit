@@ -1,12 +1,22 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createWriteStream, openSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  createWriteStream,
+  type Dirent,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { exec } from "../lib/exec.ts";
 import type { Redactor } from "../lib/redact.ts";
 
 export const LABEL_RUN = "orbit.run";
 export const LABEL_HOME = "orbit.home";
+/** Containers started by a process run (through the docker shim). */
+export const LABEL_PARENT = "orbit.parent";
 
 /** How GPUs are passed to containers: CDI devices (preferred) or the legacy `--gpus` flag. */
 export type GpuMode = "cdi" | "gpus";
@@ -43,7 +53,8 @@ export interface ContainerSpec {
   memGB: number;
   mounts: { source: string; target: string; mode: "ro" | "rw" }[];
   env: Record<string, string>;
-  workdir: string;
+  /** Null keeps the image's WORKDIR. */
+  workdir: string | null;
   network: "bridge" | "host" | "none";
   /** `uid:gid`, or null for the image default user. */
   user: string | null;
@@ -80,7 +91,8 @@ export function runArgs(s: ContainerSpec): string[] {
   if (s.envFile) args.push("--env-file", s.envFile);
   if (s.network !== "bridge") args.push("--network", s.network);
   if (s.user) args.push("--user", s.user);
-  args.push("-w", s.workdir, s.image, ...s.command);
+  if (s.workdir) args.push("-w", s.workdir);
+  args.push(s.image, ...s.command);
   return args;
 }
 
@@ -88,14 +100,49 @@ async function docker(args: string[], timeoutMs = 60_000) {
   return exec("docker", args, { timeoutMs });
 }
 
-export function dockerfileTag(dockerfile: string, project: string): string {
-  const hash = createHash("sha256").update(readFileSync(dockerfile)).digest("hex").slice(0, 12);
+/**
+ * Image tag for a Dockerfile build: the hash covers the Dockerfile and the build context's file list
+ * (path, size, mtime), so changed context files rebuild the image.
+ */
+export function dockerfileTag(dockerfile: string, context: string, project: string): string {
+  const h = createHash("sha256").update(readFileSync(dockerfile));
+  for (const line of contextListing(context)) h.update(`${line}\n`);
+  const hash = h.digest("hex").slice(0, 12);
   const name =
     project
       .toLowerCase()
       .replace(/[^a-z0-9._-]+/g, "-")
       .replace(/^[-.]+/, "") || "project";
   return `orbit-local/${name}:${hash}`;
+}
+
+const SKIP_DIRS = new Set([".git", "node_modules", "__pycache__"]);
+
+function contextListing(root: string, limit = 50_000): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    let entries: Dirent[] = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    for (const e of entries) {
+      if (out.length >= limit) return;
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name)) walk(p);
+        continue;
+      }
+      try {
+        const st = statSync(p);
+        out.push(`${relative(root, p)} ${st.size} ${Math.floor(st.mtimeMs)}`);
+      } catch {}
+    }
+  };
+  walk(root);
+  return out;
 }
 
 export async function imageExists(image: string): Promise<boolean> {
@@ -121,10 +168,17 @@ export function envFileText(env: Record<string, string>): string {
 }
 
 /** `docker build`, streaming output to `logFile`. Resolves with the exit code. */
-export function buildImage(dockerfile: string, context: string, tag: string, logFile: string) {
+export function buildImage(
+  dockerfile: string,
+  context: string,
+  tag: string,
+  logFile: string,
+  opts: { hostNetwork?: boolean } = {},
+) {
   const fd = openSync(logFile, "a");
+  const net = opts.hostNetwork ? ["--network", "host"] : [];
   return new Promise<number>((resolve) => {
-    const p = spawn("docker", ["build", "-f", dockerfile, "-t", tag, context], {
+    const p = spawn("docker", ["build", ...net, "-f", dockerfile, "-t", tag, context], {
       stdio: ["ignore", fd, fd],
     });
     p.on("error", () => resolve(127));
@@ -210,4 +264,22 @@ export async function removeContainer(id: string): Promise<boolean> {
   const r = await docker(["rm", "-f", id]);
   if (r.code === 0) return true;
   return (await inspectContainer(id)) === null;
+}
+
+/** Copy `src` out of a container to `dest` on the host; returns an error line or null. */
+export async function copyFromContainer(
+  id: string,
+  src: string,
+  dest: string,
+): Promise<string | null> {
+  mkdirSync(dirname(dest), { recursive: true });
+  const r = await docker(["cp", `${id}:${src}`, dest], 600_000);
+  return r.code === 0 ? null : (r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`);
+}
+
+/** Ids of containers (running or not) with this label. */
+export async function containersWithLabel(label: string, value: string): Promise<string[] | null> {
+  const r = await docker(["ps", "-aq", "--no-trunc", "--filter", `label=${label}=${value}`]);
+  if (r.code !== 0) return null;
+  return r.stdout.split("\n").filter(Boolean);
 }

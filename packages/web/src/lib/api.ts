@@ -4,6 +4,12 @@ import type {
   Artifacts,
   AuthProfile,
   AuthTestResult,
+  BenchCompare,
+  BenchJob,
+  BenchJobDetail,
+  BenchJobList,
+  Benchmark,
+  BenchTask,
   DoctorReport,
   Ledger,
   LogChunk,
@@ -17,18 +23,28 @@ import type {
 export type {
   Artifacts,
   AuthProfile,
+  BenchCompare,
+  BenchJob,
+  BenchJobDetail,
+  BenchJobList,
+  Benchmark,
+  BenchTask,
   CodeSnapshot,
   Gpu,
   Lease,
   Ledger,
   LogChunk,
+  Method,
+  MethodSummary,
   Metrics,
   NotifyTarget,
+  Outcome,
   Run,
   RunEvent,
   RunState,
   SessionMessage,
   SessionTranscript,
+  Trial,
 } from "@zjunlp/orbit/contracts";
 
 export const API = "/api/v1";
@@ -87,6 +103,14 @@ export const api = {
     req<{ ok: boolean }>(`/notify/${enc(name)}`, { method: "DELETE" }),
   notifyTest: (name: string) =>
     req<{ ok: boolean }>(`/notify/${enc(name)}/test`, { method: "POST" }),
+  benchmarks: () => req<{ benchmarks: Benchmark[] }>("/benchmarks").then((r) => r.benchmarks),
+  benchTasks: (name: string) =>
+    req<{ tasks: BenchTask[] }>(`/benchmarks/${enc(name)}/tasks`).then((r) => r.tasks),
+  benchJobs: () => req<BenchJobList>("/bench/jobs").then((r) => r.jobs),
+  benchJob: (id: string) => req<BenchJobDetail>(`/bench/jobs/${enc(id)}`),
+  benchCancel: (id: string) => req<BenchJob>(`/bench/jobs/${enc(id)}/cancel`, { method: "POST" }),
+  benchCompare: (ids: string[]) =>
+    req<BenchCompare>(`/bench/compare?jobs=${ids.map(enc).join(",")}`),
 };
 
 export const fileUrl = (id: string, path: string, download = false) =>

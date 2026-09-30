@@ -12,7 +12,7 @@ import type {
   NotifyTarget,
 } from "../contracts/index.ts";
 
-type Print = (json: boolean | undefined, value: unknown, text: () => string) => void;
+export type Print = (json: boolean | undefined, value: unknown, text: () => string) => void;
 
 interface AddOpts {
   harness: Harness;

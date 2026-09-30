@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ServerType, serve } from "@hono/node-server";
 import { AuthStore } from "../auth/index.ts";
+import { BenchmarkRegistry } from "../bench/registry.ts";
+import { BenchService } from "../bench/service.ts";
 import { removeDaemonInfo, writeDaemonInfo } from "../config/daemon-info.ts";
 import { ensureHome, type OrbitPaths } from "../config/paths.ts";
 import { isTerminal } from "../contracts/index.ts";
@@ -49,6 +51,15 @@ function findWebDir(): string | null {
 export interface DaemonOptions {
   port?: number;
   tickMs?: number;
+  /** Command running this orbit binary, for the process-run docker shim (default: detected). */
+  shim?: string[];
+}
+
+/** `node [execArgv] <entry>` when this process is the orbit CLI (not e.g. a test runner). */
+function detectShim(): string[] | undefined {
+  const entry = process.argv[1];
+  if (!entry || !/^(bin\.ts|cli\.mjs|orbit)$/.test(basename(entry))) return undefined;
+  return [process.execPath, ...process.execArgv, entry];
 }
 
 /** Start the daemon on 127.0.0.1: open the store, recover runs, serve the API, publish endpoint + token. */
@@ -66,6 +77,16 @@ export async function startDaemon(
     auth,
     probe: () => probeNode(paths.home),
     tickMs: opts.tickMs,
+    shim: opts.shim ?? detectShim(),
+  });
+  const benchmarks = new BenchmarkRegistry(paths.benchmarks);
+  const bench = new BenchService({
+    store,
+    runs,
+    registry: benchmarks,
+    paths,
+    auth,
+    log: (msg) => console.error(`orbit ${msg}`),
   });
   let webUrl: string | undefined;
   const notifyStore = new NotifyStore(paths.notify);
@@ -89,6 +110,8 @@ export async function startDaemon(
     auth,
     notifyStore,
     notifier,
+    bench,
+    benchmarks,
     webDir: findWebDir(),
   });
 
@@ -107,6 +130,7 @@ export async function startDaemon(
   const url = `http://127.0.0.1:${port}`;
   webUrl = url;
   await runs.start();
+  await bench.start();
   writeDaemonInfo(paths, { url, token, pid: process.pid });
 
   const stop = async () => {

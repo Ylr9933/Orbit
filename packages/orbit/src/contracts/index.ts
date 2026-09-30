@@ -183,9 +183,40 @@ export const RunSpec = z
     params: z.record(z.string(), z.string()).default({}),
     parentId: z.string().optional(),
     agent: AgentRef.optional(),
+    /**
+     * `docker` runs `command` in one container; `process` runs it on the host (a native benchmark
+     * runner) with a private HOME, the leased GPUs in CUDA_VISIBLE_DEVICES and a `docker` shim that
+     * labels, cleans up and injects auth into the containers it starts.
+     */
+    backend: z.enum(["docker", "process"]).default("docker"),
+    /** Working directory of a process run (default: the code snapshot, else the run directory). */
+    cwd: z.string().optional(),
+    /** Container working directory: an absolute path, or `image` for the image's WORKDIR. */
+    workdir: z.string().optional(),
+    /** Higher runs are scheduled first; equal priorities keep submission order. */
+    priority: z.number().int().default(0),
+    /** Absolute container paths copied to `output/collected/<path>` after exit, before removal. */
+    collect: z.array(z.string()).default([]),
+    /**
+     * Variables copied from the daemon environment at launch (never stored). Values of names that
+     * look secret (KEY, TOKEN, SECRET, PASSWORD) are redacted from logs.
+     */
+    passEnv: z.array(EnvName).default([]),
+    /** Method bundle directory copied into the Agent home (AGENTS.md / CLAUDE.md, skills). */
+    agentBundle: z.string().optional(),
   })
-  .refine((s) => Boolean(s.image) !== Boolean(s.dockerfile), {
-    message: "exactly one of image or dockerfile is required",
+  .refine(
+    (s) =>
+      s.backend === "process"
+        ? !s.image && !s.dockerfile
+        : Boolean(s.image) !== Boolean(s.dockerfile),
+    { message: "exactly one of image or dockerfile is required (none for process runs)" },
+  )
+  .refine((s) => !s.workdir || s.workdir === "image" || s.workdir.startsWith("/"), {
+    message: "workdir must be an absolute path or `image`",
+  })
+  .refine((s) => s.collect.every((p) => p.startsWith("/")), {
+    message: "collect paths must be absolute container paths",
   });
 export type RunSpec = z.infer<typeof RunSpec>;
 export type RunSpecInput = z.input<typeof RunSpec>;
@@ -242,6 +273,8 @@ export const Run = z.object({
   containerId: z.string().nullable(),
   lease: Lease.nullable(),
   code: CodeSnapshot.nullable(),
+  /** Process runs: host pid and its start time (clock ticks) to tell it from a reused pid. */
+  proc: z.object({ pid: z.number().int(), start: z.string() }).nullable().default(null),
   cleanup: z.enum(["pending", "done", "failed"]),
   note: z.string(),
   createdAt: z.string(),
@@ -316,3 +349,164 @@ export const Ledger = z.object({
   queued: z.array(z.object({ runId: z.string(), reason: z.string().nullable() })),
 });
 export type Ledger = z.infer<typeof Ledger>;
+
+// ---- R3: benchmarks ----
+
+export const BenchAdapter = z.enum(["harbor", "asi"]);
+export type BenchAdapter = z.infer<typeof BenchAdapter>;
+
+/** A registered benchmark checkout. */
+export const BenchmarkInput = z.object({
+  name: ProfileName,
+  /** `harbor`: task directories with task.toml; `asi`: ASI-Bench wrapped with its native runner. */
+  adapter: BenchAdapter,
+  /** Absolute path of the benchmark checkout. */
+  path: z.string().refine((p) => p.startsWith("/"), "path must be absolute"),
+  /** asi: Python with ai4sci_bench installed (default: `python3`). */
+  python: z.string().optional(),
+  /** asi: instances directory (default: `<path>/bench_runs/instances_seed31415`). */
+  instances: z.string().optional(),
+  /** Extra non-secret variables for every run of this benchmark. */
+  env: z.record(EnvName, z.string()).default({}),
+  /** Variables copied from the daemon environment (e.g. judge API keys); never stored. */
+  passEnv: z.array(EnvName).default([]),
+});
+export type BenchmarkInput = z.input<typeof BenchmarkInput>;
+export const Benchmark = BenchmarkInput.extend({ createdAt: z.string(), updatedAt: z.string() });
+export type Benchmark = z.infer<typeof Benchmark>;
+
+export const BenchTask = z.object({
+  id: z.string(),
+  title: z.string().nullable(),
+  /** Unsupported tasks are listed but never run (e.g. docker-compose environments). */
+  supported: z.boolean(),
+  reason: z.string().nullable(),
+  tags: z.record(z.string(), z.string()).default({}),
+});
+export type BenchTask = z.infer<typeof BenchTask>;
+
+/**
+ * An AgentProfile: harness (with the host CLI version recorded per run) + model + auth + method
+ * bundle. `oracle` runs the reference solution and `empty` submits nothing; both check an adapter.
+ */
+export const Method = z
+  .object({
+    name: ProfileName,
+    agent: z.enum(["codex", "claude-code", "oracle", "empty"]),
+    auth: ProfileName.optional(),
+    model: z.string().optional(),
+    /** Reasoning effort, e.g. `high`. */
+    effort: z.string().optional(),
+    /** Method bundle directory (AGENTS.md / CLAUDE.md, skills) copied into the Agent home. */
+    bundle: z.string().optional(),
+  })
+  .refine((m) => m.agent === "oracle" || m.agent === "empty" || Boolean(m.auth), {
+    message: "agent methods need an auth profile",
+  });
+export type Method = z.infer<typeof Method>;
+
+export const BenchJobSpec = z.object({
+  name: z.string().max(200).optional(),
+  benchmark: ProfileName,
+  /** Task ids; default: every supported task. */
+  tasks: z.array(z.string()).default([]),
+  methods: z.array(Method).min(1),
+  /** Repetitions per task × method. */
+  seeds: z.number().int().min(1).max(100).default(1),
+  /** Adapter options, e.g. asi `promptLevel` (default b1). */
+  options: z.record(z.string(), z.string()).default({}),
+  /** Override the per-task solve timeout. */
+  timeoutMin: z.number().positive().optional(),
+});
+export type BenchJobSpec = z.infer<typeof BenchJobSpec>;
+export type BenchJobSpecInput = z.input<typeof BenchJobSpec>;
+
+export const Evaluation = z.enum(["valid", "invalid", "unknown"]);
+export type Evaluation = z.infer<typeof Evaluation>;
+
+/** Execution, evaluation and cleanup are separate: only `valid` scores enter means. */
+export const Outcome = z.object({
+  /** How the solve run ended (RunState, or `skipped`). */
+  execution: z.string(),
+  evaluation: Evaluation,
+  score: z.number().nullable(),
+  maxScore: z.number(),
+  issues: z.array(z.string()),
+  cleanup: z.enum(["pending", "done", "failed"]),
+});
+export type Outcome = z.infer<typeof Outcome>;
+
+export const TrialState = z.enum(["pending", "solving", "verifying", "done"]);
+export const Trial = z.object({
+  id: z.string(),
+  jobId: z.string(),
+  task: z.string(),
+  method: z.string(),
+  seed: z.number().int(),
+  state: TrialState,
+  solveRunId: z.string().nullable(),
+  verifyRunId: z.string().nullable(),
+  /** Notes gathered before the outcome (e.g. artifacts the solve run did not produce). */
+  issues: z.array(z.string()).default([]),
+  outcome: Outcome.nullable(),
+  createdAt: z.string(),
+  endedAt: z.string().nullable(),
+});
+export type Trial = z.infer<typeof Trial>;
+
+export const BenchJob = z.object({
+  id: z.string(),
+  spec: BenchJobSpec,
+  state: z.enum(["running", "done", "cancelled"]),
+  createdAt: z.string(),
+  endedAt: z.string().nullable(),
+});
+export type BenchJob = z.infer<typeof BenchJob>;
+
+export const MethodSummary = z.object({
+  method: z.string(),
+  trials: z.number().int(),
+  valid: z.number().int(),
+  invalid: z.number().int(),
+  unknown: z.number().int(),
+  pending: z.number().int(),
+  /** Mean score over valid trials, in percent of the maximum; null without valid trials. */
+  meanPct: z.number().nullable(),
+});
+export type MethodSummary = z.infer<typeof MethodSummary>;
+
+export const BenchJobDetail = z.object({
+  job: BenchJob,
+  trials: z.array(Trial),
+  summary: z.array(MethodSummary),
+});
+export type BenchJobDetail = z.infer<typeof BenchJobDetail>;
+
+export const BenchJobList = z.object({
+  jobs: z.array(BenchJob.extend({ summary: z.array(MethodSummary) })),
+});
+export type BenchJobList = z.infer<typeof BenchJobList>;
+
+export const BenchmarkList = z.object({ benchmarks: z.array(Benchmark) });
+export const BenchTaskList = z.object({ tasks: z.array(BenchTask) });
+
+/** Methods from several jobs side by side; columns are `<job>/<method>`. */
+export const BenchCompare = z.object({
+  columns: z.array(z.object({ key: z.string(), jobId: z.string(), method: z.string() })),
+  rows: z.array(
+    z.object({
+      task: z.string(),
+      /** Mean percent over valid trials per column; null when none are valid. */
+      cells: z.record(z.string(), z.number().nullable()),
+      /** Evaluation counts per column: `valid/total`. */
+      counts: z.record(z.string(), z.string()),
+    }),
+  ),
+  /** Per column: mean over all its valid tasks, and over the tasks valid in every column. */
+  means: z.record(
+    z.string(),
+    z.object({ all: z.number().nullable(), paired: z.number().nullable() }),
+  ),
+  pairedTasks: z.number().int(),
+});
+export type BenchCompare = z.infer<typeof BenchCompare>;

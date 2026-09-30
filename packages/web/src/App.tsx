@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   IconChip,
   IconCompare,
+  IconFlask,
   IconKeyboard,
   IconLogo,
   IconMoon,
@@ -15,6 +16,7 @@ import { authState } from "./lib/api.ts";
 import { useHotkeys } from "./lib/hotkeys.ts";
 import { navigate, useLocation } from "./lib/router.ts";
 import { startRunsStore, useRunsState } from "./lib/runs-store.ts";
+import { BenchComparePage, BenchJobDetail, BenchJobs } from "./pages/Bench.tsx";
 import { Compare } from "./pages/Compare.tsx";
 import { Resources } from "./pages/Resources.tsx";
 import { RunDetail } from "./pages/RunDetail.tsx";
@@ -57,6 +59,7 @@ export function App() {
     "?": () => setHelp((h) => !h),
     "g r": () => navigate("/"),
     "g c": () => navigate("/compare"),
+    "g b": () => navigate("/bench"),
     "g s": () => navigate("/resources"),
     "g p": () => navigate("/settings"),
     Escape: () => {
@@ -67,7 +70,11 @@ export function App() {
 
   let page: React.ReactNode;
   const m = /^\/runs\/([^/]+)\/?$/.exec(loc.path);
+  const bj = /^\/bench\/([^/]+)\/?$/.exec(loc.path);
   if (m) page = <RunDetail key={m[1]} id={decodeURIComponent(m[1] as string)} />;
+  else if (loc.path === "/bench/compare") page = <BenchComparePage />;
+  else if (bj) page = <BenchJobDetail key={bj[1]} id={decodeURIComponent(bj[1] as string)} />;
+  else if (loc.path === "/bench" || loc.path === "/bench/") page = <BenchJobs />;
   else if (loc.path === "/compare") page = <Compare />;
   else if (loc.path === "/resources") page = <Resources />;
   else if (loc.path === "/settings") page = <Settings />;
@@ -117,6 +124,7 @@ export function App() {
         </div>
         {nav("/", "Runs", <IconRuns />, loc.path === "/" || loc.path.startsWith("/runs"), "r")}
         {nav("/compare", "Compare", <IconCompare />, loc.path === "/compare", "c")}
+        {nav("/bench", "Bench", <IconFlask />, loc.path.startsWith("/bench"), "b")}
         {nav("/resources", "Resources", <IconChip />, loc.path === "/resources", "s")}
         {nav("/settings", "Settings", <IconSettings />, loc.path === "/settings", "p")}
         <div className="spacer" />
@@ -158,7 +166,7 @@ export function App() {
 
 const SHORTCUTS: [string, string][] = [
   ["⌘K / Ctrl K", "Command palette: jump to any run or page"],
-  ["g r · g c · g s · g p", "Go to Runs · Compare · Resources · Settings"],
+  ["g r · g c · g b · g s · g p", "Go to Runs · Compare · Bench · Resources · Settings"],
   ["j / k", "Move down / up in lists"],
   ["Enter / o", "Open the selected run"],
   ["x", "Select run (for compare)"],

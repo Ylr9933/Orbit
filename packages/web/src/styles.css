@@ -1490,3 +1490,69 @@ mark.cur {
   letter-spacing: 0.06em;
   color: var(--text-3);
 }
+
+/* ---- bench ---- */
+.score {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font: 500 12px var(--font-mono);
+  color: var(--text);
+  background: color-mix(in srgb, var(--st-succeeded) calc(var(--p, 0) * 55%), var(--surface-3));
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.score.invalid {
+  color: var(--st-failed);
+  background: var(--del-bg);
+}
+.score.unknown {
+  color: var(--st-cancelled);
+  background: rgba(210, 153, 34, 0.12);
+}
+.score.pending {
+  color: var(--text-3);
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+}
+a.score:hover {
+  border-color: var(--border-strong);
+  text-decoration: none;
+}
+.score .n {
+  margin-left: 5px;
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+.matrix td,
+.matrix th {
+  text-align: center;
+}
+.matrix td:first-child,
+.matrix th:first-child {
+  text-align: left;
+}
+.matrix tr.mean td {
+  border-top: 1px solid var(--border-strong);
+  font-weight: 600;
+}
+.evalbar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--surface-3);
+}
+.evalbar > span {
+  height: 100%;
+}
+.delta.up {
+  color: var(--st-succeeded);
+}
+.delta.down {
+  color: var(--st-failed);
+}

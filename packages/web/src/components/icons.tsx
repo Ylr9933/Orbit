@@ -265,3 +265,10 @@ export const IconKey = (p: P) => (
     <path d="M11 12l9-9M17 6l3 3M15 8l2 2" />
   </I>
 );
+export const IconFlask = (p: P) => (
+  <I {...p}>
+    <path d="M9 3h6" />
+    <path d="M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3" />
+    <path d="M7 15h10" />
+  </I>
+);

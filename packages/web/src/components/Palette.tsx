@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { runTitle } from "../lib/format.ts";
 import { navigate } from "../lib/router.ts";
 import { useRuns } from "../lib/runs-store.ts";
-import { IconChip, IconCompare, IconLayers, IconRuns, IconSettings } from "./icons.tsx";
+import { IconChip, IconCompare, IconFlask, IconLayers, IconRuns, IconSettings } from "./icons.tsx";
 import { StateIcon } from "./ui.tsx";
 
 interface Item {
@@ -37,6 +37,14 @@ export function Palette({ onClose }: { onClose: () => void }) {
         icon: <IconCompare size={15} />,
         text: "compare",
         go: "/compare",
+      },
+      {
+        key: "p-bench",
+        group: "Pages",
+        label: "Bench",
+        icon: <IconFlask size={15} />,
+        text: "bench benchmark jobs methods",
+        go: "/bench",
       },
       {
         key: "p-res",

@@ -142,7 +142,7 @@ NVIDIA spec 时），否则 `--gpus device=<UUID>`；启动后核对 `nvidia-smi
 `/api/v1`：`health`、`resources`、`doctor`、`ledger`（资源 + 活动租约 + 排队原因）、`GET/POST runs`、
 `runs/:id`、`runs/:id/{cancel,note,wait,events,logs,log.txt,metrics,artifacts,files/*,diff,session}`、
 `stream`（SSE，Run 变化推送）、`GET/POST auth`、`DELETE auth/:name`、`POST auth/:name/test`、
-`GET/POST notify`、`DELETE notify/:name`、`POST notify/:name/test`。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
+`GET/POST notify`、`DELETE notify/:name`、`POST notify/:name/test`，以及 bench 路由（§7）。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
 `orbit web [id]` 用 token 打开浏览器并定位到 Run。
 
 Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行详情、GitHub 的 diff 视图）：
@@ -153,6 +153,7 @@ Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行�
   Session（Agent 轨迹，标出提交点）、Events。
 - **Compare**：`?ids=` / `?group=`，按 seed 聚合 mean ± std、相对基线的变化、曲线叠加、配置差异。
 - **Resources**：GPU 卡片（Orbit 租约 / 外部占用 / 空闲、显存与利用率）、租约与队列。
+- **Bench**：job 列表、job 详情（分数矩阵）、方法对比（§7）。
 - **Settings**：容器内 Agent 版本、auth profile（掩码、测试、删除）、通知目标（发测试、删除）、浏览器通知开关。
   Web 不录入密钥：添加 profile / 目标只走 CLI。
 
@@ -198,20 +199,70 @@ Agent 的 home 放在 `/orbit/agent/{codex,claude}`（`CODEX_HOME`、`CLAUDE_CON
 ## 7. 刷榜（bench）
 
 ```
-AgentProfile = harness + version + model + auth + method bundle (directory)
+AgentProfile = harness + version + model + auth + method bundle (directory)   → contracts.Method
 Benchmark    = tasks + per-task environment + instruction + verifier + aggregation
 Trial        = task × AgentProfile × seed → solve Run (Agent inside) + verify Run (separate)
-Outcome      = { execution, evaluation: valid|invalid|unknown, score?, issues[], cleanup }
+Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore, issues[], cleanup }
 ```
 
-- 只有 `evaluation=valid` 的分数进入均分；无效或未知单独列出，不静默计入。
-- **适配器两类**：
-  1. **Harbor 格式**（首选）：任务目录含 `instruction.md`、`environment/Dockerfile`、`tests/`、`solution/`、
-     `task.toml`。Orbit 自己的执行器直接运行这种目录。Harbor 已有的适配器可直接导出任务目录复用。
-  2. **原生包装**：benchmark 有不可拆分的原生 runner（如 ASI 的 BenchFlow），以 process 后端运行原 runner，
-     Orbit 管资源租约、跟踪其子容器（label/代理）、解析结果。
+- **Method**（`contracts.Method`）：`{ name, agent: codex | claude-code | oracle | empty, auth?, model?, effort?, bundle? }`。
+  `oracle` 运行参考解、`empty` 什么都不交，用于检验适配器；Agent 方法必须有 harness 匹配的 auth profile。
+  `bundle` 目录（AGENTS.md / CLAUDE.md、skills）复制进 Agent home（`RunSpec.agentBundle`）；harness 版本由 Run 的
+  `harness` 事件记录。
+- **Benchmark 登记**：`~/.orbit/benchmarks.json`（0600，daemon 写）存 `{ name, adapter: harbor | asi, path, python?,
+  instances?, env, passEnv[] }`。`passEnv` 只记变量名（如评审模型的 API key），启动 Run 时从 daemon 环境读取，不落盘。
+- **Job / Trial**：sqlite 表 `bench_jobs`、`bench_trials`。每个 trial 独立推进：`pending → solving → verifying → done`；
+  `BenchService` 监听 Run 变化推进，daemon 重启后从库中恢复未完成的 trial。solve 与 verify 都是普通 Run
+  （同一租约、队列、记录、Web 详情），`group = bench-<job>`，tags `{bench, job, trial, phase}`；verify Run
+  `priority = 1`，排队时先于新的 solve 调度。
+- **Outcome 判定**（`bench/classify.ts`），执行、评测、清理分开：
+
+| 情况 | evaluation |
+| --- | --- |
+| solve 取消 / lost，verify 取消 / lost，job 取消 | unknown |
+| solve 未启动（镜像构建、租约、认证失败） | invalid（环境问题，不是方法的结果） |
+| solve 失败或超时 | 照常 verify（方法的结果；超时记入 issues） |
+| verify 未启动、超时，没有分数，或适配器判为无效（无 reward、scorer 内部错误、模型不可用且 0 分） | invalid |
+| 其余 | valid |
+
+  只有 `valid` 的分数进入均分；无效或未知单独列出，不静默计入。清理状态汇总两个 Run 的 `cleanup`。
+- **聚合**：每个方法的均分 = valid trial 的 `score / maxScore` 百分比均值。跨 job 对比时列为 `<job>/<method>`，
+  给出全部 valid 任务的均值和**配对均值**（只取每一列都 valid 的任务），避免方法在不同任务子集上比较。
+
+**适配器**（`bench/adapter.ts`：`tasks`、`solveSpec`、`verifySpec`、`score`，只生成 RunSpec 与读文件，不提交 Run）：
+
+1. **Harbor 格式**（`bench/harbor.ts`，TB-Science）：任务目录含 `task.toml`、`instruction.md`、`environment/Dockerfile`、
+   `tests/`、`solution/`。solve Run 从 `environment/Dockerfile` 构建，以镜像的 WORKDIR 与 root 运行（与 Harbor 一致），
+   资源、网络、超时来自 `task.toml`；Agent 命令为 headless CLI + `instruction.md`，oracle 把 `solution/` 挂到
+   `/solution` 执行 `solve.sh`。顶层 `artifacts` 声明的路径在 solve 结束时采集（`RunSpec.collect`，
+   写入 `output/collected/<abs path>`），verify Run 从 `tests/Dockerfile` 构建，把采集到的产物复制挂载到目标路径，
+   运行 `bash /tests/test.sh`，采集 `/logs/verifier`，读取 `reward.json`（`reward` 键或唯一键）或 `reward.txt`。
+   只支持 `environment_mode = "separate"`；docker-compose 环境、其他 service 的 artifacts 标为不支持。
+2. **原生包装**（`bench/asi.ts`，ASI-Bench seed31415）：solve Run 以 **process 后端**运行
+   `python -m ai4sci_bench.cli run`（单实例、单 prompt level，`--output-dir $ORBIT_OUTPUT/native`）；Agent 方法走
+   ASI 自己的 `codex_cli` / `claude_code_cli` 适配器，oracle 用 `--agent-cmd` 复制 `reference/` 中的声明输出，empty 为
+   `true`。verify Run 把 solve 结果复制到自己的输出目录，给没有产出任何声明文件的结果补一个空 `.outputs/`
+   （原生 scorer 否则直接报错），再运行 `ai4sci_bench.cli score`；分数取该实例最新 attempt 的 `final_score / max_score`。
+   ASI checkout 只读：进程 cwd 是 Run 目录，`PYTHONPATH` 指向 checkout，`PYTHONDONTWRITEBYTECODE=1`。
+
+**process 后端**（`RunSpec.backend = "process"`，`runs/process.ts`）：命令直接在宿主以独立进程组运行，
+cwd 默认为 Run 目录，HOME 为 Run 私有目录；环境包含 `spec.env`、`passEnv`、`ORBIT_OUTPUT`、
+`CUDA_VISIBLE_DEVICES`（租约中的 GPU）。PATH 最前面是 Run 私有的 `docker` shim（`orbit __docker-shim`，
+`runs/shim.ts`）：给 runner 启动的容器加 `orbit.parent=<run>` 标签，把 `--gpus` 换成租约中的 GPU（没有租到 GPU 则拒绝），
+有 auth 时注入 Agent CLI 与凭据挂载，`hostNetwork` 时 build 用宿主网络，其余参数原样传给真实 docker。
+取消 / 超时向进程组发 SIGTERM（宽限后 SIGKILL）并停止子容器；只有进程组与带标签的子容器都消失才释放租约。
+daemon 重启后按 pid + 启动时间重新接管进程。运行中的 process Run 日志在 API 中不返回（写完后统一脱敏）。
+
+**接口**：API `GET/POST /benchmarks`、`DELETE /benchmarks/:name`、`GET /benchmarks/:name/tasks`、
+`GET/POST /bench/jobs`、`GET /bench/jobs/:id`、`POST /bench/jobs/:id/cancel`、`GET /bench/compare?jobs=a,b`；
+CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|compare`；Web `/bench`（job 列表与登记的 benchmark）、
+`/bench/<job>`（方法均分、有效性分布、任务 × 方法分数矩阵、问题列表与 solve/verify Run 链接）、
+`/bench/compare?jobs=`（逐任务对比、全部与配对均值、相对第一列的差值）。接入新 benchmark 见
+[guides/bench-adapter.md](guides/bench-adapter.md)。
+
 - **接入验收（任意新 benchmark）**：oracle 满分、空答案零分、抽样与原版结果一致。
-- 首批：ASI（原生包装）→ TerminalBench-Science（Harbor 格式）。
+- **已知限制**：verify Run 在 solve 结束后才提交，group 通知可能在 job 中途（某一时刻组内无排队/运行 Run）提前发出；
+  ASI 包装每个 trial 调一次原生 runner，不复用其并行调度。
 
 ## 8. 多节点（R4）
 

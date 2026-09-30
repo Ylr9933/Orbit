@@ -91,7 +91,22 @@ The host's CLI is mounted read-only and put on `PATH`; the container is the sand
 fits, ask the human to add one (`orbit auth add`). Completion and failure notifications are sent to
 the targets in `orbit notify list`; a group sends one summary when its last run ends.
 
-## 6. Record conclusions
+## 6. Benchmarks
+
+To evaluate a method on a registered benchmark, use `orbit bench`, not hand-written loops of runs:
+
+```bash
+orbit bench ls && orbit bench tasks <benchmark>          # unsupported tasks show the reason
+orbit bench run <benchmark> -t <task> -m oracle -m empty -m mine=codex,auth=<profile>,model=<m> -n try
+orbit bench show <job>                                   # per-method means, matrix, issues
+orbit bench compare <job> <job>...                       # all-valid and paired means
+```
+
+Each trial is a solve run plus a separate verify run. Only `valid` trials count; read the issues of
+`invalid` ones (environment or scorer failures, unusable model) instead of treating them as zeros.
+Run `oracle` and `empty` first on a new benchmark or task set: oracle should score full, empty zero.
+
+## 7. Record conclusions
 
 After analysing a run or a group, attach a short note so the human sees it next to the results:
 
