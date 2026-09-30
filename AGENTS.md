@@ -1,200 +1,67 @@
-# Agent Development Rules
+# Orbit Agent Rules
 
-These rules apply to code, tests, configuration, documentation, and changes to this file. Use them together with the user's approved task scope and any applicable directory-level `AGENTS.md` files.
+Orbit runs experiments for Codex / Claude Code in isolated Docker containers under resource rules,
+and records everything for local review. Keep it **simple and practical**: build what we actually use.
 
-`AGENTS.md` is the canonical policy; `CLAUDE.md` mirrors it for discoverability. Keep their policy content identical and update both in the same change.
+These rules apply to every change, including this file. `CLAUDE.md` imports this file; edit only `AGENTS.md`.
 
-## 1. Start and resume from evidence
+## 1. Before you start
 
-Read in this order:
+1. Read this file, [docs/design.md](docs/design.md) and [docs/status.md](docs/status.md).
+2. If resuming, read the task record in `docs/tasks/` and reconcile it with `git status`, `git log` and the diff.
+   Do not trust a record or conversation memory over the actual files.
+3. Identify the goal, the modules touched and how you will prove it works.
 
-1. This file and any applicable directory-level instructions.
-2. [Project status](docs/project-status.md).
-3. The relevant task record in `docs/changes/`.
-4. Use [the documentation map](docs/README.md) to locate the relevant architecture, development guidance, and actual code. Check document status and current implementation before applying a proposed layout.
+## 2. Git
 
-Before editing, inspect the repository root, current branch, working tree, staged changes, and relevant recent commits. When Git is available, start with `git status --short --branch` and inspect the relevant diffs. Identify the task's goal, boundaries, and acceptance criteria.
+- Never edit, commit or push on `main`. Work on a task branch (`feat/…`, `fix/…`, `docs/…`, `refactor/…`).
+  Use a separate worktree beside the main checkout (`../infra-wt-<name>`) for concurrent tasks.
+- Stage only files of your task; review the full staged diff before committing.
+- Do not reset, clean, stash or overwrite work you did not create. Do not rewrite shared history or force-push `main`.
+- Push, open PRs and merge only as the user has authorized.
 
-When resuming, reconcile the task record with the actual files, commits, and PR state. Preserve prior user decisions and authorization. Do not rely on conversation memory alone or treat a stale record as proof that work is complete.
+## 3. Code
 
-## 2. Protect `main` and isolate work
+- Follow the module layout and dependency table in [docs/design.md §3](docs/design.md). `pnpm check` enforces it.
+- The daemon is the only writer of local state. CLI, MCP and Web go through the HTTP API (`client/`).
+- Shared data shapes live in `contracts/` as zod schemas. Change a contract → update daemon, client, CLI, Web and tests together.
+- Extend existing modules before adding new ones. No second state machine, ledger, store or execution path.
+- Execution outcome, cleanup status and evaluation validity stay separate fields. Release a lease only after cleanup is confirmed.
+- Fakes and test doubles are explicit and never substitute for failing real integrations.
+- Secrets, credentials, datasets, weights, runtime logs and run artifacts never enter Git or records.
+- Real Docker/GPU checks touch only Orbit-labelled resources created by the task; never stop unrelated workloads.
+- TypeScript only uses erasable syntax (no `enum`, no parameter properties) so Node can run `.ts` directly.
+- Code, identifiers and code comments in English. Keep comments rare and useful.
 
-- Never create or edit project files, make direct commits, or push directly on `main`. This includes documentation, progress records, configuration, and `AGENTS.md` itself.
-- Before making changes in a Git repository, create or switch to a non-`main` task branch. Examples: `feat/agent-codex`, `fix/run-cancellation`, and `docs/agent-workflow`. Create a task branch before editing from a detached HEAD as well.
-- Use a separate worktree for each concurrent editing task. Different developers should use their own clones. Keep linked worktrees beside the main checkout, outside the project's source tree.
-- Treat `main` as read-only for development. An authorized PR merge may advance it after the required review and checks; this does not authorize direct development on `main`.
-- Verify the branch and review the full staged diff before committing or publishing. Stage only files belonging to the task.
-- Preserve existing work. Do not overwrite, reset, clean, stash, or include another person's changes merely to obtain a clean workspace. Investigate overlapping changes and isolate your task where possible.
-- Do not rewrite shared branch history, force-push `main`, or bypass required checks or reviews. Branch protection must be configured on the hosting platform; this document and CODEOWNERS alone do not enforce it.
-- Give concurrent worktrees separate local configuration, writable state, ports, and service namespaces. Filesystem isolation does not allocate shared GPUs or other execution resources.
+## 4. Done means verified
 
-### Before Git initialization
+- `pnpm verify` (format, lint, types, boundaries, tests, build) passes.
+- Changes touching Docker, GPUs, auth or Agent CLIs also need a real check on this machine when feasible.
+- Report every check honestly as `passed`, `failed` or `not_run` (with reason). Never report a fake-backed check as real.
 
-If the directory is not yet a Git repository, an explicitly requested documentation or bootstrap task may prepare its files. Record that Git is not initialized and leave branch, commit, and PR fields null. Do not claim that any change is committed, protected, or merged.
+## 5. Records (keep them short)
 
-Initialize Git only when that work is within the authorized scope. Start an authorized initialization on a non-`main` branch such as `bootstrap/repository`; establish the first `main` baseline through the agreed bootstrap procedure. This is a one-time setup procedure, not an exception for modifying an existing `main` branch. Never assume that `main`, `origin`, or a PR service already exists.
-
-## 3. Work autonomously within the approved scope
-
-The normal workflow is:
-
-`Read context -> isolate the task -> implement -> validate -> update records -> commit and prepare review -> merge when authorized -> verify integration`
-
-Proceed with implementation, relevant tests, fixes, and appropriate task-branch checkpoints within the approved scope. Publishing branches, opening PRs, and merging must follow the user's established authorization and repository review rules. Do not ask again for authorization already given.
-
-If review or additional authorization is needed for a later action, first finish the authorized work and produce a concrete, reviewable result. Missing remote configuration or a pending review does not prevent independent implementation and validation.
-
-Keep unrelated refactoring, formatting sweeps, directory moves, and dependency upgrades separate. Changes to this policy, CI requirements, or branch protection must be explicitly requested governance work; never weaken them to make an unrelated task pass.
-
-Before implementation, identify the acceptance criteria, affected modules/public interfaces, and required checks in the task record when one is required. For parallel work, agree interface changes with their producers and consumers and coordinate overlapping files; routine work within an agreed boundary does not require renewed approval.
-
-## 4. Respect the implementation boundaries
-
-- Product code belongs in `src/agent_infra/` and `src/web/`. Use the designated `docs/`, `tests/`, `deploy/`, `configs/`, `examples/`, and `scripts/` directories for their documented purposes.
-- Follow the functional module layout and import direction in `pyproject.toml`: `bootstrap` assembles dependencies, `gateways` adapt protocols, `runs` coordinates module contracts, and domain modules keep their rules and backends local. Shared `contracts` remain independent. See `CONTRIBUTING.md` for the enforced dependency graph and its limits.
-- Keep HTTP, MCP, CLI, and Worker entrypoints thin. Do not expose Ray handles, Docker clients, or database sessions through public contracts.
-- Extend existing modules and interfaces before introducing alternatives. Avoid duplicate managers, DTOs, state machines, and execution paths.
-- Update consumers, relevant tests, examples, and documentation when a public contract changes. Edit generated files through their source definitions and regenerate them. Maintain dependency declarations and their lockfiles together.
-- Preserve benchmark visibility, budgets, evaluation, and aggregation rules. Keep execution outcomes, scores, and cleanup status distinct. Resource release must reflect actual process and container cleanup.
-- Keep secrets, credentials, large datasets, model weights, runtime logs, and generated task artifacts out of versioned project records. Use non-sensitive references and concise evidence.
-- Cross-module calls use the designated public contracts, not another module's implementation or backend internals. Make test doubles and placeholders explicit; do not silently substitute them for failing production integrations or present their output as real execution.
-- Before real Docker, GPU, or multi-node checks, identify the target nodes, resource/time budget, and task-owned environments or jobs. Scope cleanup to those resources; do not stop unrelated workloads.
-
-### Documentation placement
-
-Consult [the documentation map](docs/README.md) before adding or moving documents.
-
-| Location | Content |
-| --- | --- |
-| `docs/product/` | Product goals, user scenarios, scope, and acceptance requirements |
-| `docs/architecture/` | System/module design, interface proposals, and design investigations |
-| `docs/adr/` | Focused architectural decisions: context, alternatives, decision, and consequences |
-| `docs/development/` | Development sequence, contributor setup, testing, and collaboration guides |
-| `docs/operations/` | Deployment, node administration, monitoring, backup, recovery, and troubleshooting runbooks |
-| `docs/reference/` | API, configuration, command, and compatibility reference, tied to an explicit version/status |
-| `docs/implementation/` | Maintainer walkthroughs of implemented code paths, object relationships, failure behavior, and extension points, kept aligned with source code |
-| `docs/changes/` | Task records following section 6 |
-| `docs/assets/` | Small images and other assets used by documentation |
-
-`docs/README.md` is the navigation and placement guide; `docs/project-status.md` is the concise progress overview. Update an existing authoritative document when appropriate and link related documents instead of duplicating their content. Mark proposals and unimplemented commands explicitly; operational instructions must state their prerequisites and validation scope. When moving documents, update their links. Keep runtime artifacts and product-required prompts in their designated runtime/source locations, not in documentation assets.
-
-## 5. Validate the actual change
-
-Check that tools, configuration, and commands are implemented before using them. Empty files, directory scaffolding, proposed commands, and design documents are not evidence of working capabilities.
-
-Use checks appropriate to the change: document structure and links for documentation; relevant unit, contract, integration, or end-to-end checks for implementation. Real Agent, Docker, GPU, and multi-node Ray behavior requires the corresponding real-environment evidence when it is part of the acceptance criteria.
-
-Record the actual command or manual check, the tested revision or identifiable workspace snapshot, the result, and any necessary evidence. Distinguish `passed`, `failed`, and `not_run`; explain skipped checks and their impact. Never report a planned check as executed, or a fake-backed check as real-environment validation.
-
-Resolve required failed checks before declaring the work complete. If required acceptance checks cannot run, retain an incomplete or blocked status unless the user has explicitly revised the acceptance scope. Once relevant checks pass, repeat or broaden them only when subsequent changes or unresolved concerns justify it.
-
-Before delivery, inspect the final diff for unrelated changes, unintended files, sensitive data, and inconsistencies between implementation and documentation.
-
-## 6. Persist current progress and task history
-
-Maintain two complementary documents:
-
-| Location | Purpose | Update model |
+| File | Purpose | Rule |
 | --- | --- | --- |
-| `docs/project-status.md` | A concise view of the project's current capabilities, stage, gaps, and next priorities | Replace outdated conclusions; do not append a running history |
-| `docs/changes/<task-id>.md` | Recoverable task context, decisions, evidence, and final results | Update during development; preserve as history after integration |
+| `docs/design.md` | Architecture, contracts, decisions | Update in the same branch when a boundary, contract or decision changes |
+| `docs/status.md` | What works now, gaps, next steps | ≤ 40 lines; replace outdated text, never append history |
+| `docs/tasks/<YYYYMMDD-slug>.md` | One per feature, substantive fix or design change | Use the template below; small fixes need only a good commit message |
+| `docs/guides/` | How to use a feature | Only for implemented behavior |
 
-Do not maintain a second manual global activity log or daily log with the same content. Daily reports or release summaries can be derived from task records and Git/PR history when needed. Keep detailed architecture decisions in `docs/adr/` and reference them from task records.
-
-### Project status format and meaning
-
-Keep `docs/project-status.md` approximately one page. Include:
-
-- **Updated at:** an ISO 8601 timestamp with timezone; this is the document update time, not a claimed merge time.
-- **Basis:** normally the version of the document on `main`; explicitly identify a pre-Git workspace when applicable.
-- **Current stage and stage overview:** use the architecture's S0-S4 milestones.
-- **Available capabilities or outcomes:** what has actually been delivered and, where applicable, validated.
-- **Main gaps:** what remains before the current stage can be accepted.
-- **Next priorities:** the most important one to three next outcomes.
-- **Project-level blockers:** issues affecting overall progress, separate from completion status.
-- **Related records:** a small number of links to relevant task records or decisions.
-
-Stage status must be `not_started`, `in_progress`, or `accepted`. `in_progress` means some relevant work has been integrated but the stage's acceptance criteria remain unmet. `accepted` requires evidence for those criteria. Before Git initialization, label these as workspace outcomes. Do not invent completion percentages or equate an empty module directory with a working feature.
-
-Once Git exists, the `main` version describes integrated project facts. An update on a task branch proposes the status that will hold if its PR is merged. Do not mark another unmerged branch's feature as available. Next priorities may describe future work, but the overview must not become a live roster of every agent, session, and branch.
-
-Update the overview when a delivered capability, milestone, major gap, priority, or project-level blocker changes. Ordinary progress within a task and minor fixes usually do not require an overview update.
-
-### Task records: granularity and lifecycle
-
-Use one record per independently reviewable and mergeable significant task, not per day, conversation, session, or individual commit. A task spanning several days or sessions keeps the same ID. Split a large initiative into records for its independently delivered changes and link the related task IDs.
-
-Records are required for new capabilities, substantive bug fixes, public contract or state changes, dependency or deployment changes, and important architecture or governance work. Pure spelling or formatting corrections may rely on the PR description alone.
-
-Use a stable, collision-resistant ID such as `YYYYMMDD-short-description-unique-suffix`. Its date is an identifier component, not an inferred completion or merge date. Avoid shared sequential counters.
-
-Create the record when a significant task starts. Update it after meaningful milestones, when blocked, before pausing or handing off, and before delivery. Save enough context for another session to continue; make appropriate task-branch checkpoint commits when useful. Do not record every shell command or copy entire conversations.
-
-Use the following format. All fields and sections are required; use null or `None` with an explanation when information does not exist. Replace placeholders with actual facts.
+Task record template:
 
 ```markdown
----
-record_version: 1
-task_id: "YYYYMMDD-short-description-unique-suffix"
-title: "A concise description of the task"
-branch: "feat/task-name"
-base_commit: "<starting commit SHA>"
-work_status: in_progress
-updated_at: "<ISO 8601 timestamp with timezone>"
-pull_request: null
----
+# <title>
+branch: <branch> · status: in_progress | blocked | completed · updated: <ISO date>
 
-## Goal and acceptance
-
-- The problem, scope, and conditions for completion.
-
+## Goal
 ## Changes
-
-- The actual behavior changed and the relevant modules or files.
-
-## Decisions
-
-- Necessary decisions and reasons; link related tasks or ADRs.
-
 ## Validation
-
-| Check or command | Tested revision or snapshot | Result | Evidence or limitation |
-| --- | --- | --- | --- |
-| <actual check> | <commit or workspace snapshot> | passed / failed / not_run | <evidence or reason> |
-
-## Open items and blockers
-
-- Remaining acceptance items or blockers; write None when there are none.
-
-## Next steps
-
-- A concrete next action, or None when the authorized work is complete.
-
-## Compatibility and rollback
-
-- Interface, configuration, data, or deployment impact and any necessary rollback approach.
+| Check | Revision | Result | Notes |
+## Next / open issues
 ```
 
-`work_status` must be `planned`, `in_progress`, `blocked`, or `completed`. It describes work against the approved scope and required validation, not Git integration. A `completed` record does not imply that its branch has been merged.
+## 6. Handoff
 
-Keep Git integration facts in Git/PR history. Do not require the final merge SHA to be embedded in the record carried by that same commit. Reference the tested code commit or a reproducible snapshot instead; do not fabricate a future SHA or merge timestamp.
-
-### Integrate records with their changes
-
-- Include a significant change and its finalized task record in the same branch and PR. Include the overview update in that PR when the overall project state changes.
-- Before merging, reconcile overview edits with the latest target branch. Modify only relevant conclusions and preserve other integrated outcomes. Resolve conflicts semantically; do not choose one entire version just to remove a conflict.
-- Verify that the final code, required record, and applicable overview update reached the intended `main` branch before reporting integration as complete. Do not edit `main` afterward to add a missing log entry; use a follow-up task branch and PR if a correction is needed.
-- Preserve integrated task records as historical evidence. Later fixes, reversions, or replacements get new records linking the original; update the overview to reflect the corrected current state. Do not rewrite history to imply an earlier outcome was different.
-- Leave unfinished work in its task branch with an up-to-date record. Do not label it complete merely because the session is ending.
-
-## 7. Report a verifiable handoff
-
-At delivery or handoff, report:
-
-- What was completed and the important files or modules changed.
-- What was validated, the results, and material limitations.
-- The branch, commit, or PR when available, and the actual integration state.
-- The task record location and whether the project overview changed.
-- Remaining work, blockers, and the next action when applicable.
-
-Keep implementation completion, successful validation, and merging into `main` distinct. Report unavailable Git metadata honestly during bootstrap. Communicate with the user in their preferred language.
+Report what changed, what was verified (and what was not), the branch/commit, and the next step.
+Communicate with the user in their language (Chinese by default).

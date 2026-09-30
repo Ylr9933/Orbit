@@ -1,3 +1,0 @@
-dependencies: [six==1.17.0]
-source: user
-reason: The experiment requires six; pin its public wheel version.

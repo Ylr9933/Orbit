@@ -1,5 +1,5 @@
 packages:
-  - src/web
+  - packages/*
 
 # Explicitly review packages before allowing dependency install scripts.
 onlyBuiltDependencies: []

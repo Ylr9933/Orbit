@@ -1,7 +1,0 @@
-environment:
-  state: specified
-  image: agent-infra/codex-research:0.154.0
-tools:
-  state: none
-evaluation:
-  state: none

@@ -1,2 +1,0 @@
-# Core agent-infra is installed from the repository wheel separately.
-harbor @ git+https://github.com/harbor-framework/harbor.git@bac9a80d1d63a0265cf85e8fe18f1b752dad62d7

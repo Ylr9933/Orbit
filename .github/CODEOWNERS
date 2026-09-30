@@ -1,8 +1,1 @@
-# Temporary review routing until the four actual contributors are assigned.
-# This file requests reviews; GitHub rulesets must enforce required approval.
 * @XuehaiWang
-/.github/ @XuehaiWang
-/AGENTS.md @XuehaiWang
-/CLAUDE.md @XuehaiWang
-/src/agent_infra/contracts/ @XuehaiWang
-/docs/architecture/ @XuehaiWang

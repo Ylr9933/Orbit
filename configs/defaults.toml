@@ -1,3 +1,0 @@
-# Safe development defaults. Relative paths resolve against the current working directory.
-state_dir = "./var"
-log_level = "INFO"

@@ -1,8 +1,0 @@
-schema_version = 1
-
-[[adapters]]
-alias = "asi-bench-codex-os"
-distribution = "agent-infra-asi-bench"
-version = "0.1.0"
-entry_point = "asi-bench-codex-os"
-sdk_version = "1.0"

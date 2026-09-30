@@ -1,0 +1,187 @@
+# Orbit 设计
+
+状态：R0 已确定的目标设计。实现进度见 [status.md](status.md)。本文是架构与接口的唯一权威来源；
+改变模块边界、公共契约或关键决策时，在同一分支更新本文。
+
+## 1. 定位
+
+> Orbit 让 Codex / Claude Code 等 Agent 在隔离的 Docker 中按资源规则运行实验，
+> 并完整记录过程与结果；Web 用于本地复盘。
+
+- **Agent 是本体**：规划、写代码、分析由 Agent 和人完成。Orbit 不启动"规划 Agent"、不审批研究方案、不编排科研流程。
+- **Orbit 是插件和规范**：提供 CLI（Agent 通过 bash 调用，`--json` 输出）、薄 MCP、skill 与约定（指标、产物、实验笔记的写法）。
+- **两种用法，同一个执行原语 Run**：
+  1. 日常科研：宿主机上的 Agent 改代码 → `orbit run` 把代码快照放进容器跑 → 监控、比较、复盘。
+  2. 刷榜：`Agent + 方法包 × Benchmark`，每个 trial 在容器中运行 Agent，再独立评测，保留轨迹和分数。
+- **使用范围**：单人使用；一台或多台自己的机器（可跨网络，Tailscale）；空闲资源都可以用。
+- **不做**：多用户/权限、云控制面、自研 Agent 循环、自研实验追踪全功能替代品、官方榜单自动提交、手机对话（后续再议）。
+
+## 2. 总体结构
+
+```
+Agent (Codex / Claude Code, on host)
+  │  plugin: skill + hooks      CLI: orbit ... --json      MCP (thin, optional)
+  ▼
+orbit daemon (one per node; single writer of local state)
+  ├─ resources   ledger of GPUs/CPU/memory (+ future devices), probes, leases, queue
+  ├─ runs        Run lifecycle, scheduling loop, sweeps, rerun
+  ├─ executor    docker backend (process backend for native benchmark runners)
+  ├─ workspace   code snapshot (commit + diff), mounts, named datasets/weights
+  ├─ images      base images, project Dockerfile build cache
+  ├─ auth        credential profiles for harnesses (login / API key / relay base URL)
+  ├─ harness     how each Agent CLI is installed, configured and parsed inside containers
+  ├─ records     logs, metrics, artifacts, events, notes
+  ├─ sessions    host Agent session capture (Codex, Claude Code) linked to runs
+  ├─ bench       adapters, agent profiles + method bundles, trials, outcomes
+  └─ cluster     node join, heartbeat, remote placement (R4)
+  ▼
+Web (local SPA served by the daemon): runs, compare, logs, sessions, bench review
+```
+
+技术栈：TypeScript（Node 24，开发时直接运行 `.ts`），`node:sqlite`（无原生依赖，便于 npm 安装），
+直接调用 `docker` / `nvidia-smi` / `git` 命令行，Hono HTTP，zod 契约，commander CLI，
+vitest 测试，Biome 格式/lint，tsdown 打包。发布为单个 npm 包 `@zjunlp/orbit`，命令 `orbit`。
+
+## 3. 代码布局与依赖方向
+
+```
+packages/orbit/src/
+  contracts/   zod schemas + types shared by daemon, CLI, MCP and Web (no runtime deps on modules)
+  lib/         small generic helpers (process exec, ids, time, fs)
+  config/      paths (~/.orbit), config file, daemon endpoint/token
+  store/       sqlite access and migrations
+  resources/ auth/ images/ workspace/ executor/ harness/ records/ sessions/   domain modules
+  runs/        orchestrates domain modules into a Run
+  bench/       builds trials on top of runs
+  cluster/     multi-node (R4)
+  daemon/      HTTP API + scheduler loop wiring (composition root)
+  client/      typed HTTP client for the daemon API
+  cli/         commander commands; talks to daemon through client only
+  mcp/         MCP tools; talks to daemon through client only
+  bin.ts       composition root of the `orbit` executable (wires cli + daemon); nothing imports it
+packages/web/  React SPA; imports contracts only
+plugin/        skills and hooks for Codex / Claude Code
+```
+
+规则（由 `pnpm check:boundaries` 强制，定义在 `scripts/boundaries.ts`）：
+
+| 模块 | 可以依赖 |
+| --- | --- |
+| contracts, lib | 无（contracts 仅依赖 zod） |
+| config, store | contracts, lib |
+| resources, auth, images, workspace, executor, records | contracts, lib, config, store |
+| harness | 上一行 + auth |
+| sessions | contracts, lib, config, store, records, harness |
+| runs | 以上所有 domain 模块 |
+| bench | runs 及其可依赖的模块 |
+| cluster | runs, resources 及基础模块 |
+| daemon | 除 cli/mcp/client 外全部 |
+| client | contracts, lib, config |
+| cli, mcp | client, contracts, lib, config |
+
+- **daemon 是本机状态的唯一写者**。CLI/MCP/Web 只通过 HTTP API 访问；CLI 需要时自动拉起 daemon。
+  daemon 只监听 `127.0.0.1`（默认端口 7717），启动时生成随机 token，与地址一起写入
+  `~/.orbit/daemon.json`（0600）；所有 `/api/v1` 请求需 `Authorization: Bearer <token>`。
+  `ORBIT_HOME` 可覆盖 `~/.orbit`。
+- `src/` 根目录下的文件（如 `bin.ts`）是组合根，可引用任意模块，但不能被模块引用。
+- 同类能力只有一份实现：一个 Run 状态机、一个资源账本、一个记录库。
+- Docker、sqlite 句柄不出现在 contracts 中。
+
+## 4. 核心契约（R1 目标，字段以 `contracts/` 为准）
+
+**ResourceRequest**：`{ gpus, gpuMemGB?, gpuIds?, cpus, memGB, node? }`。Agent 按任务估算后提交；
+不满足时排队，而不是失败。
+
+**Lease**：`{ id, runId, node, gpuIds, cpus, memGB, state: active|released }`。
+只有确认容器已清理才释放。
+
+**资源可用性**：可用 = 探测到的硬件 − Orbit 活动租约 − 外部占用。外部进程占用显存超过阈值
+（默认 1 GiB）的 GPU 视为不可用；外部进程退出后自动变为可用。
+
+**RunSpec**：
+```
+{ name?, project?(repo path), image | dockerfile, command(argv), resources,
+  mounts[{ source | dataset, target, mode: ro|rw }], env, network(default true),
+  snapshot(default true when project set), auth?(profile name), tags, parentId? }
+```
+
+**Run**：`{ id, spec, state, exitCode?, node, leaseId?, containerId?, code{commit, dirty, diffRef},
+createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage{peakGpuMem, peakMem, …} }`
+
+- `state`: `queued → starting → running → succeeded | failed | cancelled | lost`。
+- 执行结果（state/exitCode）、清理状态（cleanup）、评测有效性（bench 中）是三个独立字段。
+
+**容器内约定**（skill 告诉 Agent；实验代码直接用环境变量）：
+
+| 路径 / 变量 | 含义 |
+| --- | --- |
+| `/workspace` | 代码快照（可写副本；原仓库不受影响） |
+| `$ORBIT_OUTPUT` = `/orbit/output` | 产物目录，自动归档 |
+| `$ORBIT_METRICS` = `/orbit/metrics.jsonl` | 每行一个 JSON：`{"step": 10, "loss": 0.3}`，Web 画曲线 |
+| `$ORBIT_RUN_ID` | 当前 Run ID |
+
+**代码快照**：记录 `HEAD` commit、未提交 diff 与未跟踪文件列表；复制 `git ls-files -co --exclude-standard`
+的文件到快照目录。数据和权重不进快照，用命名 dataset 只读挂载。
+
+**失败也要保留证据**：任何终态都先采集日志与 `$ORBIT_OUTPUT`，再清理容器；日志读到 EOF，截断必须标记。
+
+## 5. 认证（auth）与 harness
+
+- **Auth profile**：`{ name, harness, kind: login | api-key | relay, baseUrl?, secretRef }`，保存在
+  `~/.orbit/auth.json`（0600）。例：Codex 账号登录（`~/.codex/auth.json`）、OpenAI API key、Claude Code
+  经中转站（`ANTHROPIC_BASE_URL` + token）、DeepSeek 兼容接口。
+- 注入容器：只读挂载或环境变量；**永不写入日志、事件、轨迹**（records 写入前按已知 secret 脱敏）。
+- `orbit auth doctor <profile>`：一次低成本请求验证可用性。
+- **Harness**：描述某个 Agent CLI 在容器内如何安装（固定版本）、如何接收认证、如何传入方法包（skills、
+  AGENTS.md/CLAUDE.md、MCP 配置）、如何非交互启动、如何解析其会话/轨迹。首批：`codex`、`claude-code`。
+
+## 6. 刷榜（bench）
+
+```
+AgentProfile = harness + version + model + auth + method bundle (directory)
+Benchmark    = tasks + per-task environment + instruction + verifier + aggregation
+Trial        = task × AgentProfile × seed → solve Run (Agent inside) + verify Run (separate)
+Outcome      = { execution, evaluation: valid|invalid|unknown, score?, issues[], cleanup }
+```
+
+- 只有 `evaluation=valid` 的分数进入均分；无效或未知单独列出，不静默计入。
+- **适配器两类**：
+  1. **Harbor 格式**（首选）：任务目录含 `instruction.md`、`environment/Dockerfile`、`tests/`、`solution/`、
+     `task.toml`。Orbit 自己的执行器直接运行这种目录。Harbor 已有的适配器可直接导出任务目录复用。
+  2. **原生包装**：benchmark 有不可拆分的原生 runner（如 ASI 的 BenchFlow），以 process 后端运行原 runner，
+     Orbit 管资源租约、跟踪其子容器（label/代理）、解析结果。
+- **接入验收（任意新 benchmark）**：oracle 满分、空答案零分、抽样与原版结果一致。
+- 首批：ASI（原生包装）→ TerminalBench-Science（Harbor 格式）。
+
+## 7. 多节点（R4）
+
+每台机器运行 daemon；Agent 所在节点为主节点，其他节点用 token 加入（Tailscale 或直连）。主节点汇总
+资源并放置 Run；代码快照按内容哈希传输并缓存；数据/权重按"名字 → 节点本地路径"登记，调度只选有数据的
+节点，不自动搬运。日志与指标回传主节点，大产物留在原节点按需读取。不引入 Ray。
+
+## 8. 预留
+
+- 具身：资源类型可扩展为独占设备（如机械臂），executor 可增加设备后端。现在不写代码。
+- 手机监控/对话、Slurm：出现具体需求再设计。
+
+## 9. 路线
+
+| 阶段 | 目标 | 验收 |
+| --- | --- | --- |
+| R0 | 清理旧实现、TS 骨架、规则与设计 | `pnpm verify` 通过；`orbit resources` 在本机读出真实 GPU/CPU/内存 |
+| R1 | 单机日常科研闭环 | Codex 估算资源并提交 3-seed GPU sweep，排队、`orbit wait`、失败留证据；Web 看到 diff、曲线、日志、会话；Codex 与 Claude Code 都走通 |
+| R2 | 认证模块与通知 | login / API key / relay 三类 profile 可用于容器内 Codex、Claude Code；完成/失败通知 |
+| R3 | 刷榜 | ASI 原生包装、TB-Science Harbor 格式在同一 Run/租约上运行；方法对比页面；新 bench 接入指南 |
+| R4 | 多节点 | 一个 Agent 调度两台机器 8 张 GPU |
+
+## 10. 来自 v0（Python 版）的教训
+
+v0 的代码、文档与任务记录保留在标签 `v0-python-final`。
+
+- 控制权放在 infra（冻结 Task、容器 Planner、研究方案审批）导致流程重、不被使用。Agent 主导，Orbit 只执行和记录。
+- 科研与 benchmark 各有一套控制器、租约、存储和结果格式，互相看不见资源。只保留一套。
+- 失败路径先抛异常后收集产物，丢失证据；日志按固定块读取可能截断。终态先采集、读到 EOF。
+- ASI 60 题中 19 题评测链异常仍显示为已评分；原生 timeout 标签与真实终止事件不一致。评测有效性必须独立判定并参与汇总。
+- ASI 容器内旧版 Codex CLI 导致模型拒绝；harness 版本必须固定并在 doctor 中检查。
+- GPU 映射：Docker `--gpus device=<UUID>` 或 CDI `--device nvidia.com/gpu=<UUID>`，启动后核对实际映射与租约一致。
+- 文档与流程记录量接近代码量，拖慢迭代。只保留本文、status 与必要的任务记录。

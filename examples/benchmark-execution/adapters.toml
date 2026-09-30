@@ -1,8 +1,0 @@
-schema_version = 1
-
-[[adapters]]
-alias = "process-demo"
-distribution = "agent-infra-benchmark-process-example"
-version = "0.1.0"
-entry_point = "process-demo"
-sdk_version = "1.0"

@@ -1,0 +1,33 @@
+{
+  "name": "@zjunlp/orbit",
+  "version": "0.1.0",
+  "description": "Run, isolate and record experiments for Codex / Claude Code",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24.18.0"
+  },
+  "bin": {
+    "orbit": "dist/cli.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./contracts": "./src/contracts/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run",
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.3",
+    "commander": "15.0.0",
+    "hono": "4.13.11",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "tsdown": "0.23.0"
+  }
+}

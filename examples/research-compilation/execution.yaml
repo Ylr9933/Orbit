@@ -1,7 +1,0 @@
-environment:
-  state: specified
-  image: python:3.12-slim
-tools:
-  state: none
-evaluation:
-  state: none

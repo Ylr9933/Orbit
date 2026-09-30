@@ -1,16 +1,24 @@
 {
-  "name": "agent-infra-workspace",
+  "name": "orbit-workspace",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@10.32.1",
   "engines": {
     "node": ">=24.18.0 <25"
   },
   "scripts": {
-    "check": "biome check . && pnpm --filter @agent-infra/web typecheck",
+    "check": "biome check . && tsc -p . && pnpm -r typecheck && node scripts/boundaries.ts",
+    "check:boundaries": "node scripts/boundaries.ts",
     "format": "biome check --write .",
-    "build": "pnpm --filter @agent-infra/web build"
+    "test": "vitest run --dir scripts && pnpm -r test",
+    "build": "pnpm -r build",
+    "verify": "pnpm check && pnpm test && pnpm build",
+    "orbit": "node packages/orbit/src/bin.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.13"
+    "@biomejs/biome": "2.5.13",
+    "@types/node": "^24",
+    "typescript": "7.0.2",
+    "vitest": "5.0.2"
   }
 }

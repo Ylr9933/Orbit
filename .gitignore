@@ -74,11 +74,7 @@ pnpm-debug.log*
 .coverage.*
 /test-results/
 /playwright-report/
-/src/web/build/
-/src/web/dist/
-/src/web/coverage/
-/src/web/test-results/
-/src/web/playwright-report/
+**/dist/
 
 # Editor and operating-system files; explicitly allow shared VS Code config.
 /.idea/
@@ -98,7 +94,5 @@ Desktop.ini
 # Dependency locks, schemas, small fixtures, and documentation stay versioned.
 # Avoid broad patterns such as *.json, *.yaml, *.log, or generated/.
 
-# Local benchmark trials: native outputs, Records and frozen runtime plans.
-/benchmark/asibench/
-
-/benchmark/tb-science/
+# Local benchmark trials and runtime outputs.
+/benchmark/
