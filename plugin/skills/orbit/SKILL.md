@@ -25,8 +25,13 @@ Pick the smallest request that fits; runs that cannot get resources **wait in th
 | `--mem GB` | Host RAM: dataset held in memory + model loading peak (≈ weights size) + headroom. Default 16. |
 | `--timeout MIN` | Set one for anything that could hang. |
 
-Run `orbit resources` first to see free GPUs, their memory, active leases and the queue. State
-the estimate and its reasoning briefly to the user.
+Run `orbit resources` first to see free GPUs, their memory, active leases and the queue, on this
+machine and on any worker nodes. State the estimate and its reasoning briefly to the user.
+
+With worker nodes (`orbit node ls`), Orbit places each run on any node that fits: do not pick a node
+yourself unless the user asks (`--node <name>`). Runs that mount a host path (`-m`) stay on this
+machine; use `-d <dataset>` for data that should be usable on every node. Logs, metrics and
+`orbit show` work the same for remote runs; `orbit show` names the node.
 
 ## 2. Submit
 
@@ -43,7 +48,7 @@ orbit sweep --image python:3.12-slim --gpus 1 -g lr-sweep \
 - Put all options **before** `--`; everything after `--` is the command inside the container.
 - Add `--json` (before `--`) to get machine-readable output with run ids.
 - `--dockerfile path/Dockerfile` builds a project image instead of `--image` (cached by content).
-- Uncommitted changes and untracked files are included in the snapshot, so you do not need to commit first. Large data and weights are not copied: mount them with `-m /host/path:/data` (read-only; add `:rw` only if needed).
+- Uncommitted changes and untracked files are included in the snapshot, so you do not need to commit first. Large data and weights are not copied: prefer a registered dataset, `-d <name>` (mounted read-only at `/data/<name>`; see `orbit data ls`), or mount a host path with `-m /host/path:/data` (read-only; add `:rw` only if needed).
 - `-e KEY=VALUE` for environment variables; `--no-network` for offline runs; `-t key=value` for tags.
 - Use `-g <group>` for runs that belong together (sweeps, ablations) so they can be compared.
 

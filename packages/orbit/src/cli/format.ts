@@ -43,7 +43,7 @@ export function formatRuns(runs: Run[]): string {
       code,
       r.reason ?? "",
     ];
-    if (multi) row.splice(5, 0, r.node);
+    if (multi) row.splice(5, 0, r.state === "queued" ? "-" : r.node);
     rows.push(row);
   }
   return table(rows);

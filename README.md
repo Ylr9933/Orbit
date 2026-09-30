@@ -4,7 +4,7 @@ Orbit lets coding agents such as Codex and Claude Code run experiments in isolat
 under GPU/CPU/memory leases, and keeps logs, metrics, code snapshots and results for review.
 The agent plans and writes the code; Orbit runs and records it. A local Web UI is for review.
 
-> Status: **R3 benchmarks** (after the R1 research loop and R2 auth/notifications) on branch `refactor/ts-rewrite` (not yet merged).
+> Status: **R4 multi-node** (after R1 research loop, R2 auth/notifications, R3 benchmarks) on branch `refactor/ts-rewrite` (not yet merged).
 > See [docs/status.md](docs/status.md) and the design in [docs/design.md](docs/design.md).
 
 ## Requirements
@@ -38,6 +38,11 @@ orbit bench add asi ../ASI-Bench --adapter asi --python /path/to/venv/bin/python
 orbit bench tasks tbs                 # tasks, and why unsupported ones cannot run
 orbit bench run tbs -t symbolic-regression -m oracle -m empty -m gpt=codex,auth=codex,model=gpt-5
 orbit bench show <job> | jobs | cancel <job> | compare <job>...
+
+orbit node expose --listen 100.64.0.12:7718           # on a worker: serve the cluster API
+ssh gpu2 orbit node token | orbit node add http://100.64.0.12:7718 --token-stdin   # on the primary
+orbit data add imagenet /data/imagenet                # on every node that has it
+orbit run -d imagenet --gpus 1 -- python train.py     # placed on any node with a free GPU and the data
 ```
 
 Options go before `--`; the command after it runs in `/workspace`, a snapshot of the current git
@@ -55,6 +60,11 @@ A bench job runs every task × method × seed as a trial: a solve run, then a se
 Execution, evaluation (valid / invalid / unknown) and cleanup are kept apart; only valid scores enter
 means. The Web UI shows jobs, a task × method matrix and cross-job comparison under `/bench`. To add
 a benchmark, see [docs/guides/bench-adapter.md](docs/guides/bench-adapter.md).
+
+Several machines: every machine runs a daemon; the one the agent uses places runs on the workers it
+has added. Code snapshots travel by content hash; datasets are registered by name on each node and
+never copied; logs and metrics flow back, outputs stay on the worker and are read through the
+primary. See [docs/guides/multi-node.md](docs/guides/multi-node.md).
 
 ## Agents
 

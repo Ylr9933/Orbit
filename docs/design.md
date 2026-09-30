@@ -1,6 +1,6 @@
 # Orbit 设计
 
-状态：R0 已确定的目标设计；R1（单机科研闭环）已实现；R2（认证与通知）按 §6 实现中。实现进度见 [status.md](status.md)。本文是架构与接口的唯一权威来源；
+状态：R0 已确定的目标设计；R1–R3 已实现；R4（多节点，§8）已实现，仅在同机双 daemon 仿真上验证。实现进度见 [status.md](status.md)。本文是架构与接口的唯一权威来源；
 改变模块边界、公共契约或关键决策时，在同一分支更新本文。
 
 ## 1. 定位
@@ -33,7 +33,7 @@ orbit daemon (one per node; single writer of local state)
   ├─ records     logs, metrics, artifacts, events, notes
   ├─ sessions    host Agent session capture (Codex, Claude Code) linked to runs
   ├─ bench       adapters, agent profiles + method bundles, trials, outcomes
-  └─ cluster     node join, heartbeat, remote placement (R4)
+  └─ cluster     node join, heartbeat, code bundles, remote placement and mirroring (R4)
   ▼
 Web (local SPA served by the daemon): runs, compare, logs, sessions, bench review
 ```
@@ -75,7 +75,7 @@ plugin/        skills/orbit/SKILL.md for Codex / Claude Code (+ .claude-plugin m
 | sessions | contracts, lib, config, store, records, harness |
 | runs | 以上所有 domain 模块 |
 | bench | runs 及其可依赖的模块 |
-| cluster | runs, resources 及基础模块 |
+| cluster | runs, resources, workspace, records 及基础模块；runs 不依赖 cluster（经 `runs/placement.ts` 的 `RemotePlacement` 注入） |
 | daemon | 除 cli/mcp/client 外全部 |
 | client | contracts, lib, config |
 | cli, mcp | client, contracts, lib, config |
@@ -107,11 +107,13 @@ plugin/        skills/orbit/SKILL.md for Codex / Claude Code (+ .claude-plugin m
   snapshot(default true when project set), auth?(profile name), tags, parentId? }
 ```
 
-**Run**：`{ id, spec, state, exitCode?, node, leaseId?, containerId?, code{commit, dirty, diffRef},
+**Run**：`{ id, spec, state, exitCode?, node, remote, origin?, leaseId?, containerId?, code{commit, dirty, diffRef},
 createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage{peakGpuMem, peakMem, …} }`
 
 - `state`: `queued → starting → running → succeeded | failed | cancelled | lost`。
 - 执行结果（state/exitCode）、清理状态（cleanup）、评测有效性（bench 中）是三个独立字段。
+- `remote`：主节点上的镜像记录，Run 实际在 `node` 上执行；`origin`：worker 上替主节点执行的 Run 的主节点名（§8）。
+- mount 二选一：`source`（本机绝对路径）或 `dataset`（命名数据集，在执行节点解析为本地路径）。
 
 **容器内约定**（skill 告诉 Agent；实验代码直接用环境变量）：
 
@@ -142,7 +144,9 @@ NVIDIA spec 时），否则 `--gpus device=<UUID>`；启动后核对 `nvidia-smi
 `/api/v1`：`health`、`resources`、`doctor`、`ledger`（资源 + 活动租约 + 排队原因）、`GET/POST runs`、
 `runs/:id`、`runs/:id/{cancel,note,wait,events,logs,log.txt,metrics,artifacts,files/*,diff,session}`、
 `stream`（SSE，Run 变化推送）、`GET/POST auth`、`DELETE auth/:name`、`POST auth/:name/test`、
-`GET/POST notify`、`DELETE notify/:name`、`POST notify/:name/test`，以及 bench 路由（§7）。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
+`GET/POST notify`、`DELETE notify/:name`、`POST notify/:name/test`，bench 路由（§7），
+`GET/POST cluster/nodes`、`DELETE cluster/nodes/:name`、`GET/POST cluster/expose`、`GET cluster/token`、
+`POST cluster/token/rotate`、`GET/POST datasets`、`DELETE datasets/:name`（§8）。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
 `orbit web [id]` 用 token 打开浏览器并定位到 Run。
 
 Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行详情、GitHub 的 diff 视图）：
@@ -152,7 +156,7 @@ Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行�
   搜索、跟随）、Metrics（uPlot，平滑、同步十字线）、Artifacts、Code（相对快照 commit 的 diff）、
   Session（Agent 轨迹，标出提交点）、Events。
 - **Compare**：`?ids=` / `?group=`，按 seed 聚合 mean ± std、相对基线的变化、曲线叠加、配置差异。
-- **Resources**：GPU 卡片（Orbit 租约 / 外部占用 / 空闲、显存与利用率）、租约与队列。
+- **Resources**：GPU 卡片（Orbit 租约 / 外部占用 / 空闲、显存与利用率）、租约与队列、worker 节点表（§8）。
 - **Bench**：job 列表、job 详情（分数矩阵）、方法对比（§7）。
 - **Settings**：容器内 Agent 版本、auth profile（掩码、测试、删除）、通知目标（发测试、删除）、浏览器通知开关。
   Web 不录入密钥：添加 profile / 目标只走 CLI。
@@ -266,9 +270,41 @@ CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|compare`；Web `/bench`（
 
 ## 8. 多节点（R4）
 
-每台机器运行 daemon；Agent 所在节点为主节点，其他节点用 token 加入（Tailscale 或直连）。主节点汇总
-资源并放置 Run；代码快照按内容哈希传输并缓存；数据/权重按"名字 → 节点本地路径"登记，调度只选有数据的
-节点，不自动搬运。日志与指标回传主节点，大产物留在原节点按需读取。不引入 Ray。
+每台机器运行一个 daemon。Agent 所在节点为**主节点**，其他机器为 **worker**；不引入 Ray。
+操作步骤见 [guides/multi-node.md](guides/multi-node.md)。
+
+**加入**：worker 上 `orbit node expose --listen <addr>:<port>` 开启集群监听（`/cluster/v1`，
+`Authorization: Bearer <cluster token>`；token 在 `cluster.json`（0600），与本机 daemon token 无关），
+主节点 `orbit node add <url> --token-stdin` 登记（`nodes.json`，0600）。协议为明文 HTTP，只用于
+Tailscale / 内网 / SSH 隧道；cluster token 等同于在该节点运行容器的权限。节点名取 `ORBIT_NODE` 或主机名，
+`ORBIT_GPUS` 限定本 daemon 管理的 GPU（同机仿真多节点时使用）。
+
+**放置**（`runs/service.ts` 决定，`cluster/` 实现 `RemotePlacement`）：先本机，再按名字顺序的在线 worker；
+都不能运行时排队，原因按节点列出。以下 Run 只在提交节点运行：process 后端（含 bench 与 `auth test`）、
+宿主路径 mount、`snapshot: false` 的项目。`resources.node` 可钉住节点。worker 的资格按其心跳上报
+（资源、活动租约、数据集名、auth profile 名及 CLI 是否可用）判断；主节点为已派出但尚未上报的 Run
+保留预测租约，避免重复放置。
+
+**派发**：主节点把 Run 置为 `starting`、`remote: true`、`node: <worker>`，同事务写 `remote_sync` 行；
+随后上传 bundle 并 `POST /cluster/v1/runs`（按 Run ID 幂等）。worker 拒绝则记住该节点并重新排队，
+不可达则重新排队，结果未知由同步循环判定。worker 以同一 ID 保存 Run（`origin` = 主节点名，钉在本节点），
+按本机规则排队和执行；密钥、passEnv 与 auth 取 worker 上的同名配置。
+
+**代码**：工作区快照、仓库外的 Dockerfile 目录、agent bundle 按目录树内容哈希（路径、类型、可执行位、
+链接目标、文件 sha256）打包传输，worker 校验哈希后缓存在 `cache/bundles/<hash>`，已有则跳过上传。
+Dockerfile 在仓库内时用快照中的文件（gitignored 文件不在快照中）。
+
+**数据**：`orbit data add <name> <path>` 在每个节点各自登记同名数据集；mount `{dataset, target}` 在执行
+节点解析为本地路径。调度只选登记了全部数据集的节点，从不复制数据。
+
+**镜像同步**：主节点每个周期对未完成的远端 Run 拉取状态、事件（保留原时间）、日志与指标增量
+（按本地文件长度续传），并转发待发的取消。worker 上 `queued` 映射为主节点的 `starting`（原因注明）。
+worker 返回 404：已确认的 Run 记为 `lost`，未确认的重新排队。产物与文件不复制，通过主节点 API 代理读取，
+worker 不可达时返回 502。终态且 worker 已完成清理后同步结束。
+
+**已知限制**：bundle 缓存不自动回收；worker 离线期间其上的镜像 Run 保持原状态，直到它恢复或被
+`orbit node rm`（此时记为 `lost`）；worker 重启并重新附着 Run 时镜像日志可能被截断重拉，以 worker 上的
+日志为准；Agent 会话与 diff 只在主节点。
 
 ## 9. 预留
 
@@ -283,7 +319,7 @@ CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|compare`；Web `/bench`（
 | R1 | 单机日常科研闭环 | Codex 估算资源并提交 3-seed GPU sweep，排队、`orbit wait`、失败留证据；Web 看到 diff、曲线、日志、会话；Codex 与 Claude Code 都走通 |
 | R2 | 认证模块与通知 | login / API key / relay 三类 profile 可用于容器内 Codex、Claude Code；完成/失败通知 |
 | R3 | 刷榜 | ASI 原生包装、TB-Science Harbor 格式在同一 Run/租约上运行；方法对比页面；新 bench 接入指南 |
-| R4 | 多节点 | 一个 Agent 调度两台机器 8 张 GPU |
+| R4 | 多节点 | 一个 Agent 调度两台机器 8 张 GPU；已实现，仅同机双 daemon 仿真验证（§8） |
 
 ## 11. 来自 v0（Python 版）的教训
 
