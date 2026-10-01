@@ -4,7 +4,7 @@ import { TopBar } from "../components/TopBar.tsx";
 import { CopyButton, Link, Loading, toast } from "../components/ui.tsx";
 import { type AuthProfile, api, type NotifyTarget } from "../lib/api.ts";
 import { browserNotify } from "../lib/browser-notify.ts";
-import { ago, harnessLabel } from "../lib/format.ts";
+import { ago, harnessLabel, runPath } from "../lib/format.ts";
 import { useAsync } from "../lib/use.ts";
 
 // Secrets never reach the Web UI: profiles and targets are added with the CLI (stdin / env vars),
@@ -36,7 +36,9 @@ export function Settings() {
               <span className="sub">host CLIs mounted read-only for runs with --auth</span>
             </div>
             <div className="card-b">
-              {!agents ? (
+              {doctor.error && !agents ? (
+                <span className="muted">Could not run checks: {doctor.error}</span>
+              ) : !agents ? (
                 <Loading />
               ) : (
                 <dl className="kv">
@@ -188,7 +190,7 @@ function ProfileRow({ p, onChange }: { p: AuthProfile; onChange: () => void }) {
             >
               {test.ok ? <IconCheck size={12} /> : <IconX size={12} />}
               {test.runId ? (
-                <Link href={`/runs/${test.runId}`}>{test.ok ? "ok" : "failed"}</Link>
+                <Link href={`${runPath(test.runId)}`}>{test.ok ? "ok" : "failed"}</Link>
               ) : (
                 "failed"
               )}

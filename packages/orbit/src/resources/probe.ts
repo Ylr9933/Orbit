@@ -59,7 +59,7 @@ export function parseComputeApps(csv: string): Map<string, number> {
   return byGpu;
 }
 
-/** Combine per-GPU memory with process usage. R0 has no leases, so every process is external. */
+/** Combine per-GPU memory with process usage. All usage counts as external; the allocator handles GPUs held by Orbit leases separately. */
 export function classifyGpus(raw: RawGpu[], appsMiB: Map<string, number>): Gpu[] {
   return raw.map((g) => {
     // Some drivers (e.g. in containers) hide processes; fall back to total used memory.

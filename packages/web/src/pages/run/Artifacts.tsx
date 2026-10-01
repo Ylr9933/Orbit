@@ -9,7 +9,7 @@ import {
 import { Empty, Loading } from "../../components/ui.tsx";
 import { type Artifacts, fileUrl, type Run } from "../../lib/api.ts";
 import { ago, bytes, isActive } from "../../lib/format.ts";
-import { setHash, useLocation } from "../../lib/router.ts";
+import { safeDecode, setHash, useLocation } from "../../lib/router.ts";
 
 const IMG = /\.(png|jpe?g|gif|svg|webp)$/i;
 const TEXT = /\.(txt|log|json|jsonl|csv|tsv|md|py|sh|ya?ml|toml|cfg|ini|out|err|html|xml)$/i;
@@ -18,11 +18,12 @@ const MAX_PREVIEW = 2 * 1024 * 1024;
 export function ArtifactsTab({ run, artifacts }: { run: Run; artifacts: Artifacts | undefined }) {
   const loc = useLocation();
   const files = artifacts?.files ?? [];
+  const byPath = useMemo(() => new Map(files.map((f) => [f.path, f])), [files]);
   const sel =
-    decodeURIComponent(loc.hash) ||
+    safeDecode(loc.hash) ||
     files.find((f) => IMG.test(f.path) || /result|summary|metrics/i.test(f.path))?.path ||
     files[0]?.path;
-  const file = files.find((f) => f.path === sel);
+  const file = sel ? byPath.get(sel) : undefined;
 
   const tree = useMemo(() => {
     const rows: { path: string; depth: number; dir: boolean; name: string }[] = [];
@@ -86,7 +87,7 @@ export function ArtifactsTab({ run, artifacts }: { run: Run; artifacts: Artifact
               {IMG.test(r.name) ? <IconImage size={13} /> : <IconFile size={13} />}
               <span className="grow ellipsis">{r.name}</span>
               <span className="faint num" style={{ fontSize: 11 }}>
-                {bytes(files.find((f) => f.path === r.path)?.bytes ?? 0)}
+                {bytes(byPath.get(r.path)?.bytes ?? 0)}
               </span>
             </div>
           ),
@@ -113,7 +114,7 @@ export function ArtifactsTab({ run, artifacts }: { run: Run; artifacts: Artifact
                 <IconDownload size={13} /> Download
               </a>
             </div>
-            <Preview runId={run.id} path={file.path} size={file.bytes} />
+            <Preview runId={run.id} path={file.path} size={file.bytes} mtime={file.mtime} />
           </>
         ) : (
           <Empty title="Select a file" />
@@ -123,26 +124,54 @@ export function ArtifactsTab({ run, artifacts }: { run: Run; artifacts: Artifact
   );
 }
 
-function Preview({ runId, path, size }: { runId: string; path: string; size: number }) {
+function Preview({
+  runId,
+  path,
+  size,
+  mtime,
+}: {
+  runId: string;
+  path: string;
+  size: number;
+  mtime: string;
+}) {
   const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const isText = TEXT.test(path) || !/\.[a-z0-9]+$/i.test(path);
+  // A new file starts from a blank preview; a polled change to the same file refreshes in place.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset only when the file changes
   useEffect(() => {
     setText(null);
+    setError(null);
+  }, [runId, path]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: size and mtime mark new content
+  useEffect(() => {
     if (!isText || size > MAX_PREVIEW || IMG.test(path)) return;
     let live = true;
     fetch(fileUrl(runId, path))
-      .then((r) => r.text())
-      .then((t) => live && setText(t));
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+        return r.text();
+      })
+      .then(
+        (t) => {
+          if (!live) return;
+          setText(t);
+          setError(null);
+        },
+        (e: Error) => live && setError(e.message),
+      );
     return () => {
       live = false;
     };
-  }, [runId, path, size, isText]);
+  }, [runId, path, size, mtime, isText]);
 
   if (IMG.test(path)) return <img src={fileUrl(runId, path)} alt={path} />;
   if (!isText) return <Empty title="No preview for this file type">Use Open or Download.</Empty>;
   if (size > MAX_PREVIEW)
     return <Empty title="File too large to preview">{bytes(size)} — use Download.</Empty>;
-  if (text === null) return <Loading />;
+  if (text === null)
+    return error ? <Empty title="Could not load the file">{error}</Empty> : <Loading />;
   if (/\.json$/i.test(path)) {
     try {
       return <pre>{JSON.stringify(JSON.parse(text), null, 2)}</pre>;

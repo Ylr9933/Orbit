@@ -45,7 +45,7 @@ export function agentCommand(method: Method, instruction: string): string[] {
       "--dangerously-bypass-approvals-and-sandbox",
     ];
     if (method.model) cmd.push("--model", method.model);
-    if (method.effort) cmd.push("-c", `model_reasoning_effort="${method.effort}"`);
+    if (method.effort) cmd.push("-c", `model_reasoning_effort=${JSON.stringify(method.effort)}`);
     return [...cmd, instruction];
   }
   if (method.agent === "claude-code") {

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -62,7 +63,7 @@ export async function snapshotProject(
   }
 
   // Diff of the whole working tree (including untracked files) against HEAD, via a throwaway index.
-  const tmpIndex = join(tmpdir(), `orbit-index-${process.pid}-${Date.now()}`);
+  const tmpIndex = join(tmpdir(), `orbit-index-${randomBytes(8).toString("hex")}`);
   const realIndex = await gitOut(root, [
     "rev-parse",
     "--path-format=absolute",
@@ -84,7 +85,14 @@ export async function snapshotProject(
       ["diff", "--cached", "--name-only", "-z", commit ?? EMPTY_TREE],
       env,
     );
-    await writeFile(diffFile, diff.stdout);
+    if (names.code !== 0) throw new Error(`git diff (temp index) failed: ${names.stderr.trim()}`);
+    // The snapshot itself is complete; a diff git could not produce (e.g. too large) is marked.
+    await writeFile(
+      diffFile,
+      diff.code === 0
+        ? diff.stdout
+        : `${diff.stdout}\n# orbit: diff incomplete: ${diff.stderr.trim().slice(0, 500)}\n`,
+    );
     const changedFiles = names.stdout.split("\0").filter(Boolean);
     return {
       repo: root,

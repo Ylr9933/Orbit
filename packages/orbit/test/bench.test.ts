@@ -7,6 +7,7 @@ import { asiScore, modelError, oracleTemplate, parseTaskMeta } from "../src/benc
 import { classify, solveVerdict } from "../src/bench/classify.ts";
 import {
   findHarborTasks,
+  harborAdapter,
   harborReward,
   harborSolveSpec,
   harborVerifySpec,
@@ -188,6 +189,21 @@ SEED = 1
     expect(plan.spec.timeoutMin).toBe(2);
     expect(plan.spec.collect).toEqual(["/logs/verifier"]);
     expect(JSON.stringify(plan.spec.mounts)).toContain("/app/out");
+  });
+
+  it("gives benchmark passEnv (grader secrets) to the verifier, not to the Agent", () => {
+    const benchmark = { name: "tbs", path: root, env: {}, passEnv: ["GRADER_KEY"] } as Benchmark;
+    const ctx = {
+      benchmark,
+      task: "sr",
+      method: { name: "oracle", agent: "oracle" as const },
+      seed: 1,
+      options: {},
+      staging: join(tmp, "staging-pe"),
+    };
+    expect(harborAdapter.solveSpec(ctx).passEnv ?? []).toEqual([]);
+    const solveOut = join(tmp, "solve-out");
+    expect(harborAdapter.verifySpec(ctx, {} as Run, solveOut).spec.passEnv).toEqual(["GRADER_KEY"]);
   });
 
   it("reads rewards from reward.txt or reward.json", () => {
@@ -413,6 +429,12 @@ describe("aggregation", () => {
       { job: { ...job, id: "k", spec: { ...job.spec, name: "rerun" } } as BenchJob, trials },
     ]);
     expect(two.columns.map((x) => x.key)).toEqual(["j/x", "j/y", "rerun/x", "rerun/y"]);
+    const named = { ...job, spec: { ...job.spec, name: "same" } } as BenchJob;
+    const dup = compareJobs([
+      { job: named, trials },
+      { job: { ...named, id: "k" }, trials },
+    ]);
+    expect(dup.columns.map((x) => x.key)).toEqual(["same/x", "same/y", "k/x", "k/y"]);
   });
 });
 

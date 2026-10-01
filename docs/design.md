@@ -84,7 +84,7 @@ plugin/        skills/orbit/SKILL.md for Codex / Claude Code (+ .claude-plugin m
 - **daemon 是本机状态的唯一写者**。CLI/MCP/Web 只通过 HTTP API 访问；CLI 需要时自动拉起 daemon。
   daemon 只监听 `127.0.0.1`（默认端口 7717，`ORBIT_PORT` 可改），启动时生成随机 token，与地址一起写入
   `~/.orbit/daemon.json`（0600）；所有 `/api/v1` 请求需 `Authorization: Bearer <token>` 或 Web 登录后的
-  HttpOnly cookie。`ORBIT_HOME` 可覆盖 `~/.orbit`。
+  HttpOnly cookie（token 比较为常数时间；凭 cookie 的写请求须同源，否则 403）。`ORBIT_HOME` 可覆盖 `~/.orbit`。
 - `src/` 根目录下的文件（如 `bin.ts`）是组合根，可引用任意模块，但不能被模块引用。
 - 同类能力只有一份实现：一个 Run 状态机、一个资源账本、一个记录库。
 - Docker、sqlite 句柄不出现在 contracts 中。
@@ -103,8 +103,8 @@ plugin/        skills/orbit/SKILL.md for Codex / Claude Code (+ .claude-plugin m
 **RunSpec**：
 ```
 { name?, project?(repo path), image | dockerfile, command(argv), resources,
-  mounts[{ source | dataset, target, mode: ro|rw }], env, network(default true),
-  snapshot(default true when project set), auth?(profile name), tags, parentId? }
+  mounts[{ source | dataset, target, mode: ro|rw }], env, passEnv[], network(default true),
+  snapshot(default true when project set), auth?(profile name), collect[], tags, parentId? }
 ```
 
 **Run**：`{ id, spec, state, exitCode?, node, remote, origin?, leaseId?, containerId?, code{commit, dirty, diffRef},
@@ -113,7 +113,10 @@ createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage{peakGpuMem, pea
 - `state`: `queued → starting → running → succeeded | failed | cancelled | lost`。
 - 执行结果（state/exitCode）、清理状态（cleanup）、评测有效性（bench 中）是三个独立字段。
 - `remote`：主节点上的镜像记录，Run 实际在 `node` 上执行；`origin`：worker 上替主节点执行的 Run 的主节点名（§8）。
-- mount 二选一：`source`（本机绝对路径）或 `dataset`（命名数据集，在执行节点解析为本地路径）。
+- mount 二选一：`source`（本机绝对路径）或 `dataset`（命名数据集，在执行节点解析为本地路径）；
+  `target` 为绝对路径、互不重复、不含 `..`，且不能落在 `/orbit`、`/workspace` 下。`collect` 路径同样不含 `..`。
+- `env` 的值随 Run 记录保存，只放非密钥配置；密钥用 `passEnv`（只记变量名，启动时从 daemon 环境读取，
+  值按名字规则在日志中脱敏）。CLI：`-e KEY=VALUE` / `--pass-env VAR`。
 
 **容器内约定**（skill 告诉 Agent；实验代码直接用环境变量）：
 
@@ -130,6 +133,9 @@ createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage{peakGpuMem, pea
 **容器**：GPU 优先用 CDI（`--device nvidia.com/gpu=<UUID>`，检测到 `/etc/cdi` 或 `/var/run/cdi` 中的
 NVIDIA spec 时），否则 `--gpus device=<UUID>`；启动后核对 `nvidia-smi -L` 与租约一致。默认以宿主用户
 `uid:gid` 运行（产物归属正确），`--root` 例外。每个 Run 的记录目录挂载为 `/orbit`（rw）。
+没有租到 GPU 的容器设置 `NVIDIA_VISIBLE_DEVICES=void`，避免镜像默认值暴露全部 GPU。`image` 本地不存在时先
+`docker pull`（输出写入 Run 日志），拉取失败记为环境失败。daemon 重启后重新附着容器时，日志截回启动时记录的
+偏移再重新跟随，避免重复。
 
 **会话关联**：CLI 提交时识别调用它的 Agent：`ORBIT_AGENT=<harness>[:<id>]` 优先；否则祖先进程中最近的
 `claude` / `codex` 决定 harness（Agent 相互嵌套时子进程会继承父 Agent 的环境变量），会话 ID 取
@@ -147,7 +153,9 @@ NVIDIA spec 时），否则 `--gpus device=<UUID>`；启动后核对 `nvidia-smi
 `GET/POST notify`、`DELETE notify/:name`、`POST notify/:name/test`，bench 路由（§7），
 `GET/POST cluster/nodes`、`DELETE cluster/nodes/:name`、`GET/POST cluster/expose`、`GET cluster/token`、
 `POST cluster/token/rotate`、`GET/POST datasets`、`DELETE datasets/:name`（§8）。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
-`orbit web [id]` 用 token 打开浏览器并定位到 Run。
+`orbit web [id]` 打印带 token 的登录 URL（`--open` 时用浏览器打开）并定位到 Run。
+`files/*` 只读输出目录内的普通文件（解析符号链接后仍须在目录内），以 `Content-Security-Policy: sandbox`、
+`nosniff` 返回，避免产物中的 HTML 以 Web UI 的身份执行脚本。`wait` 在 Run 终态且清理结束后返回。
 
 Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行详情、GitHub 的 diff 视图）：
 
@@ -250,7 +258,7 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
    ASI checkout 只读：进程 cwd 是 Run 目录，`PYTHONPATH` 指向 checkout，`PYTHONDONTWRITEBYTECODE=1`。
 
 **process 后端**（`RunSpec.backend = "process"`，`runs/process.ts`）：命令直接在宿主以独立进程组运行，
-cwd 默认为 Run 目录，HOME 为 Run 私有目录；环境包含 `spec.env`、`passEnv`、`ORBIT_OUTPUT`、
+cwd 默认为代码快照（有快照时），否则 `project`，再否则 Run 目录；HOME 为 Run 私有目录；环境包含 `spec.env`、`passEnv`、`ORBIT_OUTPUT`、
 `CUDA_VISIBLE_DEVICES`（租约中的 GPU）。PATH 最前面是 Run 私有的 `docker` shim（`orbit __docker-shim`，
 `runs/shim.ts`）：给 runner 启动的容器加 `orbit.parent=<run>` 标签，把 `--gpus` 换成租约中的 GPU（没有租到 GPU 则拒绝），
 有 auth 时注入 Agent CLI 与凭据挂载，`hostNetwork` 时 build 用宿主网络，其余参数原样传给真实 docker。

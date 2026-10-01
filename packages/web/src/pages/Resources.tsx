@@ -3,11 +3,11 @@ import { IconAlert, IconChip } from "../components/icons.tsx";
 import { TopBar } from "../components/TopBar.tsx";
 import { Empty, Link, Loading, StateIcon } from "../components/ui.tsx";
 import { api, type Gpu, type Lease, type NodeStatus, type Run } from "../lib/api.ts";
-import { ago, duration, queuedFor, runTitle } from "../lib/format.ts";
+import { ago, duration, queuedFor, runPath, runTitle } from "../lib/format.ts";
 import { useRuns } from "../lib/runs-store.ts";
 import { useAsync } from "../lib/use.ts";
 
-const pct = (a: number, b: number) => (b > 0 ? Math.min(100, (a / b) * 100) : 0);
+const pct = (a: number, b: number) => (b > 0 ? Math.max(0, Math.min(100, (a / b) * 100)) : 0);
 const gib = (mib: number) => (mib / 1024).toFixed(mib >= 10240 ? 0 : 1);
 
 export function Resources() {
@@ -280,7 +280,11 @@ function Stat({ v, l, frac }: { v: string; l: string; frac?: number }) {
       </span>
       {f !== undefined && (
         <div className="bar" style={{ marginTop: 6 }}>
-          <span style={{ width: `${f * 100}%`, "--c": c } as React.CSSProperties} />
+          <span
+            style={
+              { width: `${Math.max(0, Math.min(1, f)) * 100}%`, "--c": c } as React.CSSProperties
+            }
+          />
         </div>
       )}
     </div>
@@ -294,7 +298,7 @@ function RunCell({ id, run, color }: { id: string; run?: Run; color?: string }) 
         <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flex: "none" }} />
       )}
       {run && <StateIcon state={run.state} size={12} />}
-      <Link href={`/runs/${id}`} className="ellipsis" style={{ color: "var(--text)" }}>
+      <Link href={`${runPath(id)}`} className="ellipsis" style={{ color: "var(--text)" }}>
         {run ? runTitle(run) : id}
       </Link>
       <span className="faint mono" style={{ fontSize: 11 }}>

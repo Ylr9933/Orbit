@@ -83,8 +83,8 @@ async function readSecret(o: AddOpts, env: Record<string, string>): Promise<stri
   if (o.keyStdin) return readFileSync(0, "utf8").trim();
   if (o.keyEnv) {
     const v = process.env[o.keyEnv];
-    if (!v) throw new Error(`${o.keyEnv} is not set`);
-    return v;
+    if (!v?.trim()) throw new Error(`${o.keyEnv} is not set`);
+    return v.trim();
   }
   if (o.from) {
     if (o.harness === "codex" && o.kind === "login") {

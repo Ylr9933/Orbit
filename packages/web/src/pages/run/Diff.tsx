@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { IconChevron, IconChevronDown, IconFile, IconGit } from "../../components/icons.tsx";
 import { CopyButton, Empty, Loading } from "../../components/ui.tsx";
 import { api, type Run } from "../../lib/api.ts";
 import { type DiffFile, type DiffLine, parseDiff, splitRows } from "../../lib/diff.ts";
-import { setHash, useLocation } from "../../lib/router.ts";
+import { safeDecode, setHash, useLocation } from "../../lib/router.ts";
 import { useAsync } from "../../lib/use.ts";
 
 const pathOf = (f: DiffFile) => (f.status === "deleted" ? f.oldPath : f.newPath);
@@ -22,8 +22,7 @@ export function DiffTab({ run }: { run: Run }) {
   );
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const loc = useLocation();
-  const target = decodeURIComponent(loc.hash);
-  const box = useRef<HTMLDivElement>(null);
+  const target = safeDecode(loc.hash);
   const c = run.code;
 
   useEffect(() => {
@@ -111,7 +110,7 @@ export function DiffTab({ run }: { run: Run }) {
               );
             })}
           </div>
-          <div ref={box} className="scroll" style={{ padding: 14 }}>
+          <div className="scroll" style={{ padding: 14 }}>
             {files.map((f) => {
               const p = pathOf(f);
               const closed = collapsed.has(p);

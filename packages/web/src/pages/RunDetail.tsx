@@ -18,9 +18,10 @@ import {
   Loading,
   Params,
   StateBadge,
+  toast,
   useNow,
 } from "../components/ui.tsx";
-import { api, type Run } from "../lib/api.ts";
+import { api, HttpError, type Run } from "../lib/api.ts";
 import {
   cliCommand,
   duration,
@@ -56,7 +57,7 @@ const TAB_LABEL: Record<Tab, string> = {
 export function RunDetail({ id }: { id: string }) {
   const live = useRun(id);
   const [fetched, setFetched] = useState<Run | null>(null);
-  const [notFound, setNotFound] = useState(false);
+  const [failure, setFailure] = useState<{ notFound: boolean; message: string } | null>(null);
   const run = live ?? fetched;
 
   useEffect(() => {
@@ -66,7 +67,8 @@ export function RunDetail({ id }: { id: string }) {
         setFetched(r);
         upsertRun(r);
       },
-      () => setNotFound(true),
+      (e: Error) =>
+        setFailure({ notFound: e instanceof HttpError && e.status === 404, message: e.message }),
     );
   }, [id, live]);
 
@@ -74,7 +76,13 @@ export function RunDetail({ id }: { id: string }) {
     return (
       <>
         <TopBar crumbs={[{ label: "Runs", href: "/" }, { label: id }]} />
-        {notFound ? <Empty title="Run not found">{id}</Empty> : <Loading what="Loading run" />}
+        {failure ? (
+          <Empty title={failure.notFound ? "Run not found" : "Could not load run"}>
+            {failure.notFound ? id : failure.message}
+          </Empty>
+        ) : (
+          <Loading what="Loading run" />
+        )}
       </>
     );
   return <RunView run={run} />;
@@ -87,18 +95,19 @@ function RunView({ run }: { run: Run }) {
   ) as Tab;
   const active = isActive(run.state);
   const now = useNow(1000, active);
+  // Fetched once per state change for the tab counts; polled only on the tabs that show them.
   const metrics = useAsync(() => api.metrics(run.id), [run.id, run.state], {
-    poll: active,
+    poll: active && (tab === "overview" || tab === "metrics"),
     pollMs: 3000,
   });
   const artifacts = useAsync(() => api.artifacts(run.id), [run.id, run.state], {
-    poll: active,
+    poll: active && tab === "artifacts",
     pollMs: 5000,
   });
   const go = (t: Tab) =>
-    setQuery({ tab: t === "overview" ? null : t }, { replace: false, hash: "" });
+    setQuery({ tab: t === "overview" ? null : t, err: null }, { replace: false, hash: "" });
 
-  useHotkeys(Object.fromEntries(TABS.map((t, i) => [String(i + 1), () => go(t)])), []);
+  useHotkeys(Object.fromEntries(TABS.map((t, i) => [String(i + 1), () => go(t)])));
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: only the title inputs matter
   useEffect(() => {
@@ -140,7 +149,7 @@ function RunView({ run }: { run: Run }) {
         {run.spec.group && (
           <Link
             className="btn sm"
-            href={`/compare?group=${encodeURIComponent(run.spec.group)}&base=${run.id}`}
+            href={`/compare?group=${encodeURIComponent(run.spec.group)}&base=${encodeURIComponent(run.id)}`}
           >
             <IconLayers size={13} /> Compare group
           </Link>
@@ -150,7 +159,12 @@ function RunView({ run }: { run: Run }) {
             type="button"
             className="btn danger sm"
             onClick={async () => {
-              if (confirm(`Cancel run ${run.id}?`)) upsertRun(await api.cancel(run.id));
+              if (!confirm(`Cancel run ${run.id}?`)) return;
+              try {
+                upsertRun(await api.cancel(run.id));
+              } catch (e) {
+                toast(`Cancel failed: ${(e as Error).message}`);
+              }
             }}
           >
             Cancel run
@@ -265,5 +279,5 @@ function RunView({ run }: { run: Run }) {
 }
 
 export function goRun(id: string, tab?: string) {
-  navigate(`/runs/${id}${tab ? `?tab=${tab}` : ""}`);
+  navigate(`/runs/${encodeURIComponent(id)}${tab ? `?tab=${tab}` : ""}`);
 }

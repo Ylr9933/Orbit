@@ -1,9 +1,9 @@
 # Orbit status
 
-- **Updated at:** 2026-10-01T00:20:00+08:00
+- **Updated at:** 2026-10-01T16:40:00+08:00
 - **Basis:** branch `refactor/ts-rewrite` (proposed state if merged into `main`)
 - **Stage:** R0–R2 validated on this machine; R3 bench smoke-tested with oracle/empty only; R4 multi-node
-  validated only as two daemons on one machine. Not yet merged or run in CI.
+  validated only as two daemons on one machine. Full-branch review fixes applied. Not merged; no CI.
 - **Blockers:** none.
 
 ## Available
@@ -26,7 +26,7 @@
 
 - Bench not run with real Agents or checked against the originals. R4 not run on two real machines;
   no bundle cache eviction. Web bench / node pages not tried in a browser.
-- Group notifications may fire between solve and verify. Untried: some auth kinds, real IM webhooks.
+- Group notifications may fire between solve and verify; Harbor has no model-error invalidation. Untried: some auth kinds, real IM webhooks.
   No MCP server. CI not run.
 
 ## Next priorities
@@ -36,5 +36,5 @@
 
 ## Records
 
-[design.md](design.md) · [R0](tasks/20260929-ts-rewrite-r0.md) · [R1](tasks/20260930-r1-research-loop.md) ·
-[R2](tasks/20260930-r2-auth-notify.md) · [R3](tasks/20260930-r3-bench.md) · [R4](tasks/20260930-r4-multinode.md)
+[design.md](design.md) · [R0](tasks/20260929-ts-rewrite-r0.md) · [R1](tasks/20260930-r1-research-loop.md) · [R2](tasks/20260930-r2-auth-notify.md) ·
+[R3](tasks/20260930-r3-bench.md) · [R4](tasks/20260930-r4-multinode.md) · [review](tasks/20261001-code-review.md)

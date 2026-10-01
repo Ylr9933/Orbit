@@ -25,7 +25,13 @@ export function exec(
       },
       (err, stdout, stderr) => {
         if (!err) return resolve({ code: 0, stdout, stderr });
-        const e = err as NodeJS.ErrnoException & { code?: number | string };
+        const e = err as NodeJS.ErrnoException & { code?: number | string; killed?: boolean };
+        if (e.killed)
+          return resolve({
+            code: 124,
+            stdout: stdout ?? "",
+            stderr: `${cmd} timed out after ${Math.round((opts.timeoutMs ?? 15_000) / 1000)} s`,
+          });
         const code = typeof e.code === "number" ? e.code : 127;
         resolve({ code, stdout: stdout ?? "", stderr: stderr || e.message });
       },

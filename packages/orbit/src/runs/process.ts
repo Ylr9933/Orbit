@@ -1,7 +1,7 @@
 // Host-process backend helpers: a detached process group writing straight to the run log, tracked
 // by pid + start time so a restarted daemon can tell whether it is still the same process.
 import { type ChildProcess, spawn } from "node:child_process";
-import { chmodSync, closeSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { ShimConfig } from "./shim.ts";
@@ -101,14 +101,26 @@ export function killGroup(pid: number, signal: NodeJS.Signals): void {
   } catch {}
 }
 
-/** Any process left in the group (the leader may exit before its children). */
-export function groupAlive(pid: number): boolean {
+/**
+ * Any live process left in the run's group (the leader may exit before its children). Members must
+ * have started no earlier than the leader, so a group id reused after a restart does not count.
+ */
+export function groupAlive(p: { pid: number; start: string }): boolean {
   try {
-    process.kill(-pid, 0);
-    return true;
+    process.kill(-p.pid, 0);
   } catch {
     return false;
   }
+  const since = Number(p.start);
+  for (const name of readdirSync("/proc")) {
+    if (!/^\d+$/.test(name)) continue;
+    try {
+      const stat = readFileSync(`/proc/${name}/stat`, "utf8");
+      const f = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      if (Number(f[2]) === p.pid && f[0] !== "Z" && Number(f[19]) >= since) return true;
+    } catch {}
+  }
+  return false;
 }
 
 export function readExitFile(file: string): number | null {

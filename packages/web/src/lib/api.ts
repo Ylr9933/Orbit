@@ -80,6 +80,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 const enc = encodeURIComponent;
 
 export const api = {
+  health: () => req<{ ok: boolean }>("/health"),
   runs: (limit = 1000) => req<{ runs: Run[] }>(`/runs?limit=${limit}`).then((r) => r.runs),
   run: (id: string) => req<Run>(`/runs/${enc(id)}`),
   cancel: (id: string) => req<Run>(`/runs/${enc(id)}/cancel`, { method: "POST" }),

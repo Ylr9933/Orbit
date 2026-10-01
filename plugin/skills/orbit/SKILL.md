@@ -49,7 +49,7 @@ orbit sweep --image python:3.12-slim --gpus 1 -g lr-sweep \
 - Add `--json` (before `--`) to get machine-readable output with run ids.
 - `--dockerfile path/Dockerfile` builds a project image instead of `--image` (cached by content).
 - Uncommitted changes and untracked files are included in the snapshot, so you do not need to commit first. Large data and weights are not copied: prefer a registered dataset, `-d <name>` (mounted read-only at `/data/<name>`; see `orbit data ls`), or mount a host path with `-m /host/path:/data` (read-only; add `:rw` only if needed).
-- `-e KEY=VALUE` for environment variables; `--no-network` for offline runs; `-t key=value` for tags.
+- `-e KEY=VALUE` for non-secret environment variables, `--pass-env VAR` for secrets; `--no-network` for offline runs; `-t key=value` for tags.
 - Use `-g <group>` for runs that belong together (sweeps, ablations) so they can be compared.
 
 ## 3. Inside the container
@@ -125,4 +125,4 @@ Tell the user the run ids and `orbit web <id>` for review.
 
 - Do not start experiment containers with `docker` directly, and do not stop containers or processes that Orbit or other users own; use `orbit cancel`.
 - Do not request all GPUs "just in case". Do not work around the queue.
-- Never put secrets in commands, tags or notes; pass them with `-e` from the environment only when needed.
+- Never put secrets in commands, tags or notes; pass them by name with `--pass-env VAR` (read from the daemon environment, never stored); `-e` values are stored with the run.

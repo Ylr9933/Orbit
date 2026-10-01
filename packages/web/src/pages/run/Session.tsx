@@ -10,7 +10,7 @@ import {
 } from "../../components/icons.tsx";
 import { CopyButton, Empty, Link, Loading, StateIcon } from "../../components/ui.tsx";
 import { api, type Run, type SessionMessage } from "../../lib/api.ts";
-import { ago, dateTime, harnessLabel, runTitle } from "../../lib/format.ts";
+import { ago, dateTime, harnessLabel, runPath, runTitle } from "../../lib/format.ts";
 import { useHotkeys } from "../../lib/hotkeys.ts";
 import { useRuns, useRunsState } from "../../lib/runs-store.ts";
 import { useAsync } from "../../lib/use.ts";
@@ -80,11 +80,12 @@ export function SessionTab({ run }: { run: Run }) {
     document.getElementById(`m-${i}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
   };
   useEffect(() => {
-    if (here >= 0 && messages.length)
-      setTimeout(
-        () => document.getElementById(`m-${here}`)?.scrollIntoView({ block: "center" }),
-        50,
-      );
+    if (here < 0 || !messages.length) return;
+    const t = setTimeout(
+      () => document.getElementById(`m-${here}`)?.scrollIntoView({ block: "center" }),
+      50,
+    );
+    return () => clearTimeout(t);
   }, [here, messages.length]);
 
   const curTurn = focus === null ? -1 : turns.findLastIndex((t) => t.start <= focus);
@@ -256,7 +257,7 @@ export function SessionTab({ run }: { run: Run }) {
             {sessionRuns.map((r) => (
               <Link
                 key={r.id}
-                href={`/runs/${r.id}?tab=session`}
+                href={`${runPath(r.id)}?tab=session`}
                 className="row"
                 style={{
                   padding: "5px 8px",
@@ -289,7 +290,7 @@ function RunRefs({ text }: { text: string }) {
     if (!r) continue;
     parts.push(text.slice(last, i));
     parts.push(
-      <Link key={i} href={`/runs/${r.id}`} className="runref" title={runTitle(r)}>
+      <Link key={i} href={`${runPath(r.id)}`} className="runref" title={runTitle(r)}>
         <StateIcon state={r.state} size={11} />
         {m[0]}
       </Link>,

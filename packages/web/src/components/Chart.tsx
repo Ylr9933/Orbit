@@ -73,6 +73,7 @@ function align(series: ChartSeries[]): { xs: number[]; ys: (number | null)[][] }
 export function Chart({ series, smoothing, logY, syncKey, height = 220, onHover }: ChartProps) {
   const el = useRef<HTMLDivElement>(null);
   const plot = useRef<uPlot | null>(null);
+  const zoomed = useRef(false);
   const hoverRef = useRef(onHover);
   hoverRef.current = onHover;
   const dataRef = useRef<uPlot.AlignedData>([[]]);
@@ -161,6 +162,12 @@ export function Chart({ series, smoothing, logY, syncKey, height = 220, onHover 
       },
       padding: [8, 12, 0, 0],
       hooks: {
+        // A drag selection zooms x; remember it so polled data doesn't reset the view.
+        setSelect: [
+          (u) => {
+            if (u.select.width > 0) zoomed.current = true;
+          },
+        ],
         setCursor: [
           (u) => {
             const h = hoverRef.current;
@@ -183,6 +190,7 @@ export function Chart({ series, smoothing, logY, syncKey, height = 220, onHover 
         ],
       },
     };
+    zoomed.current = false;
     const p = new uPlot(opts, dataRef.current, node);
     plot.current = p;
     const ro = new ResizeObserver(() => p.setSize({ width: node.clientWidth, height }));
@@ -196,14 +204,17 @@ export function Chart({ series, smoothing, logY, syncKey, height = 220, onHover 
 
   dataRef.current = data;
   useEffect(() => {
-    plot.current?.setData(data);
+    plot.current?.setData(data, !zoomed.current);
   }, [data]);
 
   return (
     <div
       ref={el}
       style={{ width: "100%", height }}
-      onDoubleClick={() => plot.current?.setData(data)}
+      onDoubleClick={() => {
+        zoomed.current = false;
+        plot.current?.setData(data);
+      }}
     />
   );
 }

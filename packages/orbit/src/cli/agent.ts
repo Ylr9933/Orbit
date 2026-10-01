@@ -31,7 +31,9 @@ export function detectAgent(
   parents: string[] = ancestors(),
 ): AgentRef | undefined {
   if (env.ORBIT_AGENT) {
-    const [h, sessionId] = env.ORBIT_AGENT.split(":", 2);
+    const i = env.ORBIT_AGENT.indexOf(":");
+    const h = i < 0 ? env.ORBIT_AGENT : env.ORBIT_AGENT.slice(0, i);
+    const sessionId = i < 0 ? "" : env.ORBIT_AGENT.slice(i + 1);
     const harness = h === "claude-code" || h === "codex" ? h : "other";
     return { harness, sessionId: sessionId || undefined, cwd };
   }

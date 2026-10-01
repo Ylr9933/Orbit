@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   IconBot,
   IconChevron,
@@ -18,6 +18,7 @@ import {
   Params,
   StateBadge,
   stateColor,
+  toast,
   useNow,
 } from "../components/ui.tsx";
 import { api, type Run, type RunState } from "../lib/api.ts";
@@ -28,12 +29,13 @@ import {
   harnessLabel,
   isActive,
   runDuration,
+  runPath,
   runTitle,
   STATE_LABEL,
   STATES,
 } from "../lib/format.ts";
-import { useHotkeys } from "../lib/hotkeys.ts";
-import { navigate, setQuery, useLocation } from "../lib/router.ts";
+import { overlayOpen, useHotkeys } from "../lib/hotkeys.ts";
+import { navigate, onLinkClick, setQuery, useLocation } from "../lib/router.ts";
 import { useRuns, useRunsState } from "../lib/runs-store.ts";
 
 type Entry =
@@ -95,6 +97,13 @@ export function Runs() {
     return c;
   }, [runs, terms]);
 
+  const isExpanded = useCallback(
+    (name: string, list: Run[]) =>
+      open.has(name) ||
+      (!closed.has(name) && (list.some((r) => isActive(r.state)) || terms.length > 0)),
+    [open, closed, terms.length],
+  );
+
   // Group runs by spec.group; a group sits where its newest run would be.
   const entries = useMemo<Entry[]>(() => {
     const out: Entry[] = [];
@@ -117,19 +126,12 @@ export function Runs() {
     for (const e of out) {
       rows.push(e);
       if (e.kind !== "group") continue;
-      const expanded =
-        open.has(e.name) ||
-        (!closed.has(e.name) && (e.runs.some((r) => isActive(r.state)) || terms.length > 0));
-      if (expanded)
+      if (isExpanded(e.name, e.runs))
         for (const r of [...e.runs].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)))
           rows.push({ kind: "run", run: r, inGroup: true, key: r.id });
     }
     return rows;
-  }, [visible, flat, open, closed, terms.length]);
-
-  const isExpanded = (name: string, list: Run[]) =>
-    open.has(name) ||
-    (!closed.has(name) && (list.some((r) => isActive(r.state)) || terms.length > 0));
+  }, [visible, flat, isExpanded]);
 
   const toggleGroup = (name: string, list: Run[]) => {
     const exp = isExpanded(name, list);
@@ -168,7 +170,7 @@ export function Runs() {
   }, [cursor]);
 
   const current = entries[cursor];
-  const compareHref = `/compare?ids=${[...selected].join(",")}`;
+  const compareHref = `/compare?ids=${[...selected].map(encodeURIComponent).join(",")}`;
   useHotkeys({
     j: () => setCursor((c) => Math.min(c + 1, entries.length - 1)),
     k: () => setCursor((c) => Math.max(c - 1, 0)),
@@ -181,12 +183,14 @@ export function Runs() {
       toggleSel(current.kind === "run" ? [current.run.id] : current.runs.map((r) => r.id)),
     c: () => selected.size && navigate(compareHref),
     "/": () => search.current?.focus(),
-    Escape: () => setSelected(new Set()),
+    Escape: () => {
+      if (!overlayOpen()) setSelected(new Set());
+    },
   });
 
   function open_(e: Entry | undefined) {
     if (!e) return;
-    if (e.kind === "run") navigate(`/runs/${e.run.id}`);
+    if (e.kind === "run") navigate(`${runPath(e.run.id)}`);
     else toggleGroup(e.name, e.runs);
   }
 
@@ -228,7 +232,7 @@ export function Runs() {
                 className={`fchip${on ? " on" : ""}`}
                 onClick={(e) =>
                   setStates(
-                    e.shiftKey || e.metaKey
+                    e.shiftKey || e.metaKey || e.ctrlKey
                       ? on
                         ? stateFilter.filter((x) => x !== s)
                         : [...stateFilter, s]
@@ -354,7 +358,9 @@ function CancelSelected({ ids, runs }: { ids: string[]; runs: Run[] }) {
       className="btn danger sm"
       onClick={async () => {
         if (!confirm(`Cancel ${active.length} active run(s)?`)) return;
-        await Promise.all(active.map((r) => api.cancel(r.id).catch(() => null)));
+        const res = await Promise.allSettled(active.map((r) => api.cancel(r.id)));
+        const failed = res.filter((x) => x.status === "rejected").length;
+        if (failed) toast(`${failed} of ${active.length} cancel request(s) failed`);
       }}
     >
       Cancel {active.length} active
@@ -427,9 +433,8 @@ function RunRow(props: {
   const cls = ["click", props.cursor && "cursor", props.selected && "sel"]
     .filter(Boolean)
     .join(" ");
-  const params = inGroup ? run.spec.params : run.spec.params;
   return (
-    <tr className={cls} onClick={() => navigate(`/runs/${run.id}`)} onMouseMove={props.onHover}>
+    <tr className={cls} onClick={() => navigate(runPath(run.id))} onMouseMove={props.onHover}>
       <td onClick={(e) => e.stopPropagation()}>
         <input
           type="checkbox"
@@ -444,15 +449,12 @@ function RunRow(props: {
       <td style={{ maxWidth: 440 }}>
         <div className="row" style={{ gap: 8, paddingLeft: inGroup ? 18 : 0 }}>
           <Link
-            href={`/runs/${run.id}`}
+            href={runPath(run.id)}
             className="ellipsis"
             style={{ color: "var(--text)", fontWeight: 500 }}
             onClick={(e) => {
               e.stopPropagation();
-              if (!e.metaKey && !e.ctrlKey) {
-                e.preventDefault();
-                navigate(`/runs/${run.id}`);
-              }
+              onLinkClick(e);
             }}
           >
             {runTitle(run)}
@@ -483,7 +485,7 @@ function RunRow(props: {
         )}
       </td>
       <td>
-        <Params params={params} />
+        <Params params={run.spec.params} />
       </td>
       <td>
         <Resources run={run} />
@@ -547,7 +549,7 @@ function GroupRow(props: {
         <div
           className="row"
           style={{ gap: 6 }}
-          title={byState.map(([s, n]) => `${n} ${s}`).join(", ")}
+          title={byState.map(([s, n]) => `${n} ${STATE_LABEL[s]}`).join(", ")}
         >
           <div className="stackbar">
             {byState.map(([s, n]) => (
@@ -578,7 +580,7 @@ function GroupRow(props: {
                 className="faint"
                 style={{ color: stateColor(s), fontWeight: 400, fontSize: 12 }}
               >
-                {n} {s}
+                {n} {STATE_LABEL[s].toLowerCase()}
               </span>
             ))}
         </div>
@@ -607,8 +609,7 @@ function GroupRow(props: {
           className="btn sm"
           onClick={(e) => {
             e.stopPropagation();
-            e.preventDefault();
-            navigate(`/compare?group=${encodeURIComponent(props.name)}`);
+            onLinkClick(e);
           }}
           style={{ marginRight: 8 }}
         >

@@ -86,7 +86,7 @@ export function registerCluster(
       print(o.json, s, () =>
         s.listen
           ? `node ${s.node} ${s.listening ? "listening" : "NOT listening"} on ${s.listen}${s.error ? ` (${s.error})` : ""}\n` +
-            "on the primary: orbit node token | ssh <primary> orbit node add http://<this-host>:<port> --token-stdin"
+            "join from this host: orbit node token | ssh <primary> orbit node add http://<this-host>:<port> --token-stdin"
           : `node ${s.node} is not exposed`,
       );
     });

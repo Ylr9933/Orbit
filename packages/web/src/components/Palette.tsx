@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { runTitle } from "../lib/format.ts";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { runPath, runTitle } from "../lib/format.ts";
 import { navigate } from "../lib/router.ts";
 import { useRuns } from "../lib/runs-store.ts";
 import { IconChip, IconCompare, IconFlask, IconLayers, IconRuns, IconSettings } from "./icons.tsx";
@@ -82,7 +82,7 @@ export function Palette({ onClose }: { onClose: () => void }) {
       text: `${run.id} ${runTitle(run)} ${run.spec.group ?? ""} ${Object.entries(run.spec.params)
         .map(([k, v]) => `${k}=${v}`)
         .join(" ")}`,
-      go: `/runs/${run.id}`,
+      go: `${runPath(run.id)}`,
     }));
     const all = [...pages, ...g, ...r];
     const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -94,6 +94,12 @@ export function Palette({ onClose }: { onClose: () => void }) {
     navigate(i.go);
     onClose();
   };
+
+  const list = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll whenever the selection moves
+  useEffect(() => {
+    list.current?.querySelector(".item.on")?.scrollIntoView({ block: "nearest" });
+  }, [cur]);
 
   let lastGroup = "";
   return (
@@ -119,7 +125,7 @@ export function Palette({ onClose }: { onClose: () => void }) {
             else if (e.key === "Escape") onClose();
           }}
         />
-        <div className="items">
+        <div className="items" ref={list}>
           {items.length === 0 && <div className="empty">No matches</div>}
           {items.map((i, k) => {
             const header = i.group !== lastGroup ? <div className="group">{i.group}</div> : null;

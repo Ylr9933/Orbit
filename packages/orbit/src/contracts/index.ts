@@ -9,7 +9,7 @@ export const Gpu = z.object({
   memTotalMiB: z.number(),
   memUsedMiB: z.number(),
   utilPct: z.number().nullable(),
-  /** Memory used by processes Orbit does not own (R0: all processes). */
+  /** Memory used on the GPU by any process; the allocator treats leased GPUs separately. */
   externalMemMiB: z.number(),
   available: z.boolean(),
 });
@@ -74,6 +74,10 @@ export const ResourceRequest = z.object({
   node: z.string().optional(),
 });
 export type ResourceRequest = z.infer<typeof ResourceRequest>;
+
+const hasDotDot = (p: string) => p.split("/").includes("..");
+/** Container paths Orbit mounts itself (run directory and code snapshot). */
+const RESERVED_TARGET = /^\/(orbit|workspace)?(\/|$)/;
 
 /** A bind mount: a host path (`source`, this node only) or a named dataset (any node that has it). */
 export const Mount = z
@@ -197,7 +201,7 @@ export const RunSpec = z
      * labels, cleans up and injects auth into the containers it starts.
      */
     backend: z.enum(["docker", "process"]).default("docker"),
-    /** Working directory of a process run (default: the code snapshot, else the run directory). */
+    /** Working directory of a process run (default: the code snapshot, else the project, else the run directory). */
     cwd: z.string().optional(),
     /** Container working directory: an absolute path, or `image` for the image's WORKDIR. */
     workdir: z.string().optional(),
@@ -223,9 +227,22 @@ export const RunSpec = z
   .refine((s) => !s.workdir || s.workdir === "image" || s.workdir.startsWith("/"), {
     message: "workdir must be an absolute path or `image`",
   })
-  .refine((s) => s.collect.every((p) => p.startsWith("/")), {
-    message: "collect paths must be absolute container paths",
-  });
+  .refine((s) => s.collect.every((p) => p.startsWith("/") && !hasDotDot(p)), {
+    message: "collect paths must be absolute container paths without `..`",
+  })
+  .refine(
+    (s) => {
+      const targets = s.mounts.map((m) => m.target.replace(/\/+$/, "") || "/");
+      return (
+        targets.every((t) => t.startsWith("/") && !hasDotDot(t) && !RESERVED_TARGET.test(t)) &&
+        new Set(targets).size === targets.length
+      );
+    },
+    {
+      message:
+        "mount targets must be distinct absolute paths without `..`, outside /orbit and /workspace",
+    },
+  );
 export type RunSpec = z.infer<typeof RunSpec>;
 export type RunSpecInput = z.input<typeof RunSpec>;
 
@@ -491,7 +508,10 @@ export const Method = z
     auth: ProfileName.optional(),
     model: z.string().optional(),
     /** Reasoning effort, e.g. `high`. */
-    effort: z.string().optional(),
+    effort: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]+$/, "effort must be a plain word, e.g. high")
+      .optional(),
     /** Method bundle directory (AGENTS.md / CLAUDE.md, skills) copied into the Agent home. */
     bundle: z.string().optional(),
   })

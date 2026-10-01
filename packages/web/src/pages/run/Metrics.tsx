@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Chart } from "../../components/Chart.tsx";
 import {
   keyMatcher,
@@ -22,6 +22,11 @@ export function MetricsTab({
 }) {
   const [view, setView] = useState<MetricView>({ filter: "", smoothing: 0, logY: false });
   const [hover, setHover] = useState<Record<string, string>>({});
+  // Hovering re-renders on every cursor move; keep the summary scan out of that path.
+  const statsByKey = useMemo(
+    () => new Map(metrics?.series.map((s) => [s.key, stats(s.points.map((p) => p[1]))])),
+    [metrics],
+  );
   if (error) return <Empty title="Could not load metrics">{error}</Empty>;
   if (!metrics) return <Loading what="Loading metrics" />;
   if (!metrics.series.length)
@@ -63,7 +68,7 @@ export function MetricsTab({
                     <div className="card-h">
                       <span className="mono">{k}</span>
                       <span className="hover-val">
-                        {hover[k] ?? `last ${num(metrics.summary[k])}`}
+                        {hover[k] || `last ${num(metrics.summary[k])}`}
                       </span>
                     </div>
                     <div className="plot">
@@ -104,13 +109,13 @@ export function MetricsTab({
             </thead>
             <tbody>
               {series.map((s) => {
-                const st = stats(s.points.map((p) => p[1]));
+                const st = statsByKey.get(s.key);
                 return (
                   <tr key={s.key}>
                     <td className="mono">{s.key}</td>
                     <td className="r mono">{num(metrics.summary[s.key])}</td>
-                    <td className="r mono muted">{num(st.min)}</td>
-                    <td className="r mono muted">{num(st.max)}</td>
+                    <td className="r mono muted">{num(st?.min)}</td>
+                    <td className="r mono muted">{num(st?.max)}</td>
                     <td className="r mono faint">{s.points.length}</td>
                     <td className="r mono faint">{num(s.points[s.points.length - 1]?.[0])}</td>
                   </tr>

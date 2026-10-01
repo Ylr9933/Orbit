@@ -28,9 +28,17 @@ import {
   type Run,
   RunState,
 } from "../contracts/index.ts";
+import { sameSecret, tokenMatches } from "../lib/tokens.ts";
 import { VERSION } from "../lib/version.ts";
 import type { Notifier, NotifyStore } from "../notify/index.ts";
-import { listArtifacts, readDiff, readLog, readMetrics, safeJoin } from "../records/index.ts";
+import {
+  decodePath,
+  listArtifacts,
+  outputFile,
+  readDiff,
+  readLog,
+  readMetrics,
+} from "../records/index.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { loadTranscript } from "../sessions/index.ts";
 import type { DatasetRegistry } from "../workspace/datasets.ts";
@@ -59,9 +67,13 @@ export function createApp(deps: AppDeps): Hono {
   const api = new Hono();
 
   api.use("*", async (c, next) => {
-    const bearer = c.req.header("authorization") === `Bearer ${deps.token}`;
-    if (!bearer && getCookie(c, COOKIE) !== deps.token)
+    if (tokenMatches(c.req.header("authorization"), deps.token)) return next();
+    if (!sameSecret(getCookie(c, COOKIE), deps.token))
       return c.json({ error: "unauthorized" }, 401);
+    // The cookie also rides on requests from other localhost ports (SameSite ignores ports):
+    // changes must come from the Web UI's own origin.
+    if (c.req.method !== "GET" && c.req.method !== "HEAD" && !sameOrigin(c))
+      return c.json({ error: "cross-origin request refused" }, 403);
     await next();
   });
 
@@ -84,7 +96,7 @@ export function createApp(deps: AppDeps): Hono {
       ?.split(",")
       .filter(Boolean)
       .map((s) => RunState.parse(s));
-    const limit = Number(c.req.query("limit") ?? 500);
+    const limit = num(c.req.query("limit"), 500);
     return c.json({ runs: runs.storeList({ states, group: c.req.query("group"), limit }) });
   });
   api.post("/runs", async (c) => c.json(await runs.submit(await c.req.json()), 201));
@@ -98,9 +110,9 @@ export function createApp(deps: AppDeps): Hono {
   /** Long-poll until the run is terminal or `timeout` seconds pass; returns the current run. */
   api.get("/runs/:id/wait", async (c) => {
     const id = c.req.param("id");
-    const timeoutMs = Math.min(Number(c.req.query("timeout") ?? 30), 120) * 1000;
+    const timeoutMs = Math.min(num(c.req.query("timeout"), 30), 120) * 1000;
     const run = must(runs.get(id));
-    if (isTerminal(run.state)) return c.json(run);
+    if (isTerminal(run.state) && run.cleanup !== "pending") return c.json(run);
     const done = await new Promise<Run>((resolve) => {
       const onChange = ({ run: r }: { run: Run }) => {
         if (r.id === id && isTerminal(r.state) && r.cleanup !== "pending") finish(r);
@@ -120,13 +132,13 @@ export function createApp(deps: AppDeps): Hono {
   api.get("/runs/:id/events", (c) => {
     const id = c.req.param("id");
     must(runs.get(id));
-    return c.json({ events: runs.events(id, Number(c.req.query("after") ?? 0)) });
+    return c.json({ events: runs.events(id, num(c.req.query("after"), 0)) });
   });
 
   api.get("/runs/:id/logs", async (c) => {
     const run = must(runs.get(c.req.param("id")));
-    const offset = Number(c.req.query("offset") ?? 0);
-    const limit = Number(c.req.query("limit") ?? 256 * 1024);
+    const offset = num(c.req.query("offset"), 0);
+    const limit = num(c.req.query("limit"), 256 * 1024);
     const chunk = await readLog(runs.dirs(run.id).log, offset, limit, isTerminal(run.state));
     // Process runs write straight to the log; it is redacted in place only when they end.
     if (run.spec.backend === "process" && !isTerminal(run.state))
@@ -141,9 +153,13 @@ export function createApp(deps: AppDeps): Hono {
     const st = await stat(file).catch(() => null);
     if (!st) return c.text("");
     c.header("content-type", "text/plain; charset=utf-8");
+    if (c.req.query("download")) c.header("content-disposition", attachment(`${run.id}.log`));
+    // As for /logs: a running process run's log is not redacted on disk yet.
+    if (run.spec.backend === "process" && !isTerminal(run.state))
+      return c.body(
+        Readable.toWeb(createReadStream(file).pipe(runs.redactor(run).stream())) as ReadableStream,
+      );
     c.header("content-length", String(st.size));
-    if (c.req.query("download"))
-      c.header("content-disposition", `attachment; filename="${run.id}.log"`);
     return c.body(Readable.toWeb(createReadStream(file)) as ReadableStream);
   });
 
@@ -161,24 +177,22 @@ export function createApp(deps: AppDeps): Hono {
 
   api.get("/runs/:id/files/*", async (c) => {
     const run = must(runs.get(c.req.param("id")));
-    const rel = decodeURIComponent(c.req.path.split("/files/")[1] ?? "");
+    const rel = decodePath(c.req.path, "/files/");
+    // Run outputs are untrusted content on the daemon's origin: no script, no type sniffing.
+    c.header("content-security-policy", ARTIFACT_CSP);
+    c.header("x-content-type-options", "nosniff");
+    c.header("content-type", contentType(rel));
+    if (c.req.query("download")) c.header("content-disposition", attachment(rel));
     if (run.remote) {
       const res = await remoteRecords(() => cluster.file(run, rel));
       if (!res || res.status === 404) return c.json({ error: "not found" }, 404);
       c.header("content-length", res.headers.get("content-length") ?? undefined);
-      c.header("content-type", contentType(rel));
-      if (c.req.query("download"))
-        c.header("content-disposition", `attachment; filename="${rel.split("/").pop()}"`);
       return c.body(res.body as ReadableStream);
     }
-    const file = safeJoin(runs.dirs(run.id).output, rel);
-    const st = file ? await stat(file).catch(() => null) : null;
-    if (!file || !st?.isFile()) return c.json({ error: "not found" }, 404);
-    c.header("content-length", String(st.size));
-    c.header("content-type", contentType(file));
-    if (c.req.query("download"))
-      c.header("content-disposition", `attachment; filename="${rel.split("/").pop()}"`);
-    return c.body(Readable.toWeb(createReadStream(file)) as ReadableStream);
+    const f = await outputFile(runs.dirs(run.id).output, rel);
+    if (!f) return c.json({ error: "not found" }, 404);
+    c.header("content-length", String(f.size));
+    return c.body(Readable.toWeb(createReadStream(f.file)) as ReadableStream);
   });
 
   api.get("/runs/:id/diff", async (c) => {
@@ -273,7 +287,7 @@ export function createApp(deps: AppDeps): Hono {
     return c.json({ ok: true });
   });
   api.get("/benchmarks/:name/tasks", (c) => c.json({ tasks: bench.tasks(c.req.param("name")) }));
-  api.get("/bench/jobs", (c) => c.json(bench.jobs(Number(c.req.query("limit") ?? 200))));
+  api.get("/bench/jobs", (c) => c.json(bench.jobs(num(c.req.query("limit"), 200))));
   api.post("/bench/jobs", async (c) => c.json(await bench.submit(await c.req.json()), 201));
   api.get("/bench/jobs/:id", (c) => c.json(bench.job(c.req.param("id"))));
   api.post("/bench/jobs/:id/cancel", async (c) => c.json(await bench.cancel(c.req.param("id"))));
@@ -299,11 +313,14 @@ export function createApp(deps: AppDeps): Hono {
 
   // Web UI: `/login?token=...` sets an HttpOnly cookie, then the SPA uses the API with it.
   app.get("/login", (c) => {
-    if (c.req.query("token") !== deps.token) return c.text("invalid token; run `orbit web`", 401);
+    if (!sameSecret(c.req.query("token"), deps.token))
+      return c.text("invalid token; run `orbit web`", 401);
     setCookie(c, COOKIE, deps.token, { httpOnly: true, sameSite: "Strict", path: "/" });
     // Only same-origin paths, so the login link cannot redirect elsewhere.
     const next = c.req.query("next") ?? "/";
-    return c.redirect(/^\/(?![/\\])/.test(next) ? next : "/");
+    const origin = new URL(c.req.url).origin;
+    const to = URL.canParse(next, origin) ? new URL(next, origin) : null;
+    return c.redirect(to?.origin === origin ? to.pathname + to.search + to.hash : "/");
   });
   if (deps.webDir && existsSync(deps.webDir)) {
     const root = deps.webDir;
@@ -342,6 +359,29 @@ function errorResponse(c: Context, err: Error) {
   if (err instanceof SyntaxError) return c.json({ error: `invalid JSON: ${err.message}` }, 400);
   console.error(err);
   return c.json({ error: err.message }, 500);
+}
+
+const ARTIFACT_CSP = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'";
+
+/** `Content-Disposition` for a download, with a UTF-8 name and an ASCII fallback. */
+function attachment(path: string): string {
+  const name = path.split("/").pop() || "download";
+  const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
+/** A request from the Web UI itself (browsers send these headers on every POST/PUT/DELETE). */
+function sameOrigin(c: Context): boolean {
+  const site = c.req.header("sec-fetch-site");
+  if (site) return site === "same-origin" || site === "none";
+  const origin = c.req.header("origin");
+  return !origin || origin === new URL(c.req.url).origin;
+}
+
+/** A numeric query parameter, or the default when absent or not a number. */
+function num(v: string | undefined, def: number): number {
+  const n = v === undefined || v === "" ? Number.NaN : Number(v);
+  return Number.isFinite(n) ? n : def;
 }
 
 const TYPES: Record<string, string> = {

@@ -9,18 +9,24 @@ export type Allocation = { ok: true; gpuIds: string[] } | { ok: false; reason: s
 export function infeasible(req: ResourceRequest, r: NodeResources): string | null {
   if (req.gpus > 0 && r.gpuError) return `GPUs requested but unavailable: ${r.gpuError}`;
   const fitting = r.gpus.filter(
-    (g) =>
-      (!req.gpuMemGB || g.memTotalMiB >= req.gpuMemGB * 1024) &&
-      (!req.gpuIds?.length || matchesId(g, req.gpuIds)),
+    (g) => gpuMemFits(g, req) && (!req.gpuIds?.length || matchesId(g, req.gpuIds)),
   );
   if (req.gpus > fitting.length) {
     return `needs ${req.gpus} GPU(s) but this node has ${fitting.length} matching`;
   }
   if (req.cpus > r.cpu.count) return `needs ${req.cpus} CPUs but this node has ${r.cpu.count}`;
-  const maxMem = Math.floor(r.memory.totalGB * MEM_LEASABLE_FRACTION);
+  const maxMem = r.memory.totalGB * MEM_LEASABLE_FRACTION;
   if (req.memGB > maxMem)
-    return `needs ${req.memGB} GB memory but at most ${maxMem} GB is leasable`;
+    return `needs ${req.memGB} GB memory but at most ${Math.floor(maxMem)} GB is leasable`;
   return null;
+}
+
+/**
+ * Cards report a little less than their nominal size (an 80 GB H100 shows 81559 MiB), so a request
+ * in nominal GB matches within 3%.
+ */
+function gpuMemFits(g: { memTotalMiB: number }, req: ResourceRequest): boolean {
+  return !req.gpuMemGB || g.memTotalMiB >= req.gpuMemGB * 1024 * 0.97;
 }
 
 function matchesId(g: { uuid: string; index: number }, ids: string[]): boolean {
@@ -47,7 +53,7 @@ export function allocate(req: ResourceRequest, r: NodeResources, leases: Lease[]
   const leased = new Set(leases.flatMap((l) => l.gpuIds));
   const free = r.gpus
     .filter((g) => !leased.has(g.uuid) && g.available)
-    .filter((g) => !req.gpuMemGB || g.memTotalMiB >= req.gpuMemGB * 1024)
+    .filter((g) => gpuMemFits(g, req))
     .filter((g) => !req.gpuIds?.length || matchesId(g, req.gpuIds))
     .sort((a, b) => a.memUsedMiB - b.memUsedMiB || a.index - b.index);
   if (free.length < req.gpus) {

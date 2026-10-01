@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { open, readdir, readFile, stat } from "node:fs/promises";
+import { open, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import type { Artifacts, LogChunk, Metrics } from "../contracts/index.ts";
@@ -129,8 +129,10 @@ export async function listArtifacts(dir: string): Promise<Artifacts> {
       const p = join(d, e.name);
       if (e.isDirectory()) await walk(p);
       else if (e.isFile()) {
-        const st = await stat(p);
-        files.push({ path: relative(dir, p), bytes: st.size, mtime: st.mtime.toISOString() });
+        // A running job may remove or rename a file between readdir and stat.
+        const st = await stat(p).catch(() => null);
+        if (st)
+          files.push({ path: relative(dir, p), bytes: st.size, mtime: st.mtime.toISOString() });
       }
     }
   }
@@ -143,6 +145,36 @@ export function safeJoin(dir: string, rel: string): string | null {
   const root = resolve(dir);
   const p = resolve(root, rel);
   return p === root || p.startsWith(root + sep) ? p : null;
+}
+
+/**
+ * A regular file under `dir` named by a request path, or null. Symlinks are resolved first, so a
+ * link written by a run cannot expose files outside its output directory.
+ */
+export async function outputFile(
+  dir: string,
+  rel: string,
+): Promise<{ file: string; size: number } | null> {
+  const file = safeJoin(dir, rel);
+  if (!file) return null;
+  const [root, real] = await Promise.all([
+    realpath(dir).catch(() => null),
+    realpath(file).catch(() => null),
+  ]);
+  if (!root || !real || (real !== root && !real.startsWith(root + sep))) return null;
+  const st = await stat(real).catch(() => null);
+  return st?.isFile() ? { file: real, size: st.size } : null;
+}
+
+/** The URL-encoded rest of `path` after `marker`; a malformed escape is a user error. */
+export function decodePath(path: string, marker: string): string {
+  const i = path.indexOf(marker);
+  const raw = i < 0 ? "" : path.slice(i + marker.length);
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    throw new URIError(`malformed path: ${raw}`);
+  }
 }
 
 export async function readDiff(file: string): Promise<{ patch: string; truncated: boolean }> {

@@ -18,7 +18,7 @@ const bin = join(home, "bin");
 mkdirSync(bin);
 writeFileSync(
   join(bin, "docker"),
-  `#!/bin/sh\ncase "$1" in ps) exit 0;; esac\necho "fake docker: refused $1" >&2\nexit 1\n`,
+  `#!/bin/sh\ncase "$1" in ps|rm) exit 0;; inspect) echo "Error: No such object: $3" >&2; exit 1;; esac\necho "fake docker: refused $1" >&2\nexit 1\n`,
 );
 chmodSync(join(bin, "docker"), 0o755);
 process.env.PATH = `${bin}:${process.env.PATH}`;
@@ -135,7 +135,7 @@ describe("multi-node", () => {
       (x: Run) => isTerminal(x.state) && x.cleanup !== "pending",
     );
     expect(done).toMatchObject({ remote: true, node: "w1", state: "failed", origin: null });
-    expect(done.reason).toMatch(/image|fake docker/);
+    expect(done.reason).toMatch(/image|pull|fake docker/);
     expect(done.lease?.state).not.toBe("active");
     const events = (await client.events(r.id)).map((e) => e.kind);
     expect(events).toContain("placed");

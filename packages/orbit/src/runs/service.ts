@@ -11,8 +11,10 @@ import {
   renameSync,
   rmSync,
   statSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
+import { cp } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -97,6 +99,8 @@ export const AUTH_TEST_GROUP = "auth-test";
 const LOG_DRAIN_TIMEOUT_MS = 15_000;
 const STOP_GRACE_MS = 10_000;
 const PROC_POLL_MS = 2000;
+const REFUSAL_TTL_MS = 10 * 60_000;
+const DOCKER_RETRY_MS = 5000;
 /** Directory names too generic to name an image after (the task directory is used instead). */
 const GENERIC_DIRS = new Set(["environment", "tests", "docker", "env", "verifier", "solution"]);
 
@@ -112,8 +116,12 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   private readonly node: string;
   /** Worker nodes; set by the daemon when the cluster module starts. */
   private remote: RemotePlacement | null = null;
-  /** `<run>@<node>` pairs whose node refused the run: not placed there again. */
-  private readonly refused = new Map<string, string>();
+  /** `<run>@<node>` pairs whose node refused the run: not placed there again for a while. */
+  private readonly refused = new Map<string, { why: string; until: number }>();
+  /** Stops requested for local runs not watched yet (see `control`). */
+  private readonly stopIntent = new Map<string, "cancel" | "timeout">();
+  /** Runs from a primary still being received (see `submitRemote`). */
+  private readonly receiving = new Map<string, Promise<Run>>();
   private readonly gpuMode = docker.detectGpuMode();
   private cached: { at: number; value: NodeResources } | null = null;
   private timer: NodeJS.Timeout | null = null;
@@ -286,7 +294,8 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     if (run.remote) {
       const sync = this.store.getSync(id);
       if (sync) this.store.putSync({ ...sync, cancel: true });
-      this.store.addEvent(id, "cancel", `cancel requested on ${run.node}`);
+      const event = this.store.addEvent(id, "cancel", `cancel requested on ${run.node}`);
+      this.emit("change", { run, event });
       void this.remote?.cancel(run).catch(() => {});
       return this.mustGet(id);
     }
@@ -417,17 +426,23 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   private async schedule(): Promise<void> {
     const queued = this.store.queuedRuns();
     if (queued.length === 0) return;
-    const res = await this.resources(true);
+    // A copy: memory granted in this pass is taken off what the probe saw as available.
+    const res = structuredClone(await this.resources(true));
     const nodes = this.remoteNodes();
     const mirrors = nodes.length ? this.mirrors() : [];
-    for (const run of queued) {
+    for (const q of queued) {
       const reasons: [string, string][] = [];
-      const blocked = await this.localBlocker(run.spec);
+      const blocked = await this.localBlocker(q.spec);
+      // Re-read after the awaits: a cancel may have ended the run meanwhile. No await from here on
+      // until it is leased, placed or its reason saved.
+      const run = this.store.getRun(q.id);
+      if (run?.state !== "queued") continue;
       if (blocked) reasons.push([this.node, blocked]);
       else {
         const a = allocate(run.spec.resources, res, this.store.activeLeases());
         if (a.ok) {
           this.leaseLocal(run, a.gpuIds);
+          res.memory.availableGB -= run.spec.resources.memGB;
           continue;
         }
         reasons.push([this.node, a.reason]);
@@ -435,7 +450,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       let placed = false;
       for (const n of run.origin ? [] : nodes) {
         const why =
-          this.refused.get(`${run.id}@${n.name}`) ??
+          this.refusal(`${run.id}@${n.name}`) ??
           remoteBlocker(run.spec, n) ??
           (n.online ? null : "offline");
         if (why) {
@@ -464,6 +479,13 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     }
   }
 
+  private refusal(key: string): string | null {
+    const r = this.refused.get(key);
+    if (r && r.until > Date.now()) return r.why;
+    this.refused.delete(key);
+    return null;
+  }
+
   private leaseLocal(run: Run, gpuIds: string[]): void {
     const lease: Lease = {
       id: `lease-${run.id}`,
@@ -483,7 +505,9 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       this.store.putLease(lease);
       this.save(run, "leased", gpuIds.length ? `GPUs ${gpuIds.join(", ")}` : "no GPUs");
     });
-    void this.launch(run.id);
+    void this.launch(run.id).catch((e) =>
+      console.error(`orbit: run ${run.id}:`, (e as Error).message),
+    );
   }
 
   // ---- runs on other nodes (primary side) ----
@@ -540,6 +564,11 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       : { ok: false, kind: "unreachable", message: "cluster not running" };
     const sync = this.store.getSync(id);
     if (!sync) return;
+    // The node was removed while the run was being sent: it may run there, untracked.
+    if (sync.done && (r.ok || r.kind === "unknown")) {
+      this.loseRemote(id, `node ${run.node} was removed`);
+      return;
+    }
     if (r.ok) {
       this.store.putSync({ ...sync, confirmed: true });
       this.store.addEvent(id, "dispatched", `accepted by ${run.node}`);
@@ -550,7 +579,11 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       this.store.addEvent(id, "dispatch", `${r.message}; checking with ${run.node}`);
       return;
     }
-    if (r.kind === "rejected") this.refused.set(`${id}@${run.node}`, `refused: ${r.message}`);
+    if (r.kind === "rejected")
+      this.refused.set(`${id}@${run.node}`, {
+        why: `refused: ${r.message}`,
+        until: Date.now() + REFUSAL_TTL_MS,
+      });
     this.requeueRemote(id, `${run.node}: ${r.message}`);
   }
 
@@ -597,8 +630,9 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
    */
   applyRemote(id: string, remote: Run, events: RunEvent[]): Run {
     const run = this.mustGet(id);
-    if (!run.remote) return run;
     const sync = this.store.getSync(id);
+    // Lost or requeued meanwhile (node removed, run unknown there): keep the local outcome.
+    if (!run.remote || !sync || sync.done) return run;
     const queuedThere = remote.state === "queued";
     run.state = queuedThere ? "starting" : remote.state;
     run.reason = queuedThere ? `queued on ${run.node}: ${remote.reason ?? ""}` : remote.reason;
@@ -615,13 +649,12 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     const saved = this.store.tx(() => {
       this.store.putRun(run);
       const out = fresh.map((e) => this.store.addEvent(id, e.kind, e.message, e.at));
-      if (sync)
-        this.store.putSync({
-          ...sync,
-          confirmed: true,
-          eventSeq: fresh.at(-1)?.seq ?? sync.eventSeq,
-          cancel: sync.cancel && !isTerminal(remote.state),
-        });
+      this.store.putSync({
+        ...sync,
+        confirmed: true,
+        eventSeq: fresh.at(-1)?.seq ?? sync.eventSeq,
+        cancel: sync.cancel && !isTerminal(remote.state),
+      });
       return out;
     });
     if (saved.length === 0) this.emit("change", { run });
@@ -636,7 +669,16 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
    * Accept a run placed here by another node. Idempotent by id. Its code arrives as bundles already
    * stored under `cache/bundles`; secrets, datasets and auth come from this node's own configuration.
    */
-  async submitRemote(input: RemoteSubmit): Promise<Run> {
+  submitRemote(input: RemoteSubmit): Promise<Run> {
+    // A retried submission while the first is still being received joins it.
+    const pending = this.receiving.get(input.id);
+    if (pending) return pending;
+    const p = this.receiveRemote(input).finally(() => this.receiving.delete(input.id));
+    this.receiving.set(input.id, p);
+    return p;
+  }
+
+  private async receiveRemote(input: RemoteSubmit): Promise<Run> {
     const existing = this.store.getRun(input.id);
     if (existing) {
       if (existing.origin !== input.origin)
@@ -671,7 +713,8 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     mkdirSync(dirs.output, { recursive: true });
     writeFileSync(dirs.metrics, "");
     writeFileSync(dirs.log, "");
-    if (workspace) cpSync(workspace, dirs.workspace, { recursive: true, verbatimSymlinks: true });
+    // Asynchronously: a large snapshot must not stall heartbeats and other requests.
+    if (workspace) await cp(workspace, dirs.workspace, { recursive: true, verbatimSymlinks: true });
     const run: Run = {
       id: input.id,
       spec,
@@ -741,11 +784,12 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       const want = [...(run.lease?.gpuIds ?? [])].sort().join(",");
       const got = [...(st?.gpuIds ?? [])].sort().join(",");
       if (want !== got) {
-        this.requestStop(run, "cancel");
-        throw new Error(`GPU mapping mismatch: leased [${want}] but container has [${got}]`);
-      }
-      this.armTimeout(run);
-      await this.watch(id, containerId, true);
+        // Stop it, then collect logs and outputs as for any failure before the container goes.
+        ctl.fail = `GPU mapping mismatch: leased [${want}] but container has [${got}]`;
+        appendFileSync(dirs.log, `[orbit] ${ctl.fail}\n`);
+        void docker.stopContainer(containerId);
+      } else this.armTimeout(run);
+      await this.watch(id, containerId, false);
     } catch (e) {
       const msg = (e as Error).message;
       appendFileSync(dirs.log, `\n[orbit] ${this.redactor(run).apply(msg)}\n`);
@@ -788,7 +832,10 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     const base = join(this.dirs(run.id).output, "collected");
     const missing: string[] = [];
     for (const p of run.spec.collect) {
-      const err = await docker.copyFromContainer(containerId, p, join(base, p));
+      const dest = safeJoin(base, `.${p}`);
+      const err = dest
+        ? await docker.copyFromContainer(containerId, p, dest)
+        : "path leaves the output directory";
       if (err) missing.push(`${p} (${err})`);
     }
     const n = run.spec.collect.length - missing.length;
@@ -889,8 +936,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
 
   /** Wait for the process (via its exit event, or by polling after a restart), then finalize. */
   private async watchProcess(id: string, exited: Promise<number | null> | null): Promise<void> {
-    const ctl = this.active.get(id) ?? {};
-    this.active.set(id, ctl);
+    const ctl = this.control(id);
     let code: number | null = null;
     if (exited) code = await exited;
     else {
@@ -902,16 +948,17 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     }
     const run = this.mustGet(id);
     code = readExitFile(join(this.dirs(id).root, "exit-code")) ?? code;
-    let state: RunState = code === 0 ? "succeeded" : "failed";
-    let reason = code === 0 ? null : code === null ? "exit status unknown" : `exit code ${code}`;
-    if (ctl.cancel === "cancel") {
-      state = "cancelled";
-      reason = "cancelled";
-    } else if (ctl.cancel === "timeout") {
-      state = "failed";
-      reason = `timeout after ${run.spec.timeoutMin} min`;
-    }
-    await this.finalize(run, state, code, reason);
+    const reason = code === 0 ? null : code === null ? "exit status unknown" : `exit code ${code}`;
+    await this.finalize(run, ...outcome(run, ctl, code, reason));
+  }
+
+  /** The run's control entry, taking over a stop requested before it existed (e.g. at recovery). */
+  private control(id: string): Control {
+    const ctl = this.active.get(id) ?? {};
+    ctl.cancel ??= this.stopIntent.get(id);
+    this.stopIntent.delete(id);
+    this.active.set(id, ctl);
+    return ctl;
   }
 
   /** SIGTERM the process group and stop its child containers; SIGKILL after a grace period. */
@@ -920,7 +967,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     if (proc && procAlive(proc)) {
       killGroup(proc.pid, "SIGTERM");
       setTimeout(() => {
-        if (groupAlive(proc.pid)) killGroup(proc.pid, "SIGKILL");
+        if (groupAlive(proc)) killGroup(proc.pid, "SIGKILL");
       }, STOP_GRACE_MS).unref();
     }
     const children = await docker.containersWithLabel(docker.LABEL_PARENT, run.id);
@@ -929,17 +976,19 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
 
   /** True when no process of the group and no child container is left. */
   private async cleanupProcess(run: Run): Promise<boolean> {
-    if (run.proc && groupAlive(run.proc.pid)) {
-      killGroup(run.proc.pid, "SIGKILL");
-      for (let i = 0; i < 20 && groupAlive(run.proc.pid); i++) await sleep(250);
+    const proc = run.proc;
+    if (proc && groupAlive(proc)) {
+      killGroup(proc.pid, "SIGKILL");
+      for (let i = 0; i < 20 && groupAlive(proc); i++) await sleep(250);
     }
     rmSync(this.envFile(run.id), { force: true });
     const children = await docker.containersWithLabel(docker.LABEL_PARENT, run.id);
     if (children === null) return false;
     const removed = await Promise.all(children.map((c) => docker.removeContainer(c)));
-    if (children.length > 0)
+    const ok = removed.every(Boolean) && !(proc && groupAlive(proc));
+    if (ok && children.length > 0)
       this.store.addEvent(run.id, "cleanup", `removed ${children.length} child container(s)`);
-    return removed.every(Boolean) && !(run.proc && groupAlive(run.proc.pid));
+    return ok;
   }
 
   private async recoverProcess(run: Run): Promise<void> {
@@ -953,9 +1002,11 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       "recovered",
       alive ? "reattached to process after daemon restart" : "collected after daemon restart",
     );
-    this.active.set(run.id, {});
+    this.control(run.id);
     this.armTimeout(run);
-    void this.watchProcess(run.id, null).finally(() => this.active.delete(run.id));
+    void this.watchProcess(run.id, null)
+      .catch((e) => console.error(`orbit: run ${run.id}:`, (e as Error).message))
+      .finally(() => this.active.delete(run.id));
   }
 
   /** Process output goes straight to the log file; redact known secrets once it is complete. */
@@ -991,7 +1042,15 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   }
 
   private async ensureImage(run: Run, dirs: RunDirs): Promise<string> {
-    if (run.spec.image) return run.spec.image;
+    const image = run.spec.image;
+    if (image) {
+      // Pulled here, without the time limit of `docker run`, with progress in the run log.
+      if (await docker.imageExists(image)) return image;
+      this.save(run, "pull", `pulling ${image}`);
+      const code = await docker.pullImage(image, dirs.log);
+      if (code !== 0) throw new Error(`docker pull ${image} failed with exit code ${code}`);
+      return image;
+    }
     const df = run.spec.dockerfile as string;
     const dir = basename(dirname(df));
     const name = run.spec.project
@@ -1079,14 +1138,29 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   }
 
   /** Follow logs and wait for exit, then collect and clean up. */
-  private async watch(id: string, containerId: string, append: boolean): Promise<void> {
-    const ctl = this.active.get(id) ?? {};
-    this.active.set(id, ctl);
+  private async watch(id: string, containerId: string, recovered: boolean): Promise<void> {
+    const ctl = this.control(id);
     const dirs = this.dirs(id);
-    const logs = docker.followLogs(containerId, dirs.log, append, this.redactor(this.mustGet(id)));
+    // The container log follows the build output and Orbit's own lines; a reattach after a restart
+    // re-reads the container log from its start, so it replaces only the part after that offset.
+    const offsetFile = join(dirs.root, "log-offset");
+    if (!recovered) writeFileSync(offsetFile, String(fileSize(dirs.log)));
+    else truncateSync(dirs.log, Math.min(readOffset(offsetFile), fileSize(dirs.log)));
+    const logs = docker.followLogs(containerId, dirs.log, this.redactor(this.mustGet(id)));
     ctl.logs = logs.proc;
     const drained = logs.done.then(() => true);
-    const exitCode = await docker.waitContainer(containerId);
+    let exitCode = await docker.waitContainer(containerId);
+    // `docker wait` also fails when docker itself is unavailable: only a stopped container counts.
+    while (exitCode === -1) {
+      const st = await docker.inspectContainer(containerId).catch(() => undefined);
+      if (st === null) break;
+      if (st && !st.running) {
+        exitCode = st.exitCode;
+        break;
+      }
+      await sleep(DOCKER_RETRY_MS);
+      exitCode = await docker.waitContainer(containerId);
+    }
     // Evidence first: let the log follower reach EOF before the container is removed.
     const complete = await Promise.race([drained, sleep(LOG_DRAIN_TIMEOUT_MS).then(() => false)]);
     if (!complete) {
@@ -1094,25 +1168,19 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       appendFileSync(dirs.log, "\n[orbit] log collection timed out; log may be truncated\n");
       this.store.addEvent(id, "log", "log collection timed out; log may be truncated");
     }
-    const st = await docker.inspectContainer(containerId);
+    const st = await docker.inspectContainer(containerId).catch(() => null);
     const run = this.mustGet(id);
     await this.collect(run, containerId);
-    let state: RunState = exitCode === 0 ? "succeeded" : "failed";
     let reason = exitCode === 0 ? null : `exit code ${exitCode}`;
     if (st?.oomKilled) reason = `out of memory (limit ${run.spec.resources.memGB} GB)`;
-    if (ctl.cancel === "cancel") {
-      state = "cancelled";
-      reason = "cancelled";
-    } else if (ctl.cancel === "timeout") {
-      state = "failed";
-      reason = `timeout after ${run.spec.timeoutMin} min`;
-    }
-    await this.finalize(run, state, exitCode, reason);
+    await this.finalize(run, ...outcome(run, ctl, exitCode, reason));
   }
 
   private requestStop(run: Run, why: "cancel" | "timeout"): void {
     const ctl = this.active.get(run.id);
     if (ctl) ctl.cancel ??= why;
+    // Not watched yet (the daemon is still reattaching): the watcher takes it over.
+    else this.stopIntent.set(run.id, why);
     this.store.addEvent(run.id, why, why === "cancel" ? "cancel requested" : "timeout reached");
     if (run.containerId) void docker.stopContainer(run.containerId);
     if (run.proc) void this.stopProcess(run);
@@ -1125,9 +1193,15 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     exitCode: number | null,
     reason: string | null,
   ): Promise<Run> {
+    // Already ended (e.g. a later step of the same watcher threw): only retry its cleanup.
+    const now = this.mustGet(run.id);
+    if (isTerminal(now.state)) {
+      if (now.cleanup !== "done") await this.cleanup(now);
+      return this.mustGet(run.id);
+    }
     run.state = state;
     run.exitCode = exitCode;
-    run.reason = reason === null ? null : this.redactor().apply(reason);
+    run.reason = reason === null ? null : this.redactor(run).apply(reason);
     run.endedAt = nowIso();
     if (run.spec.auth) this.finishAuth(run);
     if (run.spec.backend === "process") await this.redactLog(run);
@@ -1204,9 +1278,11 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   }
 
   /** Reattach to runs that were active when the daemon last stopped. */
-  private async recover(): Promise<void> {
+  private async recover(first = true): Promise<void> {
     for (const run of this.store.listRuns({ states: ["starting", "running"], limit: 10_000 })) {
+      if (this.active.has(run.id)) continue;
       if (run.remote) {
+        if (!first) continue;
         // Mirrored from a worker; the cluster sync resumes it (or re-sends it if never confirmed).
         const sync = this.store.getSync(run.id);
         if (sync && !sync.confirmed) void this.dispatchRemote(run.id);
@@ -1216,7 +1292,15 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
         await this.recoverProcess(run);
         continue;
       }
-      const st = await docker.inspectContainer(run.containerId ?? containerName(run.id));
+      let st: docker.ContainerStatus | null;
+      try {
+        st = await docker.inspectContainer(run.containerId ?? containerName(run.id));
+      } catch (e) {
+        // Docker is not answering: never conclude the run is lost from that; try again later.
+        console.error(`orbit: recover ${run.id}:`, (e as Error).message);
+        setTimeout(() => void this.recover(false), DOCKER_RETRY_MS * 6).unref();
+        return;
+      }
       if (!st) {
         await this.finalize(run, "lost", null, "container not found after daemon restart");
         continue;
@@ -1231,9 +1315,12 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
         "recovered",
         st.running ? "reattached after daemon restart" : "collected after daemon restart",
       );
-      this.active.set(run.id, {});
+      this.control(run.id);
       this.armTimeout(run);
-      void this.watch(run.id, st.id, false).finally(() => this.active.delete(run.id));
+      const id = st.id;
+      void this.watch(run.id, id, true)
+        .catch((e) => console.error(`orbit: run ${run.id}:`, (e as Error).message))
+        .finally(() => this.active.delete(run.id));
     }
   }
 
@@ -1283,10 +1370,36 @@ export function installBundle(bundle: string, agentDir: string, harness: "codex"
 
 interface Control {
   cancel?: "cancel" | "timeout";
+  /** A failure found by Orbit while the container runs (it is stopped, then collected). */
+  fail?: string;
   logs?: { kill(): unknown };
 }
 
 export class UserError extends Error {}
 export class NotFoundError extends Error {}
+
+/** Final state and reason from the exit code and what Orbit requested. */
+function outcome(
+  run: Run,
+  ctl: Control,
+  code: number | null,
+  reason: string | null,
+): [RunState, number | null, string | null] {
+  if (ctl.fail) return ["failed", code, ctl.fail];
+  if (ctl.cancel === "cancel") return ["cancelled", code, "cancelled"];
+  if (ctl.cancel === "timeout") return ["failed", code, `timeout after ${run.spec.timeoutMin} min`];
+  return [code === 0 ? "succeeded" : "failed", code, reason];
+}
+
+const fileSize = (f: string) => (existsSync(f) ? statSync(f).size : 0);
+
+function readOffset(f: string): number {
+  try {
+    const n = Number.parseInt(readFileSync(f, "utf8"), 10);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { Component, useEffect, useState, useSyncExternalStore } from "react";
 import {
   IconChip,
   IconCompare,
@@ -14,7 +14,7 @@ import { Palette } from "./components/Palette.tsx";
 import { Empty, Kbd, Link, Toaster } from "./components/ui.tsx";
 import { authState } from "./lib/api.ts";
 import { useHotkeys } from "./lib/hotkeys.ts";
-import { navigate, useLocation } from "./lib/router.ts";
+import { navigate, safeDecode, useLocation } from "./lib/router.ts";
 import { startRunsStore, useRunsState } from "./lib/runs-store.ts";
 import { BenchComparePage, BenchJobDetail, BenchJobs } from "./pages/Bench.tsx";
 import { Compare } from "./pages/Compare.tsx";
@@ -71,9 +71,9 @@ export function App() {
   let page: React.ReactNode;
   const m = /^\/runs\/([^/]+)\/?$/.exec(loc.path);
   const bj = /^\/bench\/([^/]+)\/?$/.exec(loc.path);
-  if (m) page = <RunDetail key={m[1]} id={decodeURIComponent(m[1] as string)} />;
+  if (m) page = <RunDetail key={m[1]} id={safeDecode(m[1] as string)} />;
   else if (loc.path === "/bench/compare") page = <BenchComparePage />;
-  else if (bj) page = <BenchJobDetail key={bj[1]} id={decodeURIComponent(bj[1] as string)} />;
+  else if (bj) page = <BenchJobDetail key={bj[1]} id={safeDecode(bj[1] as string)} />;
   else if (loc.path === "/bench" || loc.path === "/bench/") page = <BenchJobs />;
   else if (loc.path === "/compare") page = <Compare />;
   else if (loc.path === "/resources") page = <Resources />;
@@ -156,12 +156,36 @@ export function App() {
           </span>
         </button>
       </nav>
-      <main className="main">{page}</main>
+      <main className="main">
+        <PageBoundary key={loc.path}>{page}</PageBoundary>
+      </main>
       {palette && <Palette onClose={() => setPalette(false)} />}
       {help && <Help onClose={() => setHelp(false)} />}
       <Toaster />
     </div>
   );
+}
+
+/** Keeps a render error in one page from blanking the whole UI; navigating away resets it. */
+class PageBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
+  override state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  override render() {
+    const { error } = this.state;
+    if (!error) return this.props.children;
+    return (
+      <Empty title="This page failed to render">
+        <p className="mono">{error.message}</p>
+        <p>
+          <button type="button" className="btn" onClick={() => this.setState({ error: null })}>
+            Retry
+          </button>
+        </p>
+      </Empty>
+    );
+  }
 }
 
 const SHORTCUTS: [string, string][] = [

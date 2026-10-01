@@ -1,6 +1,6 @@
 // Benchmark jobs: job list, one job's task × method matrix, and method comparison across jobs.
 // Only `valid` trials enter means; invalid / unknown trials are shown with their issues.
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { IconAlert, IconCompare, IconFlask } from "../components/icons.tsx";
 import { TopBar } from "../components/TopBar.tsx";
 import { Empty, Link, Loading, toast } from "../components/ui.tsx";
@@ -12,8 +12,8 @@ import {
   type Outcome,
   type Trial,
 } from "../lib/api.ts";
-import { ago, dateTime, duration } from "../lib/format.ts";
-import { navigate, setQuery, useLocation } from "../lib/router.ts";
+import { ago, dateTime, duration, jobPath, runPath } from "../lib/format.ts";
+import { navigate, onLinkClick, setQuery, useLocation } from "../lib/router.ts";
 import { useAsync } from "../lib/use.ts";
 
 const pctOf = (o: Outcome | null) =>
@@ -106,7 +106,9 @@ export function BenchJobs() {
           type="button"
           className="btn sm"
           disabled={selected.length === 0}
-          onClick={() => navigate(`/bench/compare?jobs=${selected.join(",")}`)}
+          onClick={() =>
+            navigate(`/bench/compare?jobs=${selected.map(encodeURIComponent).join(",")}`)
+          }
         >
           <IconCompare size={14} /> Compare{selected.length ? ` (${selected.length})` : ""}
         </button>
@@ -200,7 +202,7 @@ function JobTable({
           <tr
             key={j.id}
             className={`click${selected.includes(j.id) ? " sel" : ""}`}
-            onClick={() => navigate(`/bench/${j.id}`)}
+            onClick={() => navigate(jobPath(j.id))}
           >
             <td onClick={(e) => e.stopPropagation()}>
               <input
@@ -211,7 +213,16 @@ function JobTable({
               />
             </td>
             <td>
-              <b>{jobLabel(j)}</b>
+              <Link
+                href={jobPath(j.id)}
+                style={{ color: "var(--text)", fontWeight: 600 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onLinkClick(e);
+                }}
+              >
+                {jobLabel(j)}
+              </Link>
               {j.spec.name && <div className="mono faint">{j.id}</div>}
             </td>
             <td>{j.spec.benchmark}</td>
@@ -244,8 +255,13 @@ const summaryTitle = (s: MethodSummary) =>
 // ---- /bench/<id> ----
 
 export function BenchJobDetail({ id }: { id: string }) {
-  const d = useAsync(() => api.benchJob(id), [id], { poll: true, pollMs: 3000 });
+  const [running, setRunning] = useState(true);
+  const d = useAsync(() => api.benchJob(id), [id], { poll: running, pollMs: 3000 });
   const job = d.data?.job;
+  // A finished job no longer changes: stop polling it.
+  useEffect(() => {
+    if (job) setRunning(job.state === "running");
+  }, [job]);
   const trials = d.data?.trials ?? [];
   const methods = job?.spec.methods.map((m) => m.name) ?? [];
   const tasks = useMemo(() => [...new Set(trials.map((t) => t.task))], [trials]);
@@ -446,12 +462,12 @@ function RunLinks({ t }: { t: Trial }) {
   return (
     <span className="row" style={{ gap: 6 }}>
       {t.solveRunId && (
-        <Link className="chip link mono" href={`/runs/${t.solveRunId}`}>
+        <Link className="chip link mono" href={runPath(t.solveRunId)}>
           solve
         </Link>
       )}
       {t.verifyRunId && (
-        <Link className="chip link mono" href={`/runs/${t.verifyRunId}`}>
+        <Link className="chip link mono" href={runPath(t.verifyRunId)}>
           verify
         </Link>
       )}
@@ -475,7 +491,7 @@ function TrialCell({ t, seeds }: { t: Trial; seeds: number }) {
     <ScoreCell
       pct={pctOf(o)}
       evaluation={o ? o.evaluation : "pending"}
-      href={t.solveRunId ? `/runs/${t.solveRunId}` : undefined}
+      href={t.solveRunId ? runPath(t.solveRunId) : undefined}
       title={title}
       note={phase === "verifying" ? "verify" : seeds > 1 ? `#${t.seed}` : undefined}
     />
@@ -488,11 +504,15 @@ export function BenchComparePage() {
   const loc = useLocation();
   const ids = (loc.query.get("jobs") ?? "").split(",").filter(Boolean);
   const key = ids.join(",");
+  const jobs = useAsync(() => api.benchJobs(), []);
+  // Results change only while a selected job runs (unknown jobs count as running).
+  const live = ids.some(
+    (id) => (jobs.data?.find((j) => j.id === id)?.state ?? "running") === "running",
+  );
   const cmp = useAsync(() => (ids.length ? api.benchCompare(ids) : Promise.resolve(null)), [key], {
-    poll: true,
+    poll: live,
     pollMs: 5000,
   });
-  const jobs = useAsync(() => api.benchJobs(), []);
   const toggle = (id: string) => {
     const next = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
     setQuery({ jobs: next.join(",") || null });
@@ -544,7 +564,7 @@ export function BenchComparePage() {
                         <th>Task</th>
                         {c.columns.map((col) => (
                           <th key={col.key}>
-                            <Link href={`/bench/${col.jobId}`}>{col.key}</Link>
+                            <Link href={jobPath(col.jobId)}>{col.key}</Link>
                           </th>
                         ))}
                       </tr>
@@ -568,9 +588,15 @@ export function BenchComparePage() {
                                   ) : (
                                     <ScoreCell
                                       pct={v}
-                                      evaluation={v === null ? "invalid" : "valid"}
+                                      evaluation={v === null ? "unknown" : "valid"}
                                       note={n}
-                                      title={v === best ? "best in row" : undefined}
+                                      title={
+                                        v === null
+                                          ? "no valid trial (pending, invalid or unknown)"
+                                          : v === best
+                                            ? "best in row"
+                                            : undefined
+                                      }
                                     />
                                   )}
                                 </td>

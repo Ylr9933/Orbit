@@ -39,12 +39,16 @@ async function* jsonLines(file: string): AsyncGenerator<Record<string, unknown>>
 const str = (v: unknown) =>
   typeof v === "string" ? v : v === undefined ? "" : JSON.stringify(v, null, 2);
 
+/** Session ids are UUID-like; anything else could name a path outside the session roots. */
+const SESSION_ID = /^[A-Za-z0-9-]{8,128}$/;
+
 // ---- Claude Code: <projects>/<escaped cwd>/<sessionId>.jsonl ----
 
 export async function findClaudeSession(
   roots: SessionRoots,
   sessionId: string,
 ): Promise<string | null> {
+  if (!SESSION_ID.test(sessionId)) return null;
   const dirs = await readdir(roots.claude).catch(() => [] as string[]);
   for (const d of dirs) {
     const f = join(roots.claude, d, `${sessionId}.jsonl`);
@@ -148,15 +152,18 @@ export async function findCodexSession(
   roots: SessionRoots,
   ref: { sessionId?: string; cwd?: string },
 ): Promise<{ file: string; sessionId: string } | null> {
+  if (ref.sessionId && !SESSION_ID.test(ref.sessionId)) return null;
   const files = await codexFiles(roots, ref.sessionId ? 60 : 3);
   if (ref.sessionId) {
-    const f = files.find((x) => x.endsWith(`${ref.sessionId}.jsonl`));
+    const f = files.find((x) => x.endsWith(`-${ref.sessionId}.jsonl`));
     return f ? { file: f, sessionId: ref.sessionId } : null;
   }
   // No id: the most recently active session started in the same directory.
-  const withTime = await Promise.all(files.map(async (f) => ({ f, t: (await stat(f)).mtimeMs })));
+  const withTime = await Promise.all(
+    files.map(async (f) => ({ f, t: (await stat(f).catch(() => null))?.mtimeMs ?? 0 })),
+  );
   for (const { f } of withTime.sort((a, b) => b.t - a.t).slice(0, 50)) {
-    const meta = await firstLine(f);
+    const meta = await firstLine(f).catch(() => null);
     const p = meta?.payload as { cwd?: string; id?: string } | undefined;
     if (meta?.type === "session_meta" && p?.id && p.cwd === ref.cwd) {
       return { file: f, sessionId: p.id };

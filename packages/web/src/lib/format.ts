@@ -20,6 +20,10 @@ export const STATES: RunState[] = [
   "lost",
 ];
 
+/** In-app paths; ids are encoded so any id survives the URL. */
+export const runPath = (id: string) => `/runs/${encodeURIComponent(id)}`;
+export const jobPath = (id: string) => `/bench/${encodeURIComponent(id)}`;
+
 export const isActive = (s: RunState) => s === "queued" || s === "starting" || s === "running";
 
 /** 3.2s, 4m 05s, 2h 13m, 3d 4h */

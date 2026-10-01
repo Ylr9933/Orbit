@@ -14,11 +14,13 @@ import { api, logUrl, type Run } from "../../lib/api.ts";
 import { bytes, isActive } from "../../lib/format.ts";
 import { useHotkeys } from "../../lib/hotkeys.ts";
 import { ansiSpans, type LogLine, toLines } from "../../lib/log.ts";
-import { setHash, useLocation } from "../../lib/router.ts";
+import { setHash, setQuery, useLocation } from "../../lib/router.ts";
 
 /** Load at most this much of a log into the browser; older bytes are available via download. */
 const MAX_BYTES = 48 * 1024 * 1024;
 const CHUNK = 2 * 1024 * 1024;
+/** A live log keeps at most this many lines in memory; older ones are dropped from the view. */
+const MAX_LINES = 400_000;
 
 interface LogState {
   lines: LogLine[];
@@ -30,6 +32,11 @@ interface LogState {
   start: number;
   eof: boolean;
   loaded: boolean;
+  /** Lines dropped from the head of the view to bound memory. */
+  dropped: number;
+  /** Number of the next complete line. */
+  nextN: number;
+  error: string | null;
 }
 
 function useLog(run: Run) {
@@ -41,10 +48,20 @@ function useLog(run: Run) {
     start: 0,
     eof: false,
     loaded: false,
+    dropped: 0,
+    nextN: 1,
+    error: null,
   });
   const ref = useRef(st);
   ref.current = st;
   const busy = useRef(false);
+  const alive = useRef(true);
+  useEffect(
+    () => () => {
+      alive.current = false;
+    },
+    [],
+  );
   const active = isActive(run.state);
 
   const pull = useCallback(async () => {
@@ -58,7 +75,7 @@ function useLog(run: Run) {
         const start = probe.size > MAX_BYTES ? probe.size - MAX_BYTES : 0;
         s = { ...s, next: start, start, size: probe.size };
       }
-      for (let i = 0; i < 64; i++) {
+      for (let i = 0; i < 64 && alive.current; i++) {
         const c = await api.logs(run.id, s.next, CHUNK);
         let text = s.partial + c.text;
         // When starting mid-file, drop the first (partial) line.
@@ -67,21 +84,28 @@ function useLog(run: Run) {
         const cut = text.lastIndexOf("\n");
         const complete = cut >= 0 ? text.slice(0, cut + 1) : "";
         const partial = cut >= 0 ? text.slice(cut + 1) : text;
-        const add = complete ? toLines(complete, s.lines.length + 1) : [];
+        const add = complete ? toLines(complete, s.nextN) : [];
+        let lines = add.length ? s.lines.concat(add) : s.lines;
+        const over = lines.length - MAX_LINES;
+        if (over > 0) lines = lines.slice(over);
         s = {
           ...s,
-          lines: add.length ? s.lines.concat(add) : s.lines,
+          lines,
           partial,
           next: c.next,
           size: c.size,
           eof: c.eof,
           loaded: true,
+          dropped: s.dropped + Math.max(0, over),
+          nextN: s.nextN + add.length,
+          error: null,
         };
-        setSt(s);
+        if (alive.current) setSt(s);
         if (c.next >= c.size) break;
       }
-    } catch {
-      // transient; next poll retries
+    } catch (e) {
+      // Shown only until something loads; a live run's next poll retries.
+      if (alive.current) setSt({ ...ref.current, error: (e as Error).message });
     } finally {
       busy.current = false;
     }
@@ -105,10 +129,17 @@ function useLog(run: Run) {
   }, [active, st.eof, st.loaded, st.next, pull]);
 
   const lines = useMemo(
-    () => (st.partial ? st.lines.concat(toLines(st.partial, st.lines.length + 1)) : st.lines),
-    [st.lines, st.partial],
+    () => (st.partial ? st.lines.concat(toLines(st.partial, st.nextN)) : st.lines),
+    [st.lines, st.partial, st.nextN],
   );
-  return { ...st, lines };
+  return { ...st, lines, retry: pull };
+}
+
+/** True when `re` matches a non-empty part of `text` (an empty match highlights nothing). */
+function hasMatch(re: RegExp, text: string): boolean {
+  re.lastIndex = 0;
+  for (const m of text.matchAll(re)) if (m[0] !== "") return true;
+  return false;
 }
 
 function parseHash(h: string): [number, number] | null {
@@ -128,7 +159,8 @@ export function LogsTab({ run }: { run: Run }) {
   const [filter, setFilter] = useState(false);
   const [hideSys, setHideSys] = useState(false);
   const [wrap, setWrap] = useState(false);
-  const [follow, setFollow] = useState(isActive(run.state));
+  const running = isActive(run.state);
+  const [follow, setFollow] = useState(running);
   const [cur, setCur] = useState(0);
   const [seen, setSeen] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
@@ -150,15 +182,24 @@ export function LogsTab({ run }: { run: Run }) {
   }, [q, regex, caseSens]);
   const badRegex = Boolean(q) && !re;
 
+  // Lines only grow (plus a changing trailing partial line and a dropped head), so a poll scans
+  // just the lines after the last complete one already searched.
+  const searched = useRef<{ re: RegExp | null; upTo: number; out: number[] }>({
+    re: null,
+    upTo: 0,
+    out: [],
+  });
   const matchLines = useMemo(() => {
     if (!re) return [];
-    const out: number[] = [];
-    for (const l of log.lines) {
-      re.lastIndex = 0;
-      if (re.test(l.plain)) out.push(l.n);
-    }
+    const c = searched.current;
+    const first = log.lines[0]?.n ?? 0;
+    const prev = c.re === re ? c.out.filter((n) => n >= first && n <= c.upTo) : [];
+    const from = c.re === re ? c.upTo : 0;
+    const out = prev;
+    for (const l of log.lines) if (l.n > from && hasMatch(re, l.plain)) out.push(l.n);
+    searched.current = { re, upTo: log.nextN - 1, out: out.filter((n) => n < log.nextN) };
     return out;
-  }, [log.lines, re]);
+  }, [log.lines, log.nextN, re]);
 
   const shown = useMemo(() => {
     let ls = log.lines;
@@ -227,10 +268,9 @@ export function LogsTab({ run }: { run: Run }) {
     if (jumpedErr.current || !log.eof) return;
     if (new URLSearchParams(location.search).get("err") === "1") {
       jumpedErr.current = true;
-      if (errLines[0]) {
-        setHash(`L${errLines[0]}`);
-        scrollToLine(errLines[0]);
-      }
+      // Drop the one-shot flag so it doesn't stick to later tab switches.
+      setQuery({ err: null }, { hash: errLines[0] ? `L${errLines[0]}` : undefined });
+      if (errLines[0]) scrollToLine(errLines[0]);
     }
   }, [log.eof, errLines, scrollToLine]);
 
@@ -255,7 +295,6 @@ export function LogsTab({ run }: { run: Run }) {
     e: jumpError,
     f: () => setFollow((f) => !f),
     w: () => setWrap((w) => !w),
-    G: () => setFollow(true),
   });
 
   const onScroll = () => {
@@ -272,7 +311,6 @@ export function LogsTab({ run }: { run: Run }) {
     else setHash(`L${n}`);
   };
 
-  const running = isActive(run.state);
   // Only live output counts as "new"; a finished log loads all at once.
   const newLines = follow || !running ? 0 : Math.max(0, shown.length - seen);
   const curLine = matchLines[cur];
@@ -406,7 +444,23 @@ export function LogsTab({ run }: { run: Run }) {
           <a href={logUrl(run.id, true)}>Download the full log</a>.
         </div>
       )}
-      {!log.loaded ? (
+      {log.dropped > 0 && (
+        <div
+          className="callout"
+          style={{ borderRadius: 0, "--c": "var(--st-cancelled)" } as React.CSSProperties}
+        >
+          {log.dropped.toLocaleString()} older lines were dropped from this view to bound memory.{" "}
+          <a href={logUrl(run.id, true)}>Download the full log</a>.
+        </div>
+      )}
+      {!log.loaded && log.error ? (
+        <Empty title="Could not load logs">
+          <p>{log.error}</p>
+          <button type="button" className="btn sm" onClick={() => void log.retry()}>
+            Retry
+          </button>
+        </Empty>
+      ) : !log.loaded ? (
         <Loading what="Loading logs" />
       ) : log.lines.length === 0 ? (
         <Empty
@@ -503,27 +557,23 @@ export function LogsTab({ run }: { run: Run }) {
 }
 
 function LineText({ line, re, current }: { line: LogLine; re: RegExp | null; current: boolean }) {
-  if (re) {
-    re.lastIndex = 0;
-    if (re.test(line.plain)) {
-      re.lastIndex = 0;
-      const parts: React.ReactNode[] = [];
-      let last = 0;
-      let k = 0;
-      for (const m of line.plain.matchAll(re)) {
-        if (m[0] === "") break;
-        const i = m.index ?? 0;
-        parts.push(line.plain.slice(last, i));
-        parts.push(
-          <mark key={k++} className={current && k === 1 ? "cur" : ""}>
-            {m[0]}
-          </mark>,
-        );
-        last = i + m[0].length;
-      }
-      parts.push(line.plain.slice(last));
-      return <>{parts}</>;
+  if (re && hasMatch(re, line.plain)) {
+    const parts: React.ReactNode[] = [];
+    let last = 0;
+    let k = 0;
+    for (const m of line.plain.matchAll(re)) {
+      if (m[0] === "") continue;
+      const i = m.index ?? 0;
+      parts.push(line.plain.slice(last, i));
+      parts.push(
+        <mark key={k++} className={current && k === 1 ? "cur" : ""}>
+          {m[0]}
+        </mark>,
+      );
+      last = i + m[0].length;
     }
+    parts.push(line.plain.slice(last));
+    return <>{parts}</>;
   }
   if (!line.raw.includes("\x1b")) return <>{line.raw || " "}</>;
   return (

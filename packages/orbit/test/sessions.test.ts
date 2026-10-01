@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   codexCallText,
   codexOutputText,
+  findClaudeSession,
   findCodexSession,
   loadTranscript,
   parseClaude,
@@ -18,7 +19,7 @@ const jl = (rows: unknown[]) => `${rows.map((r) => JSON.stringify(r)).join("\n")
 describe("claude code transcripts", () => {
   it("normalizes text, thinking, tool calls and results; skips sidechains", async () => {
     mkdirSync(join(roots.claude, "-p"), { recursive: true });
-    const f = join(roots.claude, "-p", "s1.jsonl");
+    const f = join(roots.claude, "-p", "0b6c2a1e-5f3d-4c7a-9e21-7d4b8f2a6c10.jsonl");
     writeFileSync(
       f,
       jl([
@@ -48,8 +49,12 @@ describe("claude code transcripts", () => {
       "assistant/tool_call/Bash",
       "tool/tool_result/Bash",
     ]);
-    const t = await loadTranscript({ harness: "claude-code", sessionId: "s1" }, roots);
+    const t = await loadTranscript(
+      { harness: "claude-code", sessionId: "0b6c2a1e-5f3d-4c7a-9e21-7d4b8f2a6c10" },
+      roots,
+    );
     expect(t?.messages).toHaveLength(4);
+    expect(await findClaudeSession(roots, "../-p/0b6c2a1e-5f3d-4c7a-9e21-7d4b8f2a6c10")).toBeNull();
   });
 });
 

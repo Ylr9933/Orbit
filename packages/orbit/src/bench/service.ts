@@ -74,12 +74,15 @@ export function summarize(methods: string[], trials: Trial[]): MethodSummary[] {
  * `paired` means use only tasks valid in every column, so methods are compared on the same tasks.
  */
 export function compareJobs(jobs: { job: BenchJob; trials: Trial[] }[]): BenchCompare {
+  // Jobs may share a name: fall back to the job id so every column key is unique.
+  const keys = new Set<string>();
   const columns = jobs.flatMap(({ job }) =>
-    job.spec.methods.map((m) => ({
-      key: jobs.length > 1 ? `${job.spec.name ?? job.id}/${m.name}` : m.name,
-      jobId: job.id,
-      method: m.name,
-    })),
+    job.spec.methods.map((m) => {
+      let key = jobs.length > 1 ? `${job.spec.name ?? job.id}/${m.name}` : m.name;
+      if (keys.has(key)) key = `${job.id}/${m.name}`;
+      keys.add(key);
+      return { key, jobId: job.id, method: m.name };
+    }),
   );
   const tasks = [...new Set(jobs.flatMap(({ trials }) => trials.map((t) => t.task)))].sort();
   const rows = tasks.map((task) => {
@@ -106,6 +109,16 @@ export function compareJobs(jobs: { job: BenchJob; trials: Trial[] }[]): BenchCo
     means[c.key] = { all: col(rows), paired: col(paired) };
   }
   return { columns, rows, means, pairedTasks: paired.length };
+}
+
+/** Verification could not be set up: keep the solve's issues and add why. */
+function failed(solve: Run, issues: string[], issue: string): Outcome {
+  const c = classify(solve, null, null, issues);
+  return {
+    ...c,
+    evaluation: "invalid",
+    issues: [...c.issues.filter((i) => i !== "verify not run"), issue],
+  };
 }
 
 export class BenchService {
@@ -242,6 +255,7 @@ export class BenchService {
 
   compare(ids: string[]): BenchCompare {
     if (ids.length === 0) throw new UserError("no jobs to compare");
+    if (new Set(ids).size !== ids.length) throw new UserError("a job is listed more than once");
     return compareJobs(ids.map((id) => this.job(id)));
   }
 
@@ -338,6 +352,12 @@ export class BenchService {
     }
   }
 
+  /** A job cancelled while a run was being submitted: cancel that run too. */
+  private async cancelIfJobCancelled(jobId: string, runId: string): Promise<void> {
+    if (this.deps.store.getJob(jobId)?.state === "cancelled")
+      await this.deps.runs.cancel(runId).catch(() => undefined);
+  }
+
   private skipped(t: Trial, evaluation: Outcome["evaluation"], issue: string): void {
     this.finish(t, {
       execution: "skipped",
@@ -386,6 +406,7 @@ export class BenchService {
         t.solveRunId = run.id;
         t.state = "solving";
         this.deps.store.putTrial(t);
+        await this.cancelIfJobCancelled(job.id, run.id);
       } catch (e) {
         return this.skipped(t, "invalid", `solve rejected: ${(e as Error).message}`);
       }
@@ -396,7 +417,7 @@ export class BenchService {
     if (!solve) return this.skipped(t, "unknown", "solve run missing");
 
     if (t.state === "solving") {
-      if (!isTerminal(solve.state)) return;
+      if (!isTerminal(solve.state)) return this.cancelIfJobCancelled(job.id, solve.id);
       const sv = solveVerdict(solve);
       if (!sv.verify || job.state === "cancelled") {
         const outcome = classify(solve, null, null, t.issues);
@@ -411,11 +432,7 @@ export class BenchService {
         const ctx = this.context(job, t);
         plan = this.adapter(ctx.benchmark).verifySpec(ctx, solve, runs.dirs(solve.id).output);
       } catch (e) {
-        return this.finish(t, {
-          ...classify(solve, null, null, t.issues),
-          evaluation: "invalid",
-          issues: [...t.issues, `verify spec: ${(e as Error).message}`],
-        });
+        return this.finish(t, failed(solve, t.issues, `verify spec: ${(e as Error).message}`));
       }
       t.issues = [...t.issues, ...plan.issues];
       try {
@@ -423,12 +440,9 @@ export class BenchService {
         t.verifyRunId = run.id;
         t.state = "verifying";
         this.deps.store.putTrial(t);
+        await this.cancelIfJobCancelled(job.id, run.id);
       } catch (e) {
-        return this.finish(t, {
-          ...classify(solve, null, null, t.issues),
-          evaluation: "invalid",
-          issues: [...t.issues, `verify rejected: ${(e as Error).message}`],
-        });
+        return this.finish(t, failed(solve, t.issues, `verify rejected: ${(e as Error).message}`));
       }
       return;
     }
@@ -437,7 +451,7 @@ export class BenchService {
     const verify = t.verifyRunId ? runs.get(t.verifyRunId) : null;
     if (!verify)
       return this.finish(t, classify(solve, null, null, [...t.issues, "verify run missing"]));
-    if (!isTerminal(verify.state)) return;
+    if (!isTerminal(verify.state)) return this.cancelIfJobCancelled(job.id, verify.id);
     let score = null;
     if (verify.startedAt && verify.state !== "cancelled" && verify.state !== "lost") {
       try {

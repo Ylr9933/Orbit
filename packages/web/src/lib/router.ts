@@ -8,6 +8,15 @@ const notify = () => {
 };
 window.addEventListener("popstate", notify);
 
+/** `decodeURIComponent` that returns the input unchanged for a malformed escape. */
+export function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 export function navigate(to: string, opts: { replace?: boolean } = {}) {
   const cur = location.pathname + location.search + location.hash;
   if (to === cur) return;

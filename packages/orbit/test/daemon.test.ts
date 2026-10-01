@@ -53,4 +53,16 @@ describe("daemon", () => {
     expect((await login("//evil.example")).headers.get("location")).toBe("/");
     expect((await login("https://evil.example")).headers.get("location")).toBe("/");
   });
+
+  it("refuses cross-site writes that rely on the cookie", async () => {
+    const token = readDaemonInfo(paths)?.token ?? "";
+    const cookie = `orbit_token=${token}`;
+    const post = (headers: Record<string, string>) =>
+      fetch(`${daemon.url}/api/v1/runs/none/cancel`, { method: "POST", headers });
+    expect((await post({ cookie, origin: "https://evil.example" })).status).toBe(403);
+    expect((await post({ cookie, "sec-fetch-site": "cross-site" })).status).toBe(403);
+    // Same-origin browser requests and bearer clients reach the route (404: no such run).
+    expect((await post({ cookie, origin: daemon.url })).status).toBe(404);
+    expect((await post({ authorization: `Bearer ${token}` })).status).toBe(404);
+  });
 });

@@ -26,7 +26,7 @@ orbit ps [-a] [-g lr]                 # runs; queued runs show why they wait
 orbit wait -g lr                      # block until done; exit 1 if any run did not succeed
 orbit logs <id> [-f] [--tail BYTES]
 orbit show <id> | cancel <id> | note <id> "text"
-orbit web [id]                        # open the local Web UI
+orbit web [id] [--open]               # print (or open) the local Web UI URL
 
 orbit auth add claude --harness claude-code --kind relay --from-env   # agent credentials
 orbit auth test claude                # a real run: the agent in a container must answer
@@ -42,7 +42,7 @@ orbit bench show <job> | jobs | cancel <job> | compare <job>...
 orbit node expose --listen 100.64.0.12:7718           # on a worker: serve the cluster API
 ssh gpu2 orbit node token | orbit node add http://100.64.0.12:7718 --token-stdin   # on the primary
 orbit data add imagenet /data/imagenet                # on every node that has it
-orbit run -d imagenet --gpus 1 -- python train.py     # placed on any node with a free GPU and the data
+orbit run -d imagenet --gpus 1 --image pytorch/pytorch -- python train.py   # placed on any node with a free GPU and the data
 ```
 
 Options go before `--`; the command after it runs in `/workspace`, a snapshot of the current git

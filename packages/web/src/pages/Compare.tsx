@@ -6,9 +6,18 @@ import { TopBar } from "../components/TopBar.tsx";
 import { Empty, Link, Loading, StateBadge, StateIcon } from "../components/ui.tsx";
 import { api, type Metrics, type Run } from "../lib/api.ts";
 import { stats } from "../lib/ema.ts";
-import { ago, duration, num, runDuration, runTitle, shellQuote } from "../lib/format.ts";
+import {
+  ago,
+  duration,
+  isActive,
+  num,
+  runDuration,
+  runPath,
+  runTitle,
+  shellQuote,
+} from "../lib/format.ts";
 import { setQuery, useLocation } from "../lib/router.ts";
-import { useRuns, useRunsState } from "../lib/runs-store.ts";
+import { upsertRun, useRuns, useRunsState } from "../lib/runs-store.ts";
 
 const MAX_RUNS = 40;
 const lowerIsBetter = (k: string) =>
@@ -26,7 +35,7 @@ interface Row {
 export function Compare() {
   const loc = useLocation();
   const all = useRuns();
-  const { loaded } = useRunsState();
+  const { loaded, runs: byId } = useRunsState();
   const idsParam = loc.query.get("ids");
   const group = loc.query.get("group");
   const baseId = loc.query.get("base");
@@ -37,33 +46,50 @@ export function Compare() {
     let list: Run[] = [];
     if (idsParam) {
       const ids = idsParam.split(",").filter(Boolean);
-      list = ids.map((id) => all.find((r) => r.id === id)).filter((r): r is Run => Boolean(r));
+      list = ids.map((id) => byId.get(id)).filter((r): r is Run => Boolean(r));
     } else if (group) list = all.filter((r) => r.spec.group === group).reverse();
     return list.slice(0, MAX_RUNS);
-  }, [all, idsParam, group]);
+  }, [all, byId, idsParam, group]);
+
+  // Runs older than the live list's window are fetched once by id.
+  const [tried] = useState(() => new Set<string>());
+  useEffect(() => {
+    if (!loaded || !idsParam) return;
+    for (const id of idsParam.split(",").filter(Boolean).slice(0, MAX_RUNS)) {
+      if (byId.has(id) || tried.has(id)) continue;
+      tried.add(id);
+      api.run(id).then(upsertRun, () => undefined);
+    }
+  }, [loaded, idsParam, byId, tried]);
 
   const [metrics, setMetrics] = useState<Record<string, Metrics>>({});
   const runKey = runs.map((r) => `${r.id}:${r.state}`).join(",");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when membership or states change
+  const anyActive = runs.some((r) => isActive(r.state));
+  const [tick, setTick] = useState(0);
+  // Refetch when membership or states change, and every few seconds while a run is active; the
+  // next refresh starts only after the previous one finished.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed by runKey and tick
   useEffect(() => {
     let live = true;
-    Promise.all(
-      runs.map((r) =>
-        api.metrics(r.id).then(
-          (m) => [r.id, m] as const,
-          () => [r.id, null] as const,
-        ),
-      ),
-    ).then((res) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ids = runs.map((r) => r.id);
+    const out: Record<string, Metrics> = {};
+    const worker = async () => {
+      for (let id = ids.shift(); id !== undefined; id = ids.shift()) {
+        const m = await api.metrics(id).catch(() => null);
+        if (m) out[id] = m;
+      }
+    };
+    void Promise.all(Array.from({ length: 6 }, worker)).then(() => {
       if (!live) return;
-      const out: Record<string, Metrics> = {};
-      for (const [id, m] of res) if (m) out[id] = m;
       setMetrics(out);
+      if (anyActive) timer = setTimeout(() => setTick((t) => t + 1), 5000);
     });
     return () => {
       live = false;
+      clearTimeout(timer);
     };
-  }, [runKey]);
+  }, [runKey, tick]);
 
   const [view, setView] = useState<MetricView>({ filter: "", smoothing: 0.6, logY: false });
   const [onlyDiff, setOnlyDiff] = useState(true);
@@ -236,7 +262,7 @@ export function Compare() {
                                     {row.runs.map((r) => (
                                       <Link
                                         key={r.id}
-                                        href={`/runs/${r.id}`}
+                                        href={`${runPath(r.id)}`}
                                         title={`${aggKey}=${r.spec.params[aggKey]} · ${r.state}`}
                                       >
                                         <StateIcon state={r.state} size={12} />
@@ -248,7 +274,7 @@ export function Compare() {
                                 <>
                                   <StateIcon state={first.state} size={12} />
                                   <Link
-                                    href={`/runs/${first.id}`}
+                                    href={`${runPath(first.id)}`}
                                     style={{ color: "var(--text)" }}
                                     className="ellipsis"
                                   >

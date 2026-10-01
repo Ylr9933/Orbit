@@ -1,4 +1,4 @@
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import type { OrbitPaths } from "./paths.ts";
 
@@ -18,7 +18,11 @@ export function readDaemonInfo(paths: OrbitPaths): DaemonInfo | null {
 }
 
 export function writeDaemonInfo(paths: OrbitPaths, info: DaemonInfo): void {
-  writeFileSync(paths.daemonFile, `${JSON.stringify(info)}\n`, { mode: 0o600 });
+  // Atomically and private: it holds the daemon token.
+  const tmp = `${paths.daemonFile}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(info)}\n`, { mode: 0o600 });
+  chmodSync(tmp, 0o600);
+  renameSync(tmp, paths.daemonFile);
 }
 
 export function removeDaemonInfo(paths: OrbitPaths, pid: number): void {

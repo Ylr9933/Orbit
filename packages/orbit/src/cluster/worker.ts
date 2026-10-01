@@ -1,8 +1,7 @@
 // The cluster API a node serves to its primary on the exposed address. It only reaches runs that
 // arrived from a primary, and code bundles; local runs and secrets are not exposed.
-import { createHash, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { open, stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
@@ -14,8 +13,9 @@ import {
   RemoteSubmit,
   type Run,
 } from "../contracts/index.ts";
+import { tokenMatches } from "../lib/tokens.ts";
 import { VERSION } from "../lib/version.ts";
-import { listArtifacts, safeJoin } from "../records/index.ts";
+import { decodePath, listArtifacts, outputFile } from "../records/index.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { bundleDir, isBundleHash, receiveBundle } from "../workspace/bundle.ts";
 import type { DatasetRegistry } from "../workspace/datasets.ts";
@@ -31,12 +31,7 @@ export interface WorkerDeps {
   token: () => string;
 }
 
-const digest = (s: string) => createHash("sha256").update(s).digest();
-
-export function tokenMatches(given: string | undefined, want: string): boolean {
-  if (!given?.startsWith("Bearer ")) return false;
-  return timingSafeEqual(digest(given.slice(7)), digest(want));
-}
+export { tokenMatches };
 
 export async function nodeInfo(deps: Omit<WorkerDeps, "bundles" | "token">): Promise<NodeInfo> {
   const ledger = deps.runs.ledger();
@@ -106,7 +101,7 @@ export function createWorkerApp(deps: WorkerDeps): Hono {
     const offset = Math.max(0, Number(c.req.query("offset") ?? 0) || 0);
     const limit = Math.min(
       MAX_RAW_CHUNK,
-      Math.max(1, Number(c.req.query("limit") ?? MAX_RAW_CHUNK)),
+      Math.max(1, Number(c.req.query("limit") ?? MAX_RAW_CHUNK) || MAX_RAW_CHUNK),
     );
     const fh = await open(file, "r").catch(() => null);
     if (!fh) {
@@ -131,12 +126,10 @@ export function createWorkerApp(deps: WorkerDeps): Hono {
   );
   api.get("/runs/:id/files/*", async (c) => {
     const run = own(c);
-    const rel = decodeURIComponent(c.req.path.split("/files/")[1] ?? "");
-    const file = safeJoin(runs.dirs(run.id).output, rel);
-    const st = file ? await stat(file).catch(() => null) : null;
-    if (!file || !st?.isFile()) return c.json({ error: "not found" }, 404);
-    c.header("content-length", String(st.size));
-    return c.body(Readable.toWeb(createReadStream(file)) as ReadableStream);
+    const f = await outputFile(runs.dirs(run.id).output, decodePath(c.req.path, "/files/"));
+    if (!f) return c.json({ error: "not found" }, 404);
+    c.header("content-length", String(f.size));
+    return c.body(Readable.toWeb(createReadStream(f.file)) as ReadableStream);
   });
 
   app.route(CLUSTER_PREFIX, api);
@@ -146,6 +139,7 @@ export function createWorkerApp(deps: WorkerDeps): Hono {
     if (err instanceof UserError) return c.json({ error: err.message }, 400);
     if (err instanceof z.ZodError) return c.json({ error: z.prettifyError(err) }, 400);
     if (err instanceof SyntaxError) return c.json({ error: `invalid JSON: ${err.message}` }, 400);
+    if (err instanceof URIError) return c.json({ error: err.message }, 400);
     console.error("orbit cluster:", err);
     return c.json({ error: err.message }, 500);
   });

@@ -9,7 +9,9 @@ if (first === "__docker-shim") {
   shimMain(rest[0] ?? "", rest.slice(1));
 } else {
   const { createProgram } = await import("./cli/program.ts");
-  const { runDaemon } = await import("./daemon/main.ts");
+  // The daemon is loaded only by `orbit daemon` (and the CLI auto-starting one), not every command.
+  const runDaemon: import("./cli/program.ts").ProgramDeps["runDaemon"] = async (paths, port) =>
+    (await import("./daemon/main.ts")).runDaemon(paths, port);
   createProgram({ runDaemon })
     .parseAsync()
     .catch((e: unknown) => {

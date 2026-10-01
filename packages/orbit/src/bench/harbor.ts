@@ -326,13 +326,14 @@ export const harborAdapter: Adapter = {
       ctx.staging,
       ctx.timeoutMin,
     );
-    return { ...spec, env: { ...ctx.benchmark.env, ...spec.env }, passEnv: ctx.benchmark.passEnv };
+    return { ...spec, env: { ...ctx.benchmark.env, ...spec.env } };
   },
   verifySpec: (ctx, _solve, solveOutput) => {
     const t = harborTask(ctx.benchmark, ctx.task);
     const { spec, missing } = harborVerifySpec(t, solveOutput, ctx.staging);
     return {
-      spec: { ...spec, env: { ...ctx.benchmark.env, ...spec.env } },
+      // `passEnv` names grader secrets: the verifier gets them, the Agent under test does not.
+      spec: { ...spec, env: { ...ctx.benchmark.env, ...spec.env }, passEnv: ctx.benchmark.passEnv },
       issues: missing.map((m) => `artifact not produced: ${m}`),
     };
   },

@@ -20,34 +20,54 @@ const emit = (patch: Partial<State>) => {
 
 let started = false;
 let source: EventSource | null = null;
+let opened = false;
+let retry: ReturnType<typeof setTimeout> | undefined;
+/** Runs received from the stream while a full load is in flight; they are newer than its snapshot. */
+let during: Map<string, Run> | null = null;
 
 async function load() {
+  during = new Map();
   try {
-    const runs = await api.runs();
-    emit({ runs: new Map(runs.map((r) => [r.id, r])), loaded: true, error: null });
+    const runs = new Map((await api.runs()).map((r) => [r.id, r]));
+    for (const [id, r] of during) runs.set(id, r);
+    emit({ runs, loaded: true, error: null });
   } catch (e) {
     emit({ loaded: true, error: (e as Error).message });
+  } finally {
+    during = null;
   }
 }
 
 function connect() {
+  clearTimeout(retry);
   source?.close();
-  source = new EventSource("/api/v1/stream");
-  source.addEventListener("open", () => {
-    // Reload on (re)connect so nothing missed during a disconnect is lost.
-    if (!state.connected) void load();
+  const es = new EventSource("/api/v1/stream");
+  source = es;
+  es.addEventListener("open", () => {
+    // Reload on reconnect so nothing missed during a disconnect is lost.
+    if (opened && !state.connected) void load();
+    opened = true;
     emit({ connected: true });
   });
-  source.addEventListener("run", (ev) => {
+  es.addEventListener("run", (ev) => {
     const run = JSON.parse((ev as MessageEvent<string>).data) as Run;
     notifyTransition(state.runs.get(run.id), run, state.runs.values());
-    const runs = new Map(state.runs);
-    runs.set(run.id, run);
-    emit({ runs });
+    during?.set(run.id, run);
+    upsertRun(run);
   });
-  source.addEventListener("error", () => {
-    emit({ connected: false });
-    if (authState.unauthorized) source?.close();
+  es.addEventListener("error", () => {
+    if (state.connected) emit({ connected: false });
+    // The browser retries on its own unless the stream failed outright (e.g. 401): then probe the
+    // API (which records 401 in authState) and reconnect by hand.
+    if (es.readyState !== EventSource.CLOSED || source !== es) return;
+    retry = setTimeout(() => {
+      api.health().then(
+        () => connect(),
+        () => {
+          if (!authState.unauthorized) connect();
+        },
+      );
+    }, 3000);
   });
 }
 
@@ -85,7 +105,9 @@ function sortedCache(s: State): Run[] {
   if (cache.version !== s.version)
     cache = {
       version: s.version,
-      list: [...s.runs.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
+      list: [...s.runs.values()].sort((a, b) =>
+        a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0,
+      ),
     };
   return cache.list;
 }

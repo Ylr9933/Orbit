@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  closeSync,
   createWriteStream,
   type Dirent,
   mkdirSync,
@@ -78,13 +79,21 @@ export function runArgs(s: ContainerSpec): string[] {
     for (const id of s.gpuIds) args.push("--device", `nvidia.com/gpu=${id}`);
   } else if (s.gpuIds.length > 0) {
     args.push("--gpus", `"device=${s.gpuIds.join(",")}"`);
+  } else {
+    // Hosts whose default runtime is nvidia would otherwise expose every GPU to CUDA images.
+    args.push("-e", "NVIDIA_VISIBLE_DEVICES=void");
   }
   args.push("--cpus", String(s.cpus), "--memory", `${Math.ceil(s.memGB * 1024)}m`);
   args.push("--shm-size", `${Math.max(1, Math.min(16, Math.floor(s.memGB / 2)))}g`);
   for (const m of s.mounts) {
     args.push(
       "--mount",
-      `type=bind,source=${m.source},target=${m.target}${m.mode === "ro" ? ",readonly" : ""}`,
+      [
+        "type=bind",
+        csvField(`source=${m.source}`),
+        csvField(`target=${m.target}`),
+        ...(m.mode === "ro" ? ["readonly"] : []),
+      ].join(","),
     );
   }
   for (const [k, v] of Object.entries(s.env)) args.push("-e", `${k}=${v}`);
@@ -95,6 +104,9 @@ export function runArgs(s: ContainerSpec): string[] {
   args.push(s.image, ...s.command);
   return args;
 }
+
+/** `--mount` is parsed as CSV: quote a field holding a comma or a quote. */
+const csvField = (f: string) => (/[",]/.test(f) ? `"${f.replace(/"/g, '""')}"` : f);
 
 async function docker(args: string[], timeoutMs = 60_000) {
   return exec("docker", args, { timeoutMs });
@@ -175,14 +187,25 @@ export function buildImage(
   logFile: string,
   opts: { hostNetwork?: boolean } = {},
 ) {
-  const fd = openSync(logFile, "a");
   const net = opts.hostNetwork ? ["--network", "host"] : [];
+  return spawnToLog(["build", ...net, "-f", dockerfile, "-t", tag, context], logFile);
+}
+
+/** `docker pull`, streaming progress to `logFile`. Resolves with the exit code. */
+export function pullImage(image: string, logFile: string): Promise<number> {
+  return spawnToLog(["pull", image], logFile);
+}
+
+function spawnToLog(args: string[], logFile: string): Promise<number> {
+  const fd = openSync(logFile, "a");
   return new Promise<number>((resolve) => {
-    const p = spawn("docker", ["build", ...net, "-f", dockerfile, "-t", tag, context], {
-      stdio: ["ignore", fd, fd],
-    });
-    p.on("error", () => resolve(127));
-    p.on("close", (code) => resolve(code ?? 1));
+    try {
+      const p = spawn("docker", args, { stdio: ["ignore", fd, fd] });
+      p.on("error", () => resolve(127));
+      p.on("close", (code) => resolve(code ?? 1));
+    } finally {
+      closeSync(fd);
+    }
   });
 }
 
@@ -195,9 +218,13 @@ export async function startContainer(spec: ContainerSpec): Promise<string> {
   return r.stdout.trim();
 }
 
+/** The container's status, null when it does not exist; throws when docker itself fails. */
 export async function inspectContainer(idOrName: string): Promise<ContainerStatus | null> {
-  const r = await docker(["inspect", idOrName]);
-  if (r.code !== 0) return null;
+  const r = await docker(["inspect", "--type", "container", idOrName]);
+  if (r.code !== 0) {
+    if (/no such (object|container)/i.test(r.stderr)) return null;
+    throw new Error(`docker inspect failed: ${r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`}`);
+  }
   const [c] = JSON.parse(r.stdout) as {
     Id: string;
     State: { Running: boolean; ExitCode: number; OOMKilled: boolean };
@@ -230,28 +257,29 @@ export interface LogFollower {
 }
 
 /**
- * Follow container logs (stdout + stderr) into `logFile` from the beginning, until EOF. With a
- * redactor, known secrets are replaced before anything is written.
+ * Append container logs (stdout + stderr) to `logFile` from the beginning, until EOF. With a
+ * redactor, known secrets are replaced before anything is written (one filter per stream, so a
+ * secret split across chunks of one stream is still caught when the other interleaves).
  */
-export function followLogs(
-  id: string,
-  logFile: string,
-  append: boolean,
-  redactor?: Redactor,
-): LogFollower {
+export function followLogs(id: string, logFile: string, redactor?: Redactor): LogFollower {
   if (!redactor || redactor.empty) {
-    const fd = openSync(logFile, append ? "a" : "w");
-    const proc = spawn("docker", ["logs", "-f", id], { stdio: ["ignore", fd, fd] });
-    return { proc, done: new Promise((r) => proc.once("close", () => r())) };
+    const fd = openSync(logFile, "a");
+    try {
+      const proc = spawn("docker", ["logs", "-f", id], { stdio: ["ignore", fd, fd] });
+      return { proc, done: new Promise((r) => proc.once("close", () => r())) };
+    } finally {
+      closeSync(fd);
+    }
   }
   const proc = spawn("docker", ["logs", "-f", id], { stdio: ["ignore", "pipe", "pipe"] });
-  const out = createWriteStream(logFile, { flags: append ? "a" : "w" });
-  const filter = redactor.stream();
-  filter.pipe(out);
-  proc.stdout?.pipe(filter, { end: false });
-  proc.stderr?.pipe(filter, { end: false });
-  const done = new Promise<void>((r) => out.once("close", () => r()));
-  proc.once("close", () => filter.end());
+  const out = createWriteStream(logFile, { flags: "a" });
+  const filters = [proc.stdout, proc.stderr].map((src) => {
+    const f = redactor.stream();
+    src?.pipe(f);
+    f.on("data", (chunk) => out.write(chunk));
+    return new Promise<void>((r) => f.once("end", () => r()));
+  });
+  const done = Promise.all(filters).then(() => new Promise<void>((r) => out.end(() => r())));
   return { proc, done };
 }
 
@@ -263,7 +291,7 @@ export async function stopContainer(id: string, graceSec = 10): Promise<void> {
 export async function removeContainer(id: string): Promise<boolean> {
   const r = await docker(["rm", "-f", id]);
   if (r.code === 0) return true;
-  return (await inspectContainer(id)) === null;
+  return (await inspectContainer(id).catch(() => undefined)) === null;
 }
 
 /** Copy `src` out of a container to `dest` on the host; returns an error line or null. */

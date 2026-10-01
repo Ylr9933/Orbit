@@ -3,7 +3,6 @@ import { openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command, Option } from "commander";
 import { type OrbitClient, tryConnect } from "../client/index.ts";
-import { readDaemonInfo } from "../config/daemon-info.ts";
 import { ensureHome, type OrbitPaths, orbitPaths } from "../config/paths.ts";
 import { isTerminal, type Run, type RunSpecInput } from "../contracts/index.ts";
 import { exec } from "../lib/exec.ts";
@@ -63,6 +62,7 @@ interface RunOpts {
   dataset: string[];
   node?: string;
   env: string[];
+  passEnv: string[];
   network: boolean;
   hostNetwork?: boolean;
   auth?: string;
@@ -95,7 +95,18 @@ function addRunOptions(cmd: Command): Command {
       [],
     )
     .option("--node <name>", "run on this node (default: any node that can run it)")
-    .option("-e, --env <KEY=VALUE>", "environment variable", collect, [])
+    .option(
+      "-e, --env <KEY=VALUE>",
+      "environment variable (stored with the run: no secrets)",
+      collect,
+      [],
+    )
+    .option(
+      "--pass-env <VAR>",
+      "pass this variable from the daemon's environment (for secrets; the value is not stored)",
+      collect,
+      [],
+    )
     .option("--no-network", "disable networking")
     .option("--host-network", "share the host network (e.g. to reach a proxy on 127.0.0.1)")
     .option(
@@ -133,6 +144,7 @@ async function buildSpec(
     return { source: resolve(source), target, mode: (mode as "rw" | "ro" | undefined) ?? "ro" };
   });
   const datasets = o.dataset.map(parseDataset);
+  const gpuIds = o.gpuIds?.split(",").filter(Boolean);
   return {
     name: o.name,
     group: o.group,
@@ -141,15 +153,17 @@ async function buildSpec(
     dockerfile: o.dockerfile ? resolve(o.dockerfile) : undefined,
     command,
     resources: {
-      gpus: o.gpus,
+      // Pinned GPUs without a count: one per pinned id.
+      gpus: o.gpus || (gpuIds?.length ?? 0),
       gpuMemGB: o.gpuMem,
-      gpuIds: o.gpuIds?.split(",").filter(Boolean),
+      gpuIds,
       cpus: o.cpus,
       memGB: o.mem,
       node: o.node,
     },
     mounts: [...mounts, ...datasets],
     env: kv(o.env, "--env"),
+    passEnv: o.passEnv,
     network: o.network,
     hostNetwork: Boolean(o.hostNetwork),
     auth: o.auth,
@@ -163,7 +177,12 @@ async function buildSpec(
 }
 
 /** Wait for all runs to finish; exit code 1 if any did not succeed. */
-async function waitAll(client: OrbitClient, ids: string[], json: boolean): Promise<void> {
+async function waitAll(
+  client: OrbitClient,
+  ids: string[],
+  json: boolean,
+  single = false,
+): Promise<void> {
   const done: Run[] = [];
   for (const id of ids) {
     let r = await client.get(id);
@@ -171,17 +190,20 @@ async function waitAll(client: OrbitClient, ids: string[], json: boolean): Promi
     done.push(r);
     if (!json) console.log(`${r.id}  ${r.state}${r.reason ? ` (${r.reason})` : ""}`);
   }
-  if (json) console.log(JSON.stringify(done, null, 2));
+  if (json) console.log(JSON.stringify(single ? done[0] : done, null, 2));
   if (done.some((r) => r.state !== "succeeded")) process.exitCode = 1;
 }
 
 /** Expand `a=1,2 b=x,y` into the cartesian product of parameter assignments. */
 export function expandGrid(params: string[]): Record<string, string>[] {
+  if (params.length === 0) throw new Error("give at least one --param KEY=V1,V2,...");
   let grid: Record<string, string>[] = [{}];
   for (const p of params) {
     const i = p.indexOf("=");
     if (i <= 0) throw new Error(`--param must be KEY=V1,V2,...: ${p}`);
     const key = p.slice(0, i);
+    if (!/^\w+$/.test(key))
+      throw new Error(`--param key must be letters, digits or _ (used as {${key}}): ${key}`);
     const values = p
       .slice(i + 1)
       .split(",")
@@ -209,14 +231,16 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
   program
     .command("daemon")
     .description("run the node daemon in the foreground (the CLI starts it automatically)")
-    .option("-p, --port <port>", "listen port on 127.0.0.1", (v) => Number.parseInt(v, 10))
+    .option("-p, --port <port>", "listen port on 127.0.0.1", num)
     .option("--stop", "stop the running daemon (runs keep going and are reattached on restart)")
     .action(async (opts: { port?: number; stop?: boolean }) => {
       if (!opts.stop) return deps.runDaemon(paths, opts.port);
-      const info = readDaemonInfo(paths);
-      if (!info) return console.log("daemon is not running");
-      process.kill(info.pid, "SIGTERM");
-      console.log(`stopped daemon pid ${info.pid}`);
+      // The pid the daemon reports itself: a stale daemon.json may name a reused pid.
+      const live = await tryConnect(paths);
+      if (!live) return console.log("daemon is not running");
+      const { pid } = await live.health();
+      process.kill(pid, "SIGTERM");
+      console.log(`stopped daemon pid ${pid}`);
     });
 
   addRunOptions(
@@ -228,7 +252,7 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
   ).action(async (command: string[], o: RunOpts) => {
     const c = await client();
     const run = await c.submit(await buildSpec(o, command));
-    if (o.wait) return waitAll(c, [run.id], Boolean(o.json));
+    if (o.wait) return waitAll(c, [run.id], Boolean(o.json), true);
     print(o.json, run, () => `${run.id}  ${run.state}${run.reason ? ` (${run.reason})` : ""}`);
   });
 
@@ -236,12 +260,17 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
     program
       .command("sweep")
       .description("submit one run per parameter combination; {key} in the command is substituted")
-      .requiredOption("-p, --param <KEY=V1,V2,...>", "parameter values (repeatable)", collect, [])
+      .option("-p, --param <KEY=V1,V2,...>", "parameter values (repeatable, required)", collect, [])
       .argument("<command...>")
       .passThroughOptions(),
   ).action(async (command: string[], o: RunOpts & { param: string[] }) => {
-    const c = await client();
     const grid = expandGrid(o.param);
+    const unused = Object.keys(grid[0] ?? {}).filter(
+      (k) => !command.some((a) => a.includes(`{${k}}`)),
+    );
+    if (unused.length)
+      throw new Error(`--param ${unused.join(", ")} not used as {key} in the command`);
+    const c = await client();
     const group =
       o.group ?? o.name ?? `sweep-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}`;
     const runs: Run[] = [];

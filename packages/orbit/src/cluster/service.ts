@@ -94,11 +94,24 @@ export class ClusterService implements RemotePlacement {
 
   /** Start (or stop, with null) serving the cluster API on `listen`, and remember the choice. */
   async setExpose(listen: string | null): Promise<ExposeStatus> {
-    if (listen) parseListen(listen);
-    this.expose.setListen(listen);
+    if (listen)
+      try {
+        parseListen(listen);
+      } catch (e) {
+        throw new UserError((e as Error).message);
+      }
+    const previous = this.listener?.listen ?? null;
     await this.closeListener();
     this.listenError = null;
-    if (listen) await this.listen(listen);
+    if (listen)
+      try {
+        await this.listen(listen);
+      } catch (e) {
+        // Keep serving (and remembering) the previous address.
+        if (previous) await this.listen(previous).catch(() => {});
+        throw e;
+      }
+    this.expose.setListen(listen);
     return this.exposeStatus();
   }
 
@@ -267,11 +280,22 @@ export class ClusterService implements RemotePlacement {
         return { ok: false, kind: "rejected", message: (e as Error).message };
       }
       const c = this.client(entry);
+      let packing: ReturnType<typeof packBundle> | null = null;
       try {
         for (const [hash, dir] of prepared.bundles)
-          if (!(await c.hasBundle(hash))) await c.putBundle(hash, packBundle(dir));
+          if (!(await c.hasBundle(hash))) {
+            packing = packBundle(dir);
+            await c.putBundle(hash, packing);
+          }
       } catch (e) {
         const err = e as NodeError;
+        // Packing failed here (e.g. files changed while read): not the node's fault.
+        if (packing?.errored)
+          return {
+            ok: false,
+            kind: "rejected",
+            message: `code upload: ${packing.errored.message}`,
+          };
         if (err.status === null) {
           this.markOffline(entry.name, err.message);
           return { ok: false, kind: "unreachable", message: err.message };
@@ -372,7 +396,8 @@ export class ClusterService implements RemotePlacement {
     await this.pull(c, sync.runId, "log", dirs.log);
     await this.pull(c, sync.runId, "metrics", dirs.metrics);
     this.deps.runs.applyRemote(sync.runId, remote, events);
-    if (isTerminal(remote.state) && remote.cleanup !== "pending") {
+    // Mirroring ends once the worker has cleaned up; a failed cleanup there may still succeed.
+    if (isTerminal(remote.state) && remote.cleanup === "done") {
       const fresh = this.deps.store.getSync(sync.runId);
       if (fresh) this.deps.store.putSync({ ...fresh, done: true });
     }
@@ -383,7 +408,8 @@ export class ClusterService implements RemotePlacement {
     let offset = existsSync(file) ? statSync(file).size : 0;
     for (let i = 0; i < MAX_CHUNKS_PER_PASS; i++) {
       const r = await c.raw(id, kind, offset, MAX_RAW_CHUNK);
-      if (!r) return;
+      // Size 0 is also what a missing file reports: keep the local copy rather than wipe it.
+      if (!r || r.size === 0) return;
       if (r.size < offset) {
         truncateSync(file, 0);
         offset = 0;

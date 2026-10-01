@@ -12,7 +12,7 @@ import {
   IconLoader,
   IconX,
 } from "../../components/icons.tsx";
-import { CopyButton, Link, StateIcon, stateColor } from "../../components/ui.tsx";
+import { CopyButton, Link, StateIcon, stateColor, toast } from "../../components/ui.tsx";
 import { api, type Metrics, type Run, type RunEvent } from "../../lib/api.ts";
 import {
   dateTime,
@@ -21,6 +21,7 @@ import {
   num,
   queuedFor,
   runDuration,
+  STATE_LABEL,
   shellQuote,
 } from "../../lib/format.ts";
 import { toLines } from "../../lib/log.ts";
@@ -45,12 +46,12 @@ export function Overview({
   });
   return (
     <div className="page-pad">
-      <Outcome run={run} onTab={onTab} />
+      <Outcome run={run} />
       <div className="grid-2" style={{ marginTop: 14 }}>
         <div className="col" style={{ gap: 14 }}>
           <Lifecycle run={run} events={events.data ?? []} now={now} />
           <Spec run={run} />
-          {run.code && <Code run={run} onTab={onTab} />}
+          {run.code && <Code run={run} />}
         </div>
         <div className="col" style={{ gap: 14 }}>
           <Note run={run} />
@@ -62,7 +63,7 @@ export function Overview({
   );
 }
 
-function Outcome({ run, onTab }: { run: Run; onTab: (t: string) => void }) {
+function Outcome({ run }: { run: Run }) {
   const s = run.state;
   if (s === "succeeded")
     return (
@@ -95,15 +96,7 @@ function Outcome({ run, onTab }: { run: Run; onTab: (t: string) => void }) {
               <b>Running</b> on {run.node}
               {run.remote ? " (worker node)" : run.origin ? ` for ${run.origin}` : ""}
               {run.lease?.gpuIds.length ? ` with ${run.lease.gpuIds.length} GPU(s)` : ""}.{" "}
-              <a
-                href="?tab=logs"
-                onClick={(e) => {
-                  e.preventDefault();
-                  onTab("logs");
-                }}
-              >
-                Follow logs →
-              </a>
+              <Link href="?tab=logs">Follow logs →</Link>
             </>
           )}
         </div>
@@ -113,7 +106,7 @@ function Outcome({ run, onTab }: { run: Run; onTab: (t: string) => void }) {
     <div className="callout" style={{ "--c": stateColor(s) } as React.CSSProperties}>
       <IconAlert size={16} />
       <div className="grow">
-        <b style={{ textTransform: "capitalize" }}>{s}</b>
+        <b>{STATE_LABEL[s]}</b>
         {run.reason ? (
           <> — {run.reason}</>
         ) : run.exitCode !== null ? (
@@ -121,16 +114,7 @@ function Outcome({ run, onTab }: { run: Run; onTab: (t: string) => void }) {
         ) : null}
         <div className="muted" style={{ marginTop: 2 }}>
           Logs, metrics and outputs collected before cleanup are kept.{" "}
-          <a
-            href="?tab=logs&err=1"
-            onClick={(e) => {
-              e.preventDefault();
-              history.replaceState(null, "", "?tab=logs&err=1");
-              onTab("logs");
-            }}
-          >
-            Jump to the first error →
-          </a>
+          <Link href="?tab=logs&err=1">Jump to the first error →</Link>
         </div>
       </div>
     </div>
@@ -162,7 +146,7 @@ function Lifecycle({ run, events, now }: { run: Run; events: RunEvent[]; now: nu
           </div>
           {run.startedAt && (
             <div style={{ "--c": stateColor(run.state), flex: 1 } as React.CSSProperties}>
-              {d / total > 0.15 ? `${run.state} ${duration(d)}` : ""}
+              {d / total > 0.15 ? `${STATE_LABEL[run.state]} ${duration(d)}` : ""}
             </div>
           )}
         </div>
@@ -172,9 +156,15 @@ function Lifecycle({ run, events, now }: { run: Run; events: RunEvent[]; now: nu
             .map((e) => {
               const icon =
                 STEP_ICON[e.kind] ??
-                (["succeeded", "failed", "cancelled", "lost", "running", "queued"].includes(
-                  e.kind,
-                ) ? (
+                ([
+                  "succeeded",
+                  "failed",
+                  "cancelled",
+                  "lost",
+                  "running",
+                  "starting",
+                  "queued",
+                ].includes(e.kind) ? (
                   <StateIcon state={e.kind as Run["state"]} size={13} />
                 ) : (
                   <IconCircle size={9} />
@@ -317,7 +307,7 @@ function Spec({ run }: { run: Run }) {
             <>
               <dt>Parent</dt>
               <dd>
-                <Link href={`/runs/${s.parentId}`} className="mono">
+                <Link href={`/runs/${encodeURIComponent(s.parentId)}`} className="mono">
                   {s.parentId}
                 </Link>
               </dd>
@@ -329,7 +319,7 @@ function Spec({ run }: { run: Run }) {
   );
 }
 
-function Code({ run, onTab }: { run: Run; onTab: (t: string) => void }) {
+function Code({ run }: { run: Run }) {
   const c = run.code;
   if (!c) return null;
   return (
@@ -361,19 +351,14 @@ function Code({ run, onTab }: { run: Run; onTab: (t: string) => void }) {
                 </span>
                 <div className="col" style={{ gap: 2, marginTop: 4 }}>
                   {c.changedFiles.slice(0, 12).map((f) => (
-                    <a
+                    <Link
                       key={f}
                       className="row mono"
                       style={{ gap: 5, fontSize: 12 }}
                       href={`?tab=code#${encodeURIComponent(f)}`}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        history.replaceState(null, "", `?tab=code#${encodeURIComponent(f)}`);
-                        onTab("code");
-                      }}
                     >
                       <IconFile size={12} /> {f}
-                    </a>
+                    </Link>
                   ))}
                   {c.changedFiles.length > 12 && (
                     <span className="faint">… {c.changedFiles.length - 12} more</span>
@@ -397,8 +382,12 @@ function Note({ run }: { run: Run }) {
     if (!editing) setText(run.note);
   }, [run.note, editing]);
   const save = async () => {
-    upsertRun(await api.note(run.id, text));
-    setEditing(false);
+    try {
+      upsertRun(await api.note(run.id, text));
+      setEditing(false);
+    } catch (e) {
+      toast(`Could not save the note: ${(e as Error).message}`);
+    }
   };
   return (
     <section className="card">
