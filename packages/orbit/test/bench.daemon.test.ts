@@ -16,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type OrbitClient, tryConnect } from "../src/client/index.ts";
 import { orbitPaths } from "../src/config/paths.ts";
 import { type StartedDaemon, startDaemon } from "../src/daemon/server.ts";
+import { probeNode } from "../src/resources/probe.ts";
 
 const home = mkdtempSync(join(tmpdir(), "orbit-bench-daemon-"));
 const paths = orbitPaths({ ORBIT_HOME: join(home, "orbit") });
@@ -71,6 +72,12 @@ beforeAll(async () => {
     port: 0,
     tickMs: 100,
     shim: [process.execPath, fileURLToPath(new URL("../src/bin.ts", import.meta.url))],
+    // ASI solve runs lease 8 GB; small CI runners have less, and these runs are tiny fake runners.
+    probe: async () => ({
+      ...(await probeNode(paths.home, { node: paths.node, gpus: paths.gpus })),
+      cpu: { count: 16, load1: 0 },
+      memory: { totalGB: 64, availableGB: 64 },
+    }),
   });
   const c = await tryConnect(paths);
   if (!c) throw new Error("daemon not reachable");

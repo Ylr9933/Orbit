@@ -9,7 +9,7 @@ import { BenchService } from "../bench/service.ts";
 import { ClusterService } from "../cluster/service.ts";
 import { removeDaemonInfo, writeDaemonInfo } from "../config/daemon-info.ts";
 import { ensureHome, type OrbitPaths } from "../config/paths.ts";
-import { isTerminal, type NodeProfile } from "../contracts/index.ts";
+import { isTerminal, type NodeProfile, type NodeResources } from "../contracts/index.ts";
 import { hostCli } from "../harness/index.ts";
 import { Notifier, NotifyStore } from "../notify/index.ts";
 import { probeNode } from "../resources/probe.ts";
@@ -60,6 +60,8 @@ export interface DaemonOptions {
   /** Worker heartbeat and remote-run sync periods (tests shorten them). */
   heartbeatMs?: number;
   syncMs?: number;
+  /** Resource probe (default: this machine); tests pin resources so results do not depend on the host. */
+  probe?: () => Promise<NodeResources>;
 }
 
 /** `node [execArgv] <entry>` when this process is the orbit CLI (not e.g. a test runner). */
@@ -84,7 +86,7 @@ export async function startDaemon(
     paths,
     auth,
     datasets,
-    probe: () => probeNode(paths.home, { node: paths.node, gpus: paths.gpus }),
+    probe: opts.probe ?? (() => probeNode(paths.home, { node: paths.node, gpus: paths.gpus })),
     tickMs: opts.tickMs,
     shim: opts.shim ?? detectShim(),
   });
