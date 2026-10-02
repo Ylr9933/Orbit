@@ -75,7 +75,7 @@ beforeAll(async () => {
     // ASI solve runs lease 8 GB; small CI runners have less, and these runs are tiny fake runners.
     probe: async () => ({
       ...(await probeNode(paths.home, { node: paths.node, gpus: paths.gpus })),
-      cpu: { count: 16, load1: 0 },
+      cpu: { count: 16, load1: 0, busy: 0 },
       memory: { totalGB: 64, availableGB: 64 },
     }),
   });

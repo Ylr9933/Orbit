@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Lease, NodeResources } from "../src/contracts/index.ts";
 import { ResourceRequest } from "../src/contracts/index.ts";
-import { allocate, infeasible } from "../src/resources/allocate.ts";
+import { allocate, CPU_RAMP_MS, cpuOutside, infeasible } from "../src/resources/allocate.ts";
+import { CpuMeter, parseProcStat } from "../src/resources/probe.ts";
 
 const gpu = (index: number, over: Partial<NodeResources["gpus"][number]> = {}) => ({
   index,
@@ -25,7 +26,7 @@ const node: NodeResources = {
     gpu(3, { memUsedMiB: 500 }),
   ],
   gpuError: null,
-  cpu: { count: 16, load1: 0 },
+  cpu: { count: 16, load1: 0, busy: 0 },
   memory: { totalGB: 100, availableGB: 80 },
   disk: { path: "/", totalGB: 1, freeGB: 1 },
 };
@@ -77,5 +78,54 @@ describe("allocate", () => {
     expect(infeasible(req({ gpus: 1, gpuMemGB: 40 }), node)).toMatch(/has 0 matching/);
     expect(infeasible(req({ cpus: 32 }), node)).toMatch(/CPUs/);
     expect(infeasible(req({ gpus: 4 }), node)).toBeNull();
+  });
+});
+
+describe("CPU use outside Orbit", () => {
+  const at = "2026-10-02T12:00:00.000Z";
+  const busy = (n: number): NodeResources => ({
+    ...node,
+    probedAt: at,
+    cpu: { count: 80, load1: n, busy: n },
+  });
+  const leaseAt = (cpus: number, ageMs: number): Lease => ({
+    ...lease([], cpus, 1),
+    createdAt: new Date(Date.parse(at) - ageMs).toISOString(),
+  });
+
+  it("queues behind processes Orbit did not start", () => {
+    expect(allocate(req({ cpus: 16 }), busy(48), []).ok).toBe(true);
+    expect(allocate(req({ cpus: 40 }), busy(48), [])).toEqual({
+      ok: false,
+      reason: "waiting for CPUs (36/40 free, ~44 busy outside Orbit)",
+    });
+    // Background noise (≤ 5% of the cores) does not block a whole-node request.
+    expect(allocate(req({ cpus: 80 }), busy(3), []).ok).toBe(true);
+  });
+
+  it("does not count settled leases twice, but does count starting runs", () => {
+    // 32 CPUs leased long ago and busy: the other 16 busy CPUs are outside Orbit.
+    expect(cpuOutside(busy(48), [leaseAt(32, CPU_RAMP_MS)])).toBe(12);
+    // A run leased in this pass is not in the measurement yet: it adds its lease on top.
+    const fresh = [leaseAt(32, 0)];
+    expect(cpuOutside(busy(48), fresh)).toBe(44);
+    expect(allocate(req({ cpus: 8 }), busy(48), fresh)).toMatchObject({ ok: false });
+    expect(allocate(req({ cpus: 4 }), busy(48), fresh).ok).toBe(true);
+  });
+
+  it("measures /proc/stat: rises at once, falls slowly", () => {
+    expect(parseProcStat("cpu  100 0 50 800 50 0 0 0 0 0\ncpu0 1 2 3 4\n")).toEqual({
+      busy: 150,
+      total: 1000,
+    });
+    expect(parseProcStat("garbage")).toBeNull();
+    const m = new CpuMeter();
+    expect(m.sample({ busy: 0, total: 0 }, 8, 5, 0)).toBe(5); // first sample: load average
+    expect(m.sample({ busy: 100, total: 200 }, 8, 5, 2000)).toBe(4); // half busy on 8 cores
+    expect(m.sample({ busy: 100, total: 200 }, 8, 5, 2500)).toBe(4); // < 1 s apart: unchanged
+    expect(m.sample({ busy: 300, total: 400 }, 8, 5, 4000)).toBe(8); // all busy: immediately
+    const after = m.sample({ busy: 300, total: 600 }, 8, 5, 6000); // idle for 2 s
+    expect(after).toBeGreaterThan(7);
+    expect(after).toBeLessThan(8);
   });
 });

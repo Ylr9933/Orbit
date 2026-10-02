@@ -109,7 +109,9 @@ function formatNode(r: NodeResources, leases: Lease[], head: string): string[] {
   }
   const leasedCpu = leases.reduce((n, x) => n + x.cpus, 0);
   const leasedMem = leases.reduce((n, x) => n + x.memGB, 0);
-  lines.push(`cpu     ${r.cpu.count} cores, ${leasedCpu} leased, load ${r.cpu.load1}`);
+  lines.push(
+    `cpu     ${r.cpu.count} cores, ${leasedCpu} leased, ${r.cpu.busy} in use, load ${r.cpu.load1}`,
+  );
   lines.push(
     `memory  ${r.memory.totalGB} GB, ${leasedMem} leased, ${r.memory.availableGB} available`,
   );

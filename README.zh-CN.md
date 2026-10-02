@@ -14,8 +14,8 @@ Orbit 在隔离的 Docker 容器里、按 GPU / CPU / 内存租约运行它，�
 
 - **隔离运行**：每个 Run 是一个 Docker 容器（原生 benchmark runner 可用宿主进程），代码快照放在
   `/workspace`，原仓库不会被修改。
-- **资源租约与排队**：每个 Run 按需租用 GPU、CPU、内存；放不下的 Run 排队并说明原因。被 Orbit 之外的
-  进程占用的 GPU 不会被分配。
+- **资源租约与排队**：每个 Run 按需租用 GPU、CPU、内存；放不下的 Run 排队并说明原因。Orbit 之外的进程
+  占用也会被计入：被占用的 GPU 不会被分配；其他进程占满 CPU 时，新的 Run 会排队等待。
 - **Sweep 与分组**：一条命令提交参数网格；`wait`、`ps` 和 Web 都可以按组操作。
 - **可复盘的记录**：commit 与 diff、日志、JSON Lines 指标与曲线、输出文件、事件、笔记，以及发起该 Run
   的 Codex / Claude Code 会话。
@@ -258,7 +258,7 @@ daemon 是 Orbit 状态的唯一写者；CLI、Web 和 Agent 都通过它的本�
 | --- | --- |
 | `orbit doctor` 报 docker 错误 | Docker 在运行，且当前用户不加 sudo 能执行 `docker ps` |
 | GPU Run 无法启动 | `nvidia-smi` 正常；已安装 NVIDIA Container Toolkit 或 CDI spec |
-| Run 一直 `queued` | `orbit ps` 会显示原因（GPU 被占用、内存不足、指定节点离线等） |
+| Run 一直 `queued` | `orbit ps` 会显示原因（GPU 被占用、CPU 被其他进程占满、内存不足、指定节点离线等） |
 | Agent 连不上 Orbit | `orbit` 在其 `PATH` 上；Codex 沙箱已允许网络 |
 | 快照过大 | 把数据和权重加入 `.gitignore`，用 `-m` 或 `orbit data` 挂载 |
 

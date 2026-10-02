@@ -7,6 +7,8 @@ import { exec } from "../lib/exec.ts";
 export const EXTERNAL_BUSY_MIB = 1024;
 
 const GIB = 1024 ** 3;
+/** Measured CPU use rises at once but falls with this time constant, so a brief dip does not admit runs. */
+const CPU_FALL_S = 30;
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 interface RawGpu {
@@ -104,21 +106,69 @@ export function filterGpus<T extends { index: number; uuid: string }>(
   return gpus.filter((g) => only.includes(String(g.index)) || only.includes(g.uuid));
 }
 
+/** Busy and total jiffies from the aggregate `cpu` line of /proc/stat (idle includes iowait). */
+export function parseProcStat(text: string): { busy: number; total: number } | null {
+  const line = text.split("\n").find((l) => l.startsWith("cpu "));
+  // user nice system idle iowait irq softirq steal (guest time is already in user/nice)
+  const f = line?.trim().split(/\s+/).slice(1, 9).map(Number);
+  if (!f || f.length < 5 || f.some(Number.isNaN)) return null;
+  const total = f.reduce((a, b) => a + b, 0);
+  return { busy: total - (f[3] ?? 0) - (f[4] ?? 0), total };
+}
+
+/** Turns successive /proc/stat samples into "CPUs in use": fast to rise, slow to fall. */
+export class CpuMeter {
+  private last: { at: number; busy: number; total: number } | null = null;
+  private value: number | null = null;
+
+  /** `fallback` (the load average) is used until two samples are at least a second apart. */
+  sample(
+    stat: { busy: number; total: number } | null,
+    count: number,
+    fallback: number,
+    at = Date.now(),
+  ): number {
+    if (!stat) return this.value ?? Math.min(fallback, count);
+    if (!this.last || stat.total < this.last.total) {
+      this.last = { at, ...stat };
+      return this.value ?? Math.min(fallback, count);
+    }
+    const dt = (at - this.last.at) / 1000;
+    if (dt < 1) return this.value ?? Math.min(fallback, count);
+    const dTotal = stat.total - this.last.total;
+    const now = dTotal > 0 ? (count * (stat.busy - this.last.busy)) / dTotal : 0;
+    const prev = this.value ?? now;
+    this.value = now >= prev ? now : prev + (now - prev) * (1 - Math.exp(-dt / CPU_FALL_S));
+    this.last = { at, ...stat };
+    return this.value;
+  }
+}
+
+/** One meter per process: every daemon in it measures the same machine. */
+const cpuMeter = new CpuMeter();
+
 export async function probeNode(
   diskPath: string,
   opts: { node?: string; gpus?: string[] | null } = {},
 ): Promise<NodeResources> {
-  const [gpu, meminfo, fs] = await Promise.all([
+  const [gpu, meminfo, fs, stat] = await Promise.all([
     probeGpus(),
     readFile("/proc/meminfo", "utf8"),
     statfs(diskPath),
+    readFile("/proc/stat", "utf8").catch(() => ""),
   ]);
+  const count = availableParallelism();
+  const load1 = loadavg()[0] ?? 0;
   return {
     node: opts.node ?? hostname(),
     probedAt: new Date().toISOString(),
     gpus: filterGpus(gpu.gpus, opts.gpus ?? null),
     gpuError: gpu.error,
-    cpu: { count: availableParallelism(), load1: round1(loadavg()[0] ?? 0) },
+    cpu: {
+      count,
+      load1: round1(load1),
+      busy: round1(cpuMeter.sample(parseProcStat(stat), count, load1)),
+    },
     memory: parseMeminfo(meminfo),
     disk: {
       path: diskPath,

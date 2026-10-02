@@ -85,7 +85,7 @@ describe("GPU memory requests", () => {
       },
     ],
     gpuError: null,
-    cpu: { count: 32, load1: 0 },
+    cpu: { count: 32, load1: 0, busy: 0 },
     memory: { totalGB: 256, availableGB: 200 },
     disk: { path: "/", totalGB: 1, freeGB: 1 },
   });

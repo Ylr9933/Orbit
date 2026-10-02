@@ -48,8 +48,9 @@ export function Resources() {
             />
             <Stat
               v={`${leasedCpus} / ${res.cpu.count}`}
-              l={`CPUs leased · load ${res.cpu.load1.toFixed(1)}`}
+              l={`CPUs leased · ${res.cpu.busy.toFixed(0)} in use · load ${res.cpu.load1.toFixed(1)}`}
               frac={leasedCpus / res.cpu.count}
+              used={res.cpu.busy / res.cpu.count}
             />
             <Stat
               v={`${(res.memory.totalGB - res.memory.availableGB).toFixed(0)} / ${res.memory.totalGB.toFixed(0)} GB`}
@@ -197,7 +198,7 @@ function Nodes({ nodes, runs }: { nodes: NodeStatus[]; runs: Run[] }) {
           <tr>
             <th>Node</th>
             <th>GPUs free</th>
-            <th className="r">CPUs leased</th>
+            <th className="r">CPUs leased · in use</th>
             <th className="r">Memory</th>
             <th className="r">Our runs</th>
             <th>Datasets</th>
@@ -240,7 +241,9 @@ function Nodes({ nodes, runs }: { nodes: NodeStatus[]; runs: Run[] }) {
                 </td>
                 <td className="num">{i ? `${free} / ${i.resources.gpus.length}` : "—"}</td>
                 <td className="r num">
-                  {i ? `${active.reduce((a, l) => a + l.cpus, 0)} / ${i.resources.cpu.count}` : "—"}
+                  {i
+                    ? `${active.reduce((a, l) => a + l.cpus, 0)} · ${i.resources.cpu.busy.toFixed(0)} / ${i.resources.cpu.count}`
+                    : "—"}
                 </td>
                 <td className="r num">
                   {i
@@ -261,7 +264,8 @@ function Nodes({ nodes, runs }: { nodes: NodeStatus[]; runs: Run[] }) {
   );
 }
 
-function Stat({ v, l, frac }: { v: string; l: string; frac?: number }) {
+/** `frac` fills the main bar; `used` (measured use, e.g. CPUs) is drawn as a thin bar under it. */
+function Stat({ v, l, frac, used }: { v: string; l: string; frac?: number; used?: number }) {
   const f =
     frac === undefined || !Number.isFinite(frac) ? undefined : Math.max(0, Math.min(1, frac));
   const c =
@@ -283,6 +287,18 @@ function Stat({ v, l, frac }: { v: string; l: string; frac?: number }) {
           <span
             style={
               { width: `${Math.max(0, Math.min(1, f)) * 100}%`, "--c": c } as React.CSSProperties
+            }
+          />
+        </div>
+      )}
+      {used !== undefined && Number.isFinite(used) && (
+        <div className="bar" style={{ marginTop: 3, height: 3 }} title="in use (all processes)">
+          <span
+            style={
+              {
+                width: `${Math.max(0, Math.min(1, used)) * 100}%`,
+                "--c": "var(--text-3)",
+              } as React.CSSProperties
             }
           />
         </div>

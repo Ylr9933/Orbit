@@ -23,6 +23,8 @@ export const NodeResources = z.object({
   cpu: z.object({
     count: z.number().int(),
     load1: z.number(),
+    /** CPUs in use by all processes (Orbit's and others'), measured from /proc/stat and smoothed. */
+    busy: z.number(),
   }),
   memory: z.object({
     totalGB: z.number(),

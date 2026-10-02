@@ -17,7 +17,8 @@ local Web UI.
 - **Isolated runs**: every run is a Docker container (or a host process for native benchmark
   runners) with its own code snapshot in `/workspace`; your repository is never modified.
 - **Resource leases and a queue**: GPUs, CPUs and memory are leased per run; runs that do not fit
-  wait in a queue that says why. GPUs used by processes outside Orbit are left alone.
+  wait in a queue that says why. GPUs, CPUs and memory used by processes outside Orbit are taken
+  into account (busy GPUs are not leased; new runs wait while other processes keep the CPUs busy).
 - **Sweeps and groups**: one command submits a parameter grid; `wait`, `ps` and the Web UI work on
   whole groups.
 - **Records for review**: commit and diff, logs, JSON-lines metrics with charts, output files,
@@ -273,7 +274,7 @@ when it restarts. `orbit daemon` runs it in the foreground.
 | --- | --- |
 | `orbit doctor` reports docker errors | Docker is running and your user can run `docker ps` without sudo |
 | GPU runs fail to start | `nvidia-smi` works; the NVIDIA Container Toolkit or a CDI spec is installed |
-| A run stays `queued` | `orbit ps` shows the reason (GPUs busy, memory, pinned node offline, …) |
+| A run stays `queued` | `orbit ps` shows the reason (GPUs busy, CPUs busy outside Orbit, memory, pinned node offline, …) |
 | An agent cannot reach Orbit | `orbit` is on its `PATH`; Codex sandbox allows network access |
 | Snapshot too large | Add data and weights to `.gitignore` and mount them with `-m` or `orbit data` |
 

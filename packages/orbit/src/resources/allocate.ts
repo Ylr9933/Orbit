@@ -3,6 +3,23 @@ import type { Lease, NodeResources, ResourceRequest } from "../contracts/index.t
 /** Keep this fraction of host memory out of leases for the OS and the daemon. */
 export const MEM_LEASABLE_FRACTION = 0.9;
 
+/** A lease this young may not show in measured CPU use yet (container start, imports, data loading). */
+export const CPU_RAMP_MS = 60_000;
+
+/**
+ * CPU use the leases do not explain, i.e. other processes on the node. Settled leases are assumed
+ * busy up to their size; runs still starting count twice (lease + whatever they already use), which
+ * errs towards waiting. Background noise up to 5% of the cores (at least one) is ignored.
+ */
+export function cpuOutside(r: NodeResources, leases: Lease[]): number {
+  const now = Date.parse(r.probedAt);
+  const settled = leases
+    .filter((l) => now - Date.parse(l.createdAt) >= CPU_RAMP_MS)
+    .reduce((n, l) => n + l.cpus, 0);
+  const noise = Math.max(1, r.cpu.count * 0.05);
+  return Math.max(0, r.cpu.busy - noise - settled);
+}
+
 export type Allocation = { ok: true; gpuIds: string[] } | { ok: false; reason: string };
 
 /** Reject requests this node can never satisfy (instead of queueing forever). */
@@ -35,12 +52,17 @@ function matchesId(g: { uuid: string; index: number }, ids: string[]): boolean {
 
 /**
  * Decide whether `req` fits now.
- * available = probed hardware − active Orbit leases − external use (GPUs busy outside Orbit).
+ * available = probed hardware − active Orbit leases − external use (busy GPUs, CPU use outside
+ * leases, memory not available).
  */
 export function allocate(req: ResourceRequest, r: NodeResources, leases: Lease[]): Allocation {
   const leasedCpus = leases.reduce((n, l) => n + l.cpus, 0);
-  if (leasedCpus + req.cpus > r.cpu.count) {
-    return { ok: false, reason: `waiting for CPUs (${r.cpu.count - leasedCpus}/${req.cpus} free)` };
+  const outside = cpuOutside(r, leases);
+  const freeCpus = r.cpu.count - leasedCpus - outside;
+  if (req.cpus > freeCpus) {
+    const free = Math.max(0, Math.floor(freeCpus));
+    const why = outside >= 1 ? `, ~${Math.round(outside)} busy outside Orbit` : "";
+    return { ok: false, reason: `waiting for CPUs (${free}/${req.cpus} free${why})` };
   }
   const leasedMem = leases.reduce((n, l) => n + l.memGB, 0);
   const leasable = r.memory.totalGB * MEM_LEASABLE_FRACTION - leasedMem;
