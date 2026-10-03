@@ -59,6 +59,7 @@ export function formatRun(r: Run, summary?: Record<string, number>): string {
     `  node     ${r.node}${r.remote ? " (remote; outputs stay there)" : ""}${r.origin ? ` (from ${r.origin})` : ""}`,
   ];
   if (r.lease) lines.push(`  lease    ${r.lease.state} ${r.lease.gpuIds.join(", ") || "no GPUs"}`);
+  if (r.usage) lines.push(`  usage    ${formatUsage(r)}`);
   if (r.code) {
     const c = r.code;
     lines.push(
@@ -141,4 +142,19 @@ export function formatDoctor(r: DoctorReport): string {
   return r.checks
     .map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.name.padEnd(11)} ${c.detail}`)
     .join("\n");
+}
+
+/** Measured use against the request, e.g. `memory 11.2/16 GB peak, CPU 3.1 peak 1.2 mean/4`. */
+export function formatUsage(r: Run): string {
+  const u = r.usage;
+  if (!u) return "-";
+  const res = r.spec.resources;
+  const parts = [
+    `memory ${u.peakMemGB}/${res.memGB} GB peak`,
+    `CPU ${u.peakCpus} peak ${u.meanCpus} mean/${res.cpus}`,
+  ];
+  if (u.peakGpuMemGB !== null) parts.push(`GPU memory ${u.peakGpuMemGB} GB peak`);
+  if (u.oomKilled) parts.push("OUT OF MEMORY");
+  else if (u.oomKills) parts.push(`${u.oomKills} killed for memory`);
+  return parts.join(", ");
 }

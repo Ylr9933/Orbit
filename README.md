@@ -174,8 +174,8 @@ Install the skill from [plugin/](plugin/README.md):
 claude plugin marketplace add /path/to/orbit
 claude plugin install orbit@orbit
 # Codex (or Claude Code without the plugin): copy or symlink the skill
-ln -s /path/to/orbit/plugin/skills/orbit ~/.agents/skills/orbit      # Codex
-ln -s /path/to/orbit/plugin/skills/orbit ~/.claude/skills/orbit      # Claude Code
+ln -s /path/to/orbit/plugin/skills/orbit /path/to/orbit/plugin/skills/orbit-bench ~/.agents/skills/   # Codex
+ln -s /path/to/orbit/plugin/skills/orbit /path/to/orbit/plugin/skills/orbit-bench ~/.claude/skills/   # Claude Code
 ```
 
 `orbit` must be on the agent's `PATH`. Codex's default sandbox blocks network access, which the CLI
@@ -226,6 +226,7 @@ orbit bench run tbs -t symbolic-regression -m oracle -m empty \
 orbit bench jobs
 orbit bench show <job>
 orbit bench compare <job>...    # per-task comparison; paired means use tasks valid for every method
+orbit bench usage <job>...      # measured peak memory / CPU / GPU per task, suggested resources
 orbit bench cancel <job>
 ```
 
@@ -234,7 +235,9 @@ Methods are `name=agent[,auth=P,model=M,effort=E,bundle=DIR]` with agent `codex`
 trial records execution (how the solve run ended), evaluation (`valid` / `invalid` / `unknown`) and
 cleanup separately; only valid scores count. The Web UI shows jobs, a task × method matrix and
 cross-job comparison under **Bench**. Grader secrets given with `--pass-env` reach only the verify
-run. Any other benchmark needs only an adapter executable that speaks a small JSON protocol (no
+run. Per-task solve resources (GPU, memory, CPU, timeout) come from an optional JSON file given with
+`orbit bench add --resources`; every run records its measured peaks, and a solve run killed for memory
+makes the trial invalid instead of a zero. Any other benchmark needs only an adapter executable that speaks a small JSON protocol (no
 rebuild of Orbit): [docs/guides/bench-adapter.md](docs/guides/bench-adapter.md).
 
 ### Several machines

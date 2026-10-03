@@ -55,6 +55,8 @@ function findWebDir(): string | null {
 export interface DaemonOptions {
   port?: number;
   tickMs?: number;
+  /** Resource sampling period of running runs (tests shorten it). */
+  usageMs?: number;
   /**
    * Command running this orbit binary (default: detected), for the process-run docker shim and the
    * built-in bench adapters.
@@ -92,6 +94,7 @@ export async function startDaemon(
     datasets,
     probe: opts.probe ?? (() => probeNode(paths.home, { node: paths.node, gpus: paths.gpus })),
     tickMs: opts.tickMs,
+    usageMs: opts.usageMs,
     shim: self,
   });
   const cluster = new ClusterService({

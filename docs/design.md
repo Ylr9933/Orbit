@@ -61,7 +61,7 @@ packages/orbit/src/
   bin.ts       composition root of the `orbit` executable (wires cli + daemon); nothing imports it
 packages/web/  React SPA (Vite, uPlot); imports `@zjunlp/orbit/contracts` types only; built into
                packages/orbit/dist/web and served by the daemon
-plugin/        skills/orbit/SKILL.md for Codex / Claude Code (+ .claude-plugin manifest)
+plugin/        skills/orbit (running experiments) and skills/orbit-bench (adapters, task resources) for Codex / Claude Code (+ .claude-plugin manifest)
 examples/      bench-adapters/<benchmark>/: external bench adapters (not part of the package)
 ```
 
@@ -112,7 +112,7 @@ examples/      bench-adapters/<benchmark>/: external bench adapters (not part of
 ```
 
 **Run**：`{ id, spec, state, exitCode?, node, remote, origin?, leaseId?, containerId?, code{commit, dirty, diffRef},
-createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage{peakGpuMem, peakMem, …} }`
+createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage? }`
 
 - `state`: `queued → starting → running → succeeded | failed | cancelled | lost`。
 - 执行结果（state/exitCode）、清理状态（cleanup）、评测有效性（bench 中）是三个独立字段。
@@ -148,6 +148,14 @@ NVIDIA spec 时），否则 `--gpus device=<UUID>`；启动后核对 `nvidia-smi
 归一为 `SessionMessage`（text / thinking / tool_call / tool_result），Web 标出提交该 Run 的那一步。
 
 **失败也要保留证据**：任何终态都先采集日志与 `$ORBIT_OUTPUT`，再清理容器；日志读到 EOF，截断必须标记。
+
+**实测用量**（`Run.usage`，`runs/usage.ts`）：执行节点每 5 s 采样一次运行中的 Run：docker Run 读容器的
+cgroup v2（`memory.peak`/`memory.current`、`cpu.stat`、`memory.events` 的 `oom_kill`）；process Run 读其进程组
+的 `/proc` RSS 与 CPU 时间，加上带 `orbit.parent` 标签的子容器的 cgroup；租到 GPU 时按这些进程的 host pid 匹配
+`nvidia-smi --query-compute-apps` 的显存。记录 `{ samples, peakMemGB, peakCpus, meanCpus, peakGpuMemGB, oomKills,
+oomKilled }`，运行中写库（不发变更事件），终态前再采一次并写一条 `usage` 事件；daemon 重启后接着累计（OOM 计数
+不重复）。`oomKilled` = 容器被标记 OOMKilled 且非 0 退出（reason 为 `out of memory (limit N GB)`）；`oomKills` 记容器
+内被杀的进程（Run 可能照常结束）。从未读到进程的极短 Run 不记 usage。远端 Run 的 usage 随镜像同步。
 
 ## 5. HTTP API 与 Web
 
@@ -240,7 +248,8 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 | solve 取消 / lost，verify 取消 / lost，job 取消 | unknown |
 | solve 未启动（镜像构建、租约、认证失败） | invalid（环境问题，不是方法的结果） |
 | solve 失败或超时 | 照常 verify（方法的结果；超时记入 issues） |
-| verify 未启动、超时，没有分数，或适配器判为无效（无 reward、scorer 内部错误、模型不可用且 0 分） | invalid |
+| solve 因内存不足被杀（`usage.oomKilled`，资源申请的问题，不是方法的结果；仍照常 verify 并保留分数） | invalid |
+| verify 未启动、超时、内存不足，没有分数，或适配器判为无效（无 reward、scorer 内部错误、模型不可用且 0 分） | invalid |
 | 其余 | valid |
 
   只有 `valid` 的分数进入均分；无效或未知单独列出，不静默计入。清理状态汇总两个 Run 的 `cleanup`。
@@ -264,6 +273,16 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
   网络；也可以给 `command`（原生 runner 自己启动 Agent，如 ASI），Orbit 同样设置 auth 与 bundle。oracle / empty 只能给
   `command`，verify 不能请求 Agent。Orbit 再加上 benchmark `env`（两个 Run）、`passEnv` 与 `priority = 1`（verify），
   `snapshot = false`，最后按 RunSpec 校验。
+- **任务资源文件**（`contracts.BenchResources`，`bench/resources.ts`）：`orbit bench add --resources <file>` 登记一个
+  JSON：`{ version: 1, default, tasks: { <task>: { cpus?, memGB?, gpus?, gpuMemGB?, timeoutMin?, evidence?, confidence?,
+  note? } } }`，未知字段报错，`evidence` 等只给人看。只覆盖 solve Run：任务条目 > `default` > 适配器给的值，
+  `orbit bench run --timeout` 仍优先于 `timeoutMin`。登记时与提交 job 时校验（文件中不存在的任务 id 报错）；提交时
+  把每个任务解析后的值存入 `BenchJob.resources`，之后改文件不影响已提交的 job。文件由人（或其 Agent）维护，
+  Orbit 从不写它。
+- **用量建议**：`orbit bench usage <job>...`（`GET /bench/usage?jobs=`）汇总 Agent 方法 solve Run 的实测峰值（oracle /
+  empty 不计），与当时的申请对比并给出建议：内存与显存 = 峰值 × 1.2 向上取到档位（2…256 GB），OOM 后至少升一档，
+  至少两次运行且有一半余量才建议调低；CPU 取峰值档位；超时 = 最长耗时 × 1.5 取整小时，超时过则至少 ×1.5；
+  GPU 数量从不建议（是否需要 GPU 是对任务的判断）。`--suggest` 输出资源文件片段（带 evidence），只打印不写回。
 - 提交 job 与 daemon 重启后恢复 trial 都在后台依次推进（每次调用是一个进程），不阻塞 API 与 daemon 启动。
 
 内置适配器：
@@ -292,7 +311,8 @@ daemon 重启后按 pid + 启动时间重新接管进程。运行中的 process 
 
 **接口**：API `GET/POST /benchmarks`、`DELETE /benchmarks/:name`、`GET /benchmarks/:name/tasks`、
 `GET/POST /bench/jobs`、`GET /bench/jobs/:id`、`POST /bench/jobs/:id/cancel`、`GET /bench/compare?jobs=a,b`；
-CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|compare`（`add --adapter <name|path> -c KEY=VALUE`）；Web `/bench`（job 列表与登记的 benchmark）、
+CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|compare|usage`（`add --adapter <name|path> -c KEY=VALUE
+--resources <file>`）；Web `/bench`（job 列表与登记的 benchmark）、
 `/bench/<job>`（方法均分、有效性分布、任务 × 方法分数矩阵、问题列表与 solve/verify Run 链接）、
 `/bench/compare?jobs=`（逐任务对比、全部与配对均值、相对第一列的差值）。接入新 benchmark 见
 [guides/bench-adapter.md](guides/bench-adapter.md)。

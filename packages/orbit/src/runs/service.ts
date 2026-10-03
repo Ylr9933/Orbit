@@ -70,6 +70,7 @@ import {
   writeShim,
 } from "./process.ts";
 import type { ShimConfig } from "./shim.ts";
+import { cgroupOf, type Targets, UsageSampler } from "./usage.ts";
 
 export interface RunServiceDeps {
   store: Store;
@@ -86,6 +87,8 @@ export interface RunServiceDeps {
    * `docker` shim calling `<prefix> __docker-shim`. Without it process runs are rejected.
    */
   shim?: string[];
+  /** Resource sampling period of running runs (default 5 s). */
+  usageMs?: number;
 }
 
 export interface RunChange {
@@ -120,6 +123,8 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   private readonly refused = new Map<string, { why: string; until: number }>();
   /** Stops requested for local runs not watched yet (see `control`). */
   private readonly stopIntent = new Map<string, "cancel" | "timeout">();
+  /** Resource samplers of the runs this node executes. */
+  private readonly samplers = new Map<string, UsageSampler>();
   /** Runs from a primary still being received (see `submitRemote`). */
   private readonly receiving = new Map<string, Promise<Run>>();
   private readonly gpuMode = docker.detectGpuMode();
@@ -171,6 +176,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     this.timer = null;
     await this.ticking;
     for (const a of this.active.values()) a.logs?.kill();
+    for (const u of this.samplers.values()) u.halt();
   }
 
   async resources(force = false): Promise<NodeResources> {
@@ -270,6 +276,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       remote: false,
       origin: null,
       note: "",
+      usage: null,
       createdAt: nowIso(),
       startedAt: null,
       endedAt: null,
@@ -642,6 +649,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     run.startedAt = remote.startedAt;
     run.endedAt = remote.endedAt;
     run.cleanup = remote.cleanup;
+    run.usage = remote.usage;
     if (remote.lease) run.lease = remote.lease;
     else if (isTerminal(remote.state) && run.lease?.state === "active")
       run.lease = { ...run.lease, state: "released", releasedAt: remote.endedAt ?? nowIso() };
@@ -731,6 +739,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       remote: false,
       origin: input.origin,
       note: "",
+      usage: null,
       createdAt: nowIso(),
       startedAt: null,
       endedAt: null,
@@ -937,6 +946,15 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   /** Wait for the process (via its exit event, or by polling after a restart), then finalize. */
   private async watchProcess(id: string, exited: Promise<number | null> | null): Promise<void> {
     const ctl = this.control(id);
+    this.startUsage(id, async () => {
+      const r = this.mustGet(id);
+      const children = (await docker.containersWithLabel(docker.LABEL_PARENT, id)) ?? [];
+      return {
+        cgroups: await this.containerCgroups(children),
+        group: r.proc ? { pgid: r.proc.pid, since: Number(r.proc.start) } : null,
+        gpus: (r.lease?.gpuIds.length ?? 0) > 0,
+      };
+    });
     let code: number | null = null;
     if (exited) code = await exited;
     else {
@@ -947,6 +965,7 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
       }
     }
     const run = this.mustGet(id);
+    await this.stopUsage(run, false);
     code = readExitFile(join(this.dirs(id).root, "exit-code")) ?? code;
     const reason = code === 0 ? null : code === null ? "exit status unknown" : `exit code ${code}`;
     await this.finalize(run, ...outcome(run, ctl, code, reason));
@@ -1141,6 +1160,11 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
   private async watch(id: string, containerId: string, recovered: boolean): Promise<void> {
     const ctl = this.control(id);
     const dirs = this.dirs(id);
+    this.startUsage(id, async () => ({
+      cgroups: await this.containerCgroups([containerId]),
+      group: null,
+      gpus: (this.mustGet(id).lease?.gpuIds.length ?? 0) > 0,
+    }));
     // The container log follows the build output and Orbit's own lines; a reattach after a restart
     // re-reads the container log from its start, so it replaces only the part after that offset.
     const offsetFile = join(dirs.root, "log-offset");
@@ -1171,8 +1195,11 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
     const st = await docker.inspectContainer(containerId).catch(() => null);
     const run = this.mustGet(id);
     await this.collect(run, containerId);
+    // Docker flags any OOM kill in the container; only a failed exit means the run itself died of it.
+    const oom = Boolean(st?.oomKilled) && exitCode !== 0;
+    await this.stopUsage(run, oom);
     let reason = exitCode === 0 ? null : `exit code ${exitCode}`;
-    if (st?.oomKilled) reason = `out of memory (limit ${run.spec.resources.memGB} GB)`;
+    if (oom) reason = `out of memory (limit ${run.spec.resources.memGB} GB)`;
     await this.finalize(run, ...outcome(run, ctl, exitCode, reason));
   }
 
@@ -1322,6 +1349,66 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
         .catch((e) => console.error(`orbit: run ${run.id}:`, (e as Error).message))
         .finally(() => this.active.delete(run.id));
     }
+  }
+
+  // ---- resource use ----
+
+  /** cgroup directories of containers by id, cached (a container keeps its cgroup). */
+  private readonly cgroupDirs = new Map<string, string>();
+
+  private async containerCgroups(ids: string[]): Promise<string[]> {
+    const out: string[] = [];
+    for (const c of ids) {
+      let dir = this.cgroupDirs.get(c);
+      if (!dir) {
+        const st = await docker.inspectContainer(c).catch(() => null);
+        const found = st?.pid ? cgroupOf(st.pid) : null;
+        if (!found) continue;
+        dir = found;
+        this.cgroupDirs.set(c, dir);
+      }
+      out.push(dir);
+    }
+    return out;
+  }
+
+  /** Sample a run's resource use while it runs; samples are saved without a change event. */
+  private startUsage(id: string, targets: () => Promise<Targets>): void {
+    if (this.samplers.has(id)) return;
+    const prev = this.store.getRun(id)?.usage ?? null;
+    const sampler = new UsageSampler(
+      prev,
+      targets,
+      (usage) => {
+        const r = this.store.getRun(id);
+        if (!r || isTerminal(r.state)) return;
+        r.usage = { ...usage };
+        this.store.putRun(r);
+      },
+      this.deps.usageMs ?? 5000,
+    );
+    this.samplers.set(id, sampler);
+  }
+
+  /** Stop sampling and put the final figures on `run` (saved with its terminal state). */
+  private async stopUsage(run: Run, oomKilled: boolean): Promise<void> {
+    const sampler = this.samplers.get(run.id);
+    this.samplers.delete(run.id);
+    if (!sampler) return;
+    const usage = await sampler.stop();
+    // Too short to be seen (or nothing readable): no figures rather than zeros.
+    if (sampler.meter.readings === 0 && !run.usage && !oomKilled) return;
+    run.usage = { ...usage, oomKilled };
+    if (oomKilled) run.usage.oomKills = Math.max(1, run.usage.oomKills);
+    const u = run.usage;
+    this.store.addEvent(
+      run.id,
+      "usage",
+      `peak memory ${u.peakMemGB} GB of ${run.spec.resources.memGB} GB` +
+        `, CPU peak ${u.peakCpus} / mean ${u.meanCpus} of ${run.spec.resources.cpus}` +
+        (u.peakGpuMemGB !== null ? `, GPU memory peak ${u.peakGpuMemGB} GB` : "") +
+        (u.oomKills ? `, ${u.oomKills} process(es) killed for memory` : ""),
+    );
   }
 
   // ---- persistence ----

@@ -163,8 +163,8 @@ daemon 只监听 `127.0.0.1`。从其他机器查看时用 SSH 隧道：
 claude plugin marketplace add /path/to/orbit
 claude plugin install orbit@orbit
 # Codex（或不使用插件的 Claude Code）：复制或软链接 skill
-ln -s /path/to/orbit/plugin/skills/orbit ~/.agents/skills/orbit      # Codex
-ln -s /path/to/orbit/plugin/skills/orbit ~/.claude/skills/orbit      # Claude Code
+ln -s /path/to/orbit/plugin/skills/orbit /path/to/orbit/plugin/skills/orbit-bench ~/.agents/skills/   # Codex
+ln -s /path/to/orbit/plugin/skills/orbit /path/to/orbit/plugin/skills/orbit-bench ~/.claude/skills/   # Claude Code
 ```
 
 `orbit` 需要在 Agent 的 `PATH` 上。Codex 默认沙箱禁止网络，而 CLI 需要访问本地 daemon，因此要放开
@@ -214,6 +214,7 @@ orbit bench run tbs -t symbolic-regression -m oracle -m empty \
 orbit bench jobs
 orbit bench show <job>
 orbit bench compare <job>...    # 按任务对比；paired 均值只用所有方法都有效的任务
+orbit bench usage <job>...      # 每个任务实测的内存 / CPU / 显存峰值与建议资源
 orbit bench cancel <job>
 ```
 
@@ -221,7 +222,8 @@ orbit bench cancel <job>
 `oracle`（参考解）或 `empty`（不提交任何内容，用于检查 verifier 给 0 分）。每个 trial 分别记录执行结果
 （solve Run 如何结束）、评测有效性（`valid` / `invalid` / `unknown`）与清理状态；只有有效分数计入统计。
 Web 的 **Bench** 页面展示 job、任务 × 方法矩阵和跨 job 对比。`--pass-env` 传入的评审密钥只给 verify
-Run。其他 benchmark 只需一个说小型 JSON 协议的适配器可执行文件，不用重新构建 Orbit，见
+Run。每个任务的 solve 资源（GPU、内存、CPU、超时）可由 `orbit bench add --resources` 指定的 JSON 文件给出；
+每个 Run 都记录实测峰值，solve 因内存不足被杀时该 trial 记为 invalid，而不是 0 分。其他 benchmark 只需一个说小型 JSON 协议的适配器可执行文件，不用重新构建 Orbit，见
 [docs/guides/bench-adapter.md](docs/guides/bench-adapter.md)。
 
 ### 多机

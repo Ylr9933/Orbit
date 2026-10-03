@@ -14,6 +14,7 @@ import {
   type BenchJobSpecInput,
   type Benchmark,
   type BenchTask,
+  type BenchUsage,
   isTerminal,
   type Method,
   type MethodSummary,
@@ -29,6 +30,7 @@ import type { Store } from "../store/index.ts";
 import { classify, solveVerdict } from "./classify.ts";
 import { AdapterClient, type TrialInput, toRunSpec } from "./protocol.ts";
 import type { BenchmarkRegistry } from "./registry.ts";
+import { applyOverride, loadResources, resolveResources, usageRow } from "./resources.ts";
 
 export interface BenchServiceDeps {
   store: Store;
@@ -195,9 +197,22 @@ export class BenchService {
       if (!t.supported) throw new UserError(`task ${id} is not supported: ${t.reason}`);
     }
     if (spec.tasks.length === 0) throw new UserError(`${b.name} has no supported tasks`);
+    let resources: BenchJob["resources"] = null;
+    if (b.resources) {
+      try {
+        resources = resolveResources(
+          loadResources(b.resources),
+          spec.tasks,
+          all.map((t) => t.id),
+        );
+      } catch (e) {
+        throw new UserError((e as Error).message);
+      }
+    }
     const job: BenchJob = {
       id: newId(),
       spec,
+      resources,
       state: "running",
       createdAt: nowIso(),
       endedAt: null,
@@ -273,6 +288,40 @@ export class BenchService {
     if (ids.length === 0) throw new UserError("no jobs to compare");
     if (new Set(ids).size !== ids.length) throw new UserError("a job is listed more than once");
     return compareJobs(ids.map((id) => this.job(id)));
+  }
+
+  /** Measured solve use per task over the given jobs, with suggested resources (never applied). */
+  usage(ids: string[]): BenchUsage {
+    if (ids.length === 0) throw new UserError("no jobs given");
+    const runs = new Map<string, Run[]>();
+    const requested = new Map<string, Run["spec"]>();
+    for (const id of ids) {
+      const d = this.job(id);
+      // Only Agent methods show what a task needs; oracle and empty runs say nothing about it.
+      const agents = new Set(
+        d.job.spec.methods
+          .filter((m) => m.agent === "codex" || m.agent === "claude-code")
+          .map((m) => m.name),
+      );
+      for (const t of d.trials) {
+        if (!agents.has(t.method)) continue;
+        const r = t.solveRunId ? this.deps.runs.get(t.solveRunId) : null;
+        if (!r || !isTerminal(r.state)) continue;
+        runs.set(t.task, [...(runs.get(t.task) ?? []), r]);
+        // The latest job's request is what a suggestion is compared against.
+        requested.set(t.task, r.spec);
+      }
+    }
+    const rows = [...runs.keys()].sort().map((task) => {
+      const s = requested.get(task) as Run["spec"];
+      const { cpus, memGB, gpus, gpuMemGB } = s.resources;
+      return usageRow(
+        task,
+        { cpus, memGB, gpus, ...(gpuMemGB ? { gpuMemGB } : {}), timeoutMin: s.timeoutMin },
+        runs.get(task) ?? [],
+      );
+    });
+    return { jobs: ids, rows };
   }
 
   async cancel(id: string): Promise<BenchJob> {
@@ -423,7 +472,11 @@ export class BenchService {
       try {
         const { b, trial } = this.context(job, t);
         const reply = await this.adapter(b).solve(trial);
-        spec = toRunSpec(reply.spec, trial.method, b, "solve");
+        spec = applyOverride(
+          toRunSpec(reply.spec, trial.method, b, "solve"),
+          job.resources?.[t.task],
+          job.spec.timeoutMin !== undefined,
+        );
         t.issues = [...t.issues, ...reply.issues];
       } catch (e) {
         return this.skipped(t, "invalid", `solve spec: ${(e as Error).message}`);

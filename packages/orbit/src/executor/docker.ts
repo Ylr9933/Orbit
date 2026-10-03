@@ -69,6 +69,8 @@ export interface ContainerStatus {
   exitCode: number;
   oomKilled: boolean;
   gpuIds: string[];
+  /** Host pid of the container's init process (0 when stopped). */
+  pid: number;
 }
 
 /** Build the `docker run` argument list. Pure, for testing. */
@@ -227,7 +229,7 @@ export async function inspectContainer(idOrName: string): Promise<ContainerStatu
   }
   const [c] = JSON.parse(r.stdout) as {
     Id: string;
-    State: { Running: boolean; ExitCode: number; OOMKilled: boolean };
+    State: { Running: boolean; ExitCode: number; OOMKilled: boolean; Pid: number };
     HostConfig: { DeviceRequests: { DeviceIDs: string[] | null }[] | null };
   }[];
   if (!c) return null;
@@ -236,6 +238,7 @@ export async function inspectContainer(idOrName: string): Promise<ContainerStatu
     running: c.State.Running,
     exitCode: c.State.ExitCode,
     oomKilled: c.State.OOMKilled,
+    pid: c.State.Pid ?? 0,
     // CDI ids look like `nvidia.com/gpu=<UUID>`; `--gpus` ids are bare UUIDs.
     gpuIds: (c.HostConfig.DeviceRequests ?? [])
       .flatMap((d) => d.DeviceIDs ?? [])

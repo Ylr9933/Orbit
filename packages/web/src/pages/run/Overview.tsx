@@ -260,6 +260,21 @@ function Spec({ run }: { run: Run }) {
               </div>
             ) : null}
           </dd>
+          {run.usage && (
+            <>
+              <dt>Measured</dt>
+              <dd>
+                {run.usage.peakMemGB} GB RAM peak · CPU {run.usage.peakCpus} peak /{" "}
+                {run.usage.meanCpus} mean
+                {run.usage.peakGpuMemGB !== null && ` · ${run.usage.peakGpuMemGB} GB GPU peak`}
+                {run.usage.oomKilled ? (
+                  <span className="chip bad"> out of memory</span>
+                ) : run.usage.oomKills ? (
+                  <span className="chip warn"> {run.usage.oomKills} killed for memory</span>
+                ) : null}
+              </dd>
+            </>
+          )}
           <dt>Network</dt>
           <dd>{!s.network ? "disabled" : s.hostNetwork ? "host network" : "enabled"}</dd>
           {s.auth && (

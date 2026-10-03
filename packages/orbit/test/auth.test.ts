@@ -213,6 +213,7 @@ function run(id: string, state: Run["state"], group?: string): Run {
     remote: false,
     origin: null,
     note: "",
+    usage: null,
     createdAt: "2026-01-01T00:00:00Z",
     startedAt: "2026-01-01T00:00:00Z",
     endedAt: "2026-01-01T00:01:05Z",

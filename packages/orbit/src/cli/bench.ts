@@ -8,6 +8,7 @@ import type {
   BenchJobList,
   Benchmark,
   BenchTask,
+  BenchUsage,
   MethodSummary,
 } from "../contracts/index.ts";
 import { kv, type Print } from "./auth.ts";
@@ -58,7 +59,10 @@ function summaryLine(s: MethodSummary): string {
 
 function formatBenchmarks(bs: Benchmark[]): string {
   if (bs.length === 0) return "no benchmarks; add one with `orbit bench add`";
-  return table([["NAME", "ADAPTER", "PATH"], ...bs.map((b) => [b.name, b.adapter, b.path])]);
+  return table([
+    ["NAME", "ADAPTER", "PATH", "RESOURCES"],
+    ...bs.map((b) => [b.name, b.adapter, b.path, b.resources ?? "-"]),
+  ]);
 }
 
 function formatTasks(ts: BenchTask[]): string {
@@ -109,6 +113,56 @@ function formatJob(d: BenchJobDetail): string {
   return [...lines, table(rows)].join("\n");
 }
 
+const gb = (v: number | null | undefined) => (v == null ? "-" : String(v));
+
+function formatUsageTable(u: BenchUsage): string {
+  if (u.rows.length === 0) return "no finished solve runs";
+  const rows = [
+    [
+      "TASK",
+      "RUNS",
+      "MEM GB peak/req",
+      "GPU GB peak/req",
+      "CPU peak/req",
+      "MIN max/limit",
+      "SUGGEST",
+      "NOTES",
+    ],
+  ];
+  for (const r of u.rows) {
+    const q = r.requested;
+    rows.push([
+      r.task,
+      String(r.runs),
+      `${gb(r.peakMemGB)}/${gb(q.memGB)}`,
+      q.gpus ? `${gb(r.peakGpuMemGB)}/${gb(q.gpuMemGB)}` : "-",
+      `${gb(r.peakCpus)}/${gb(q.cpus)}`,
+      `${gb(r.maxMinutes)}/${gb(q.timeoutMin)}`,
+      Object.entries(r.suggest)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(" ") || "-",
+      r.notes.join("; "),
+    ]);
+  }
+  return `${table(rows)}\nSuggestions are not applied: edit the resources file (bench add --resources) yourself.`;
+}
+
+/** Suggested changes as `tasks` entries of a resources file, with the measurements as evidence. */
+export function suggestFragment(u: BenchUsage): { tasks: Record<string, object> } {
+  const tasks: Record<string, object> = {};
+  for (const r of u.rows) {
+    if (Object.keys(r.suggest).length === 0) continue;
+    tasks[r.task] = {
+      ...r.suggest,
+      evidence:
+        `orbit bench usage ${u.jobs.join(" ")}: ${r.runs} run(s), peak memory ${gb(r.peakMemGB)} GB, ` +
+        `peak GPU memory ${gb(r.peakGpuMemGB)} GB, peak CPU ${gb(r.peakCpus)}, longest ${gb(r.maxMinutes)} min` +
+        (r.notes.length ? `; ${r.notes.join("; ")}` : ""),
+    };
+  }
+  return { tasks };
+}
+
 function formatCompare(c: BenchCompare): string {
   const keys = c.columns.map((x) => x.key);
   const rows = [["TASK", ...keys]];
@@ -152,6 +206,10 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
       (v, p: string[]) => [...p, v],
       [],
     )
+    .option(
+      "--resources <file>",
+      "JSON file of per-task solve resources (default + tasks); see the bench adapter guide",
+    )
     .option("--json", "print JSON")
     .action(
       async (
@@ -159,6 +217,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
         path: string,
         o: {
           adapter: string;
+          resources?: string;
           config: string[];
           env: string[];
           passEnv: string[];
@@ -172,6 +231,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
           config: kv(o.config, "--config"),
           env: kv(o.env, "--env"),
           passEnv: o.passEnv,
+          resources: o.resources ? resolve(o.resources) : undefined,
         });
         print(o.json, b, () => `saved ${b.name}: ${b.adapter} ${b.path}`);
       },
@@ -290,6 +350,19 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
     .action(async (id: string) => {
       const j = await (await client()).benchCancel(id);
       console.log(`${j.id} ${j.state}`);
+    });
+
+  bench
+    .command("usage <jobs...>")
+    .description(
+      "measured solve use per task and suggested resources (printed only; edit the resources file yourself)",
+    )
+    .option("--json", "print JSON")
+    .option("--suggest", "print only the suggested changes as a resources-file fragment")
+    .action(async (ids: string[], o: { json?: boolean; suggest?: boolean }) => {
+      const u = await (await client()).benchUsage(ids);
+      if (o.suggest) return console.log(JSON.stringify(suggestFragment(u), null, 2));
+      print(o.json, u, () => formatUsageTable(u));
     });
 
   bench

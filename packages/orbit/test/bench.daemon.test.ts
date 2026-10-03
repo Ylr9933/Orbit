@@ -61,7 +61,7 @@ process.stdin.on("end", () => {
   const node = ${JSON.stringify(process.execPath)};
   if (req.op === "solve") {
     const v = req.trial.method.agent === "oracle" ? "7" : "0";
-    return say({ spec: { backend: "process", command: ["sh", "-c", "echo " + v + " > $ORBIT_OUTPUT/answer"] } });
+    return say({ spec: { backend: "process", resources: { cpus: 1, memGB: 1 }, command: ["sh", "-c", "sleep 0.5; echo " + v + " > $ORBIT_OUTPUT/answer"] } });
   }
   if (req.op === "verify")
     return say({ spec: { backend: "process", command: ["sh", "-c", "cp " + req.solve.output + "/answer $ORBIT_OUTPUT/score"] } });
@@ -92,6 +92,7 @@ beforeAll(async () => {
   daemon = await startDaemon(paths, {
     port: 0,
     tickMs: 100,
+    usageMs: 200,
     self: [process.execPath, fileURLToPath(new URL("../src/bin.ts", import.meta.url))],
     // ASI solve runs lease 8 GB; small CI runners have less, and these runs are tiny fake runners.
     probe: async () => ({
@@ -211,5 +212,42 @@ describe("bench jobs", () => {
       ["oracle", 100],
       ["empty", 0],
     ]);
+  });
+
+  it("applies a resources file to solve runs, records usage and suggests from it", async () => {
+    const adapter = join(home, "adapter.cjs");
+    const res = join(home, "resources.json");
+    writeFileSync(res, JSON.stringify({ version: 1, tasks: { nope: { memGB: 2 } } }));
+    await expect(
+      client.benchmarkPut({ name: "res", adapter, path: home, resources: res }),
+    ).rejects.toThrow(/unknown tasks: nope/);
+    writeFileSync(
+      res,
+      JSON.stringify({
+        version: 1,
+        default: { cpus: 2, memGB: 3, timeoutMin: 5 },
+        tasks: { t1: { memGB: 4, evidence: "measured", confidence: "high" } },
+      }),
+    );
+    await client.benchmarkPut({ name: "res", adapter, path: home, resources: res });
+    const job = await client.benchSubmit({
+      benchmark: "res",
+      methods: [{ name: "oracle", agent: "oracle" }],
+    });
+    expect(job.resources).toEqual({ t1: { cpus: 2, memGB: 4, timeoutMin: 5 } });
+    let d = await client.benchJob(job.id);
+    for (let i = 0; i < 300 && d.job.state === "running"; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      d = await client.benchJob(job.id);
+    }
+    const solve = await client.get(d.trials[0]?.solveRunId ?? "");
+    expect(solve.spec.resources).toMatchObject({ cpus: 2, memGB: 4 });
+    expect(solve.spec.timeoutMin).toBe(5);
+    expect(solve.usage?.peakMemGB).toBeGreaterThan(0);
+    // The verify run keeps the adapter's own resources.
+    const verify = await client.get(d.trials[0]?.verifyRunId ?? "");
+    expect(verify.spec.resources.memGB).not.toBe(4);
+    // Oracle runs say nothing about what a task needs: they are left out of the suggestions.
+    expect((await client.benchUsage([job.id])).rows).toEqual([]);
   });
 });

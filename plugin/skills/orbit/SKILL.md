@@ -27,6 +27,9 @@ Pick the smallest request that fits; runs that cannot get resources **wait in th
 
 Run `orbit resources` first to see free GPUs, their memory, active leases and the queue, on this
 machine and on any worker nodes. State the estimate and its reasoning briefly to the user.
+Every finished run records its measured peak memory, CPU and GPU memory (`usage` in `orbit show`):
+size the next run of the same job from it instead of guessing again. A run killed for memory says
+`out of memory` — raise `--mem` rather than changing the code.
 
 With worker nodes (`orbit node ls`), Orbit places each run on any node that fits: do not pick a node
 yourself unless the user asks (`--node <name>`). Runs that mount a host path (`-m`) stay on this
@@ -72,7 +75,7 @@ orbit ps                    # active runs (queued with the reason, running)
 orbit ps -a -g lr-sweep     # everything in a group
 orbit wait <id>... | -g lr-sweep   # blocks; exit code 1 if any run did not succeed
 orbit logs <id> --tail 4000 # end of the log; -f to follow
-orbit show <id>             # state, exit code, resources, code snapshot, last metric values
+orbit show <id>             # state, exit code, resources and measured usage, code snapshot, metrics
 orbit cancel <id>...
 ```
 
@@ -105,29 +108,15 @@ orbit bench ls && orbit bench tasks <benchmark>          # unsupported tasks sho
 orbit bench run <benchmark> -t <task> -m oracle -m empty -m mine=codex,auth=<profile>,model=<m> -n try
 orbit bench show <job>                                   # per-method means, matrix, issues
 orbit bench compare <job> <job>...                       # all-valid and paired means
+orbit bench usage <job>...                               # measured peaks per task, suggestions
 ```
 
 Each trial is a solve run plus a separate verify run. Only `valid` trials count; read the issues of
 `invalid` ones (environment or scorer failures, unusable model) instead of treating them as zeros.
 Run `oracle` and `empty` first on a new benchmark or task set: oracle should score full, empty zero.
 
-To add a benchmark Orbit does not know, write an adapter executable (any language; do not modify or
-rebuild Orbit) and register it with `orbit bench add <name> <checkout> --adapter /abs/adapter.py
-[-c key=value] [--pass-env JUDGE_KEY]`. Orbit runs `<adapter> tasks|solve|verify|score` in the checkout
-with one JSON request on stdin and expects one JSON reply on stdout (non-zero exit + stderr on error):
-
-- `tasks` → `{"tasks": [{"id", "title", "supported", "reason", "tags"}]}`
-- `solve` (request has `trial.method`, `trial.task`, `trial.staging`) → `{"spec": run}`; for `codex` /
-  `claude-code` methods give `"agentTask": {"instruction": "..."}` instead of `command` — Orbit builds the
-  Agent CLI command, auth and bundle. Never write Agent CLI flags, `auth`, `passEnv` or `name` yourself.
-- `verify` (request adds `solve.output`, the solve run's output dir) → `{"spec": run}`
-- `score` (request adds `verify.output`) → `{"score", "maxScore", "invalid", "issues"}`; `invalid` only
-  when the grader itself failed; "produced nothing" is a valid 0.
-
-`run` uses `orbit run` fields (`image`/`dockerfile`, `resources`, `mounts`, `env`, `workdir`, `collect`,
-`timeoutMin`, `backend: "process"`). Follow `docs/guides/bench-adapter.md` in the Orbit repository;
-`examples/bench-adapters/researchclawbench/` is a complete example. Check with `-m empty` and compare a
-sample against the benchmark's own scorer before real runs.
+To add a benchmark Orbit does not know (write an adapter, a resources file) or to size its tasks
+from measured runs (`orbit bench usage`), use the `orbit-bench` skill.
 
 ## 7. Record conclusions
 

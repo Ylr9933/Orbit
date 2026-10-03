@@ -1,6 +1,7 @@
 // Trial outcome: execution (how the solve run ended), evaluation (whether the score can be trusted)
 // and cleanup are kept apart. Only `valid` outcomes enter means; `unknown` means Orbit cannot tell
-// (cancelled or lost), `invalid` means the environment or verifier failed to produce a real score.
+// (cancelled or lost), `invalid` means the environment or verifier failed to produce a real score,
+// or the solve run was killed for exceeding its memory request.
 import type { Outcome, Run, ScoreResult } from "../contracts/index.ts";
 
 const cleanupOf = (...runs: (Run | null)[]): Outcome["cleanup"] => {
@@ -9,6 +10,9 @@ const cleanupOf = (...runs: (Run | null)[]): Outcome["cleanup"] => {
   if (rs.some((r) => r.cleanup === "pending")) return "pending";
   return "done";
 };
+
+const oomIssue = (r: Run) =>
+  `ran out of memory (limit ${r.spec.resources.memGB} GB, peak ${r.usage?.peakMemGB ?? "?"} GB)`;
 
 const timedOut = (r: Run) => r.state === "failed" && (r.reason ?? "").includes("timeout");
 
@@ -41,6 +45,10 @@ export function classify(
   const base = { execution: solve.state as string, maxScore: score?.maxScore ?? 1 };
   const all = [...issues];
   if (solve.state === "failed" && timedOut(solve)) all.push("solve timed out");
+  // Out of memory is the resource request's fault, not the method's: the score is kept but invalid.
+  const oom = solve.usage?.oomKilled ? oomIssue(solve) : null;
+  if (!oom && solve.usage?.oomKills)
+    all.push(`${solve.usage.oomKills} process(es) in the solve run killed for memory`);
   const out = (
     evaluation: Outcome["evaluation"],
     s: number | null,
@@ -60,7 +68,9 @@ export function classify(
   if (verify.startedAt === null)
     return out("invalid", null, [`verifier environment failed: ${verify.reason ?? "not started"}`]);
   if (timedOut(verify)) return out("invalid", null, ["verify timed out"]);
-  if (!score) return out("invalid", null, ["no score"]);
-  if (score.invalid || score.score === null) return out("invalid", score.score, score.issues);
+  if (verify.usage?.oomKilled) return out("invalid", null, [`verify ${oomIssue(verify)}`]);
+  if (!score) return out("invalid", null, ["no score", ...(oom ? [oom] : [])]);
+  if (score.invalid || score.score === null || oom)
+    return out("invalid", score.score, [...score.issues, ...(oom ? [oom] : [])]);
   return out("valid", score.score, score.issues);
 }

@@ -1,8 +1,9 @@
 # Orbit agent plugin
 
 `skills/orbit/SKILL.md` teaches Codex and Claude Code how to estimate resources, submit runs and
-sweeps, follow them and record conclusions with the `orbit` CLI. The `orbit` command must be on the
-agent's `PATH`.
+sweeps, follow them and record conclusions with the `orbit` CLI. `skills/orbit-bench/SKILL.md`
+teaches them to connect a new benchmark (adapter executable, per-task resources file) and to revise
+task resources from measured runs. The `orbit` command must be on the agent's `PATH`.
 
 ## Claude Code
 
@@ -11,13 +12,13 @@ claude plugin marketplace add /path/to/orbit   # the repository root (.claude-pl
 claude plugin install orbit@orbit
 ```
 
-Or copy/symlink `skills/orbit` to `~/.claude/skills/orbit` (all projects) or
-`<project>/.claude/skills/orbit` (one project).
+Or copy/symlink `skills/orbit` and `skills/orbit-bench` to `~/.claude/skills/` (all projects) or
+`<project>/.claude/skills/` (one project).
 
 ## Codex
 
-Copy or symlink `skills/orbit` to `~/.agents/skills/orbit` (all projects) or
-`<project>/.agents/skills/orbit` (one project). If your Codex version does not load skills, add one
+Copy or symlink `skills/orbit` and `skills/orbit-bench` to `~/.agents/skills/` (all projects) or
+`<project>/.agents/skills/` (one project). If your Codex version does not load skills, add one
 line to the project's `AGENTS.md`: `Run experiments with Orbit; follow .agents/skills/orbit/SKILL.md.`
 
 The `orbit` CLI talks to the local daemon over `127.0.0.1`. Codex's default `workspace-write` sandbox

@@ -8,6 +8,7 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { AuthError, type AuthStore } from "../auth/index.ts";
 import type { BenchmarkRegistry } from "../bench/registry.ts";
+import { loadResources, resolveResources } from "../bench/resources.ts";
 import type { BenchService } from "../bench/service.ts";
 import type { ClusterService } from "../cluster/service.ts";
 import {
@@ -288,8 +289,20 @@ export function createApp(deps: AppDeps): Hono {
         throw new UserError(`adapter is not an executable file: ${input.adapter}`);
       }
     }
-    // Listing the tasks once checks that the adapter answers before it is saved.
-    await bench.tasksOf({ ...BenchmarkInput.parse(input), createdAt: "", updatedAt: "" });
+    // Listing the tasks once checks that the adapter answers (and the resources file fits) first.
+    const tasks = await bench.tasksOf({
+      ...BenchmarkInput.parse(input),
+      createdAt: "",
+      updatedAt: "",
+    });
+    if (input.resources) {
+      try {
+        const ids = tasks.map((t) => t.id);
+        resolveResources(loadResources(input.resources), ids, ids);
+      } catch (e) {
+        throw new UserError((e as Error).message);
+      }
+    }
     return c.json(benchmarks.put(input), 201);
   });
   api.delete("/benchmarks/:name", (c) => {
@@ -303,6 +316,9 @@ export function createApp(deps: AppDeps): Hono {
   api.post("/bench/jobs", async (c) => c.json(await bench.submit(await c.req.json()), 201));
   api.get("/bench/jobs/:id", (c) => c.json(bench.job(c.req.param("id"))));
   api.post("/bench/jobs/:id/cancel", async (c) => c.json(await bench.cancel(c.req.param("id"))));
+  api.get("/bench/usage", (c) =>
+    c.json(bench.usage((c.req.query("jobs") ?? "").split(",").filter(Boolean))),
+  );
   api.get("/bench/compare", (c) =>
     c.json(bench.compare((c.req.query("jobs") ?? "").split(",").filter(Boolean))),
   );

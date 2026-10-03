@@ -82,6 +82,15 @@ function ScoreCell({
   );
 }
 
+/** Solve resources a task ran with when the benchmark has a resources file. */
+function resourceTitle(r: Record<string, number | undefined> | undefined): string | undefined {
+  if (!r) return undefined;
+  const parts = Object.entries(r)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${k}=${v}`);
+  return parts.length ? `solve resources: ${parts.join(", ")}` : undefined;
+}
+
 const CLI_HINT = [
   "orbit bench add tbs /path/to/terminal-bench-science --adapter harbor",
   "orbit bench add mine /path/to/benchmark --adapter /path/to/adapter.py",
@@ -151,6 +160,7 @@ export function BenchJobs() {
                     <th>Name</th>
                     <th>Adapter</th>
                     <th>Path</th>
+                    <th>Resources file</th>
                     <th className="r">Updated</th>
                   </tr>
                 </thead>
@@ -166,6 +176,9 @@ export function BenchJobs() {
                         </span>
                       </td>
                       <td className="mono faint ellipsis">{b.path}</td>
+                      <td className="mono faint ellipsis" title={b.resources}>
+                        {b.resources?.split("/").pop() ?? "—"}
+                      </td>
                       <td className="r faint">{ago(b.updatedAt)}</td>
                     </tr>
                   ))}
@@ -382,7 +395,9 @@ export function BenchJobDetail({ id }: { id: string }) {
                 <tbody>
                   {tasks.map((task) => (
                     <tr key={task}>
-                      <td className="mono">{task}</td>
+                      <td className="mono" title={resourceTitle(job.resources?.[task])}>
+                        {task}
+                      </td>
                       {methods.map((m) => (
                         <td key={m}>
                           <div className="row" style={{ gap: 4, justifyContent: "center" }}>

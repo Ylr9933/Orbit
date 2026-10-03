@@ -16,6 +16,7 @@ import {
   type BenchmarkInput,
   BenchmarkList,
   BenchTaskList,
+  BenchUsage,
   CodeDiff,
   Dataset,
   type DatasetInput,
@@ -155,6 +156,8 @@ export class OrbitClient {
     );
   benchSubmit = (spec: BenchJobSpecInput) =>
     this.call(BenchJob, "/bench/jobs", { method: "POST", body: spec, timeoutMs: 600_000 });
+  benchUsage = (ids: string[]) =>
+    this.call(BenchUsage, `/bench/usage?jobs=${ids.map(enc).join(",")}`);
   benchJobs = (limit = 200) =>
     this.call(BenchJobList, `/bench/jobs?limit=${limit}`).then((r) => r.jobs);
   benchJob = (id: string) => this.call(BenchJobDetail, `/bench/jobs/${enc(id)}`);

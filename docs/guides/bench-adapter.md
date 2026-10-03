@@ -1,6 +1,6 @@
 # 接入新 benchmark
 
-适用版本：`feat/bench-adapter-protocol`。模型、判定规则与协议定义见 [design §7](../design.md#7-刷榜bench)。
+适用版本：`refactor/ts-rewrite`（adapter 协议、资源文件、实测用量）。Agent 用的 skill：`plugin/skills/orbit-bench`。模型、判定规则与协议定义见 [design §7](../design.md#7-刷榜bench)。
 
 ## 1. 先选路线
 
@@ -80,7 +80,57 @@ orbit logs <solve 或 verify run>
 也可以手工喂请求：`echo '{"protocol":1,"op":"tasks","benchmark":{"name":"x","path":"/p","config":{}}}' | ./adapter.py tasks`。
 修改适配器后不需要重新登记（除非改了 `config`）。
 
-## 4. 接入验收
+## 4. 任务资源文件
+
+不同任务需要的资源差别很大（有的要 GPU 训练，有的只做表格分析）。不要在适配器里硬编码，也不要每次让 Agent
+临时估算：把每个任务的 solve 资源写进一个 JSON 文件，放在 benchmark 仓库里（如 `<benchmark>/orbit/resources.json`，
+用 git 管理），登记时指定：
+
+```bash
+orbit bench add rcb /path/to/ResearchClawBench --adapter .../adapter.py --resources /path/to/ResearchClawBench/orbit/resources.json
+```
+
+```json
+{
+  "version": 1,
+  "default": { "cpus": 4, "memGB": 16, "gpus": 0, "timeoutMin": 240 },
+  "tasks": {
+    "Material_002": {
+      "gpus": 1, "gpuMemGB": 12, "memGB": 32, "timeoutMin": 360,
+      "evidence": "3 次运行都在 CUDA 上训练 GNN；内存峰值 21 GB；最长 3.9 h",
+      "confidence": "medium"
+    }
+  }
+}
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `gpus` | GPU 数（整卡独占）。只有确实要在 GPU 上训练 / 推理、CPU 跑不完时才设 1 |
+| `gpuMemGB` | 显卡至少要有的显存（按卡的总显存筛选，多种卡型时才有区别） |
+| `memGB` | 内存，同时是容器的硬上限；超了会被 OOM 杀掉，宁多勿少 |
+| `cpus` | CPU 核数；少了只会慢 |
+| `timeoutMin` | solve 超时；`orbit bench run --timeout` 优先 |
+| `evidence` / `confidence` / `note` | 给人看的依据，Orbit 忽略 |
+
+- 只覆盖 solve Run；优先级：任务条目 > `default` > 适配器给的值。只写和默认不同的任务、不同的字段。
+- 字段名写错、任务 id 不存在都会在登记 / 提交时报错。提交时解析结果存进 job（`orbit bench show` 的任务、Web 矩阵中
+  任务名悬停可见），之后改文件只影响新 job，改完不用重新登记。
+- Orbit 从不修改这个文件。
+
+**用实测修正**：每个 Run 都会记录实测峰值（`orbit show` 的 `usage`，Web Run 详情的 Measured）。用真实 Agent 方法跑过
+之后：
+
+```bash
+orbit bench usage <job>...            # 每个任务：峰值 / 申请、最长耗时、OOM、建议、说明
+orbit bench usage <job>... --suggest  # 只输出建议改动，资源文件片段格式（带 evidence）
+```
+
+建议规则：内存 / 显存 = 峰值 × 1.2 向上取档，OOM 后至少升一档，至少两次运行且余量过半才建议调低；CPU 取峰值档位；
+超时 = 最长耗时 × 1.5 取整小时。GPU 数量不给建议（这次没用 GPU 可能只是 Agent 没选择训练）。建议只打印，由人或
+其 Agent 合并进资源文件。solve 因内存不足被杀的 trial 记为 invalid（不当作方法的 0 分），调大 `memGB` 后重跑这些任务。
+
+## 5. 接入验收
 
 每个新 benchmark（包括 Harbor 路线的新任务集）都要有这三项证据，写进任务记录：
 

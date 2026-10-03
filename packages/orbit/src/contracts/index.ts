@@ -288,6 +288,22 @@ export const Lease = z.object({
 });
 export type Lease = z.infer<typeof Lease>;
 
+/** Measured resource use of a run, sampled while it runs (null before the first sample). */
+export const RunUsage = z.object({
+  samples: z.number().int(),
+  /** Peak memory: container cgroup peak; process runs: RSS of the group plus child containers. */
+  peakMemGB: z.number(),
+  peakCpus: z.number(),
+  meanCpus: z.number(),
+  /** Peak GPU memory summed over the leased GPUs (null without GPUs or nvidia-smi). */
+  peakGpuMemGB: z.number().nullable(),
+  /** Processes the kernel killed for memory inside the run (the run may have continued). */
+  oomKills: z.number().int().default(0),
+  /** The run itself ended because it ran out of memory. */
+  oomKilled: z.boolean().default(false),
+});
+export type RunUsage = z.infer<typeof RunUsage>;
+
 export const Run = z.object({
   id: z.string(),
   spec: RunSpec,
@@ -308,6 +324,7 @@ export const Run = z.object({
   /** On a worker: the primary node that submitted the run. */
   origin: z.string().nullable().default(null),
   note: z.string(),
+  usage: RunUsage.nullable().default(null),
   createdAt: z.string(),
   startedAt: z.string().nullable(),
   endedAt: z.string().nullable(),
@@ -490,6 +507,11 @@ export const BenchmarkInput = z.object({
   env: z.record(EnvName, z.string()).default({}),
   /** Variables copied from the daemon environment into verify runs (judge API keys); never stored. */
   passEnv: z.array(EnvName).default([]),
+  /** Absolute path of a resources file (`BenchResources`) overriding the solve resources per task. */
+  resources: z
+    .string()
+    .refine((p) => p.startsWith("/"), "resources must be an absolute path")
+    .optional(),
 });
 export type BenchmarkInput = z.input<typeof BenchmarkInput>;
 export const Benchmark = BenchmarkInput.extend({ createdAt: z.string(), updatedAt: z.string() });
@@ -577,9 +599,46 @@ export const Trial = z.object({
 });
 export type Trial = z.infer<typeof Trial>;
 
+/** Solve resources of one task; `evidence` / `confidence` / `note` are for people and ignored. */
+export const TaskResources = z.strictObject({
+  cpus: z.number().positive().optional(),
+  memGB: z.number().positive().optional(),
+  gpus: z.number().int().min(0).optional(),
+  gpuMemGB: z.number().positive().optional(),
+  timeoutMin: z.number().positive().optional(),
+  evidence: z.string().optional(),
+  confidence: z.string().optional(),
+  note: z.string().optional(),
+});
+export type TaskResources = z.infer<typeof TaskResources>;
+
+/**
+ * A benchmark's resources file: `default` and per-task entries override what the adapter asks for
+ * the solve run (a task entry over `default` over the adapter; `orbit bench run --timeout` wins).
+ */
+export const BenchResources = z.strictObject({
+  version: z.literal(1),
+  note: z.string().optional(),
+  default: TaskResources.default({}),
+  tasks: z.record(z.string(), TaskResources).default({}),
+});
+export type BenchResources = z.infer<typeof BenchResources>;
+
+/** Resolved overrides for one task (the fields Orbit applies). */
+export const ResourceOverride = TaskResources.pick({
+  cpus: true,
+  memGB: true,
+  gpus: true,
+  gpuMemGB: true,
+  timeoutMin: true,
+});
+export type ResourceOverride = z.infer<typeof ResourceOverride>;
+
 export const BenchJob = z.object({
   id: z.string(),
   spec: BenchJobSpec,
+  /** Per-task overrides read from the benchmark's resources file at submit (null without one). */
+  resources: z.record(z.string(), ResourceOverride).nullable().default(null),
   state: z.enum(["running", "done", "cancelled"]),
   createdAt: z.string(),
   endedAt: z.string().nullable(),
@@ -725,3 +784,27 @@ export const ScoreResult = z.object({
   issues: z.array(z.string()).default([]),
 });
 export type ScoreResult = z.infer<typeof ScoreResult>;
+
+/** Measured solve use per task over one or more jobs, with a suggested resources entry. */
+export const BenchUsageRow = z.object({
+  task: z.string(),
+  /** Solve runs with usage samples. */
+  runs: z.number().int(),
+  requested: ResourceOverride,
+  peakMemGB: z.number().nullable(),
+  peakGpuMemGB: z.number().nullable(),
+  peakCpus: z.number().nullable(),
+  meanCpus: z.number().nullable(),
+  /** Longest solve run, in minutes. */
+  maxMinutes: z.number().nullable(),
+  /** Runs that ended out of memory / had processes killed for memory / timed out. */
+  oomKilled: z.number().int(),
+  oomKills: z.number().int(),
+  timeouts: z.number().int(),
+  /** Fields worth changing (empty when the request fits), and why. */
+  suggest: ResourceOverride,
+  notes: z.array(z.string()),
+});
+export type BenchUsageRow = z.infer<typeof BenchUsageRow>;
+export const BenchUsage = z.object({ jobs: z.array(z.string()), rows: z.array(BenchUsageRow) });
+export type BenchUsage = z.infer<typeof BenchUsage>;

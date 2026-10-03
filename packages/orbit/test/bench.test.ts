@@ -14,6 +14,13 @@ import {
   parseArtifacts,
 } from "../src/bench/harbor.ts";
 import { AdapterClient, callAdapter, toRunSpec } from "../src/bench/protocol.ts";
+import {
+  applyOverride,
+  loadResources,
+  resolveResources,
+  taskOverride,
+  usageRow,
+} from "../src/bench/resources.ts";
 import { compareJobs, summarize } from "../src/bench/service.ts";
 import { parseMethod } from "../src/cli/bench.ts";
 import {
@@ -505,6 +512,107 @@ describe("outcome classification", () => {
       cleanup: "failed",
     });
     expect(classify(run({}), null, null).evaluation).toBe("unknown");
+  });
+
+  it("makes an out-of-memory solve invalid and notes memory kills of a surviving run", () => {
+    const usage = {
+      samples: 3,
+      peakMemGB: 15.9,
+      peakCpus: 2,
+      meanCpus: 1,
+      peakGpuMemGB: null,
+      oomKills: 1,
+      oomKilled: true,
+    };
+    const spec = { resources: { memGB: 16 } } as Run["spec"];
+    const oom = classify(run({ state: "failed", spec, usage }), run({}), { ...score, score: 0 });
+    expect(oom).toMatchObject({ evaluation: "invalid", score: 0 });
+    expect(oom.issues).toEqual(["ran out of memory (limit 16 GB, peak 15.9 GB)"]);
+    const survived = classify(run({ spec, usage: { ...usage, oomKilled: false } }), run({}), score);
+    expect(survived).toMatchObject({ evaluation: "valid" });
+    expect(survived.issues).toEqual(["1 process(es) in the solve run killed for memory"]);
+  });
+});
+
+describe("resources file", () => {
+  const file = join(tmp, "resources.json");
+  const doc = {
+    version: 1,
+    default: { cpus: 4, memGB: 16, gpus: 0, timeoutMin: 240 },
+    tasks: {
+      big: { gpus: 1, gpuMemGB: 12, memGB: 32, evidence: "trains a GNN", confidence: "high" },
+    },
+  };
+
+  it("validates, merges task over default and drops the human-only fields", () => {
+    write(file, JSON.stringify(doc));
+    const r = loadResources(file);
+    expect(taskOverride(r, "big")).toEqual({
+      cpus: 4,
+      memGB: 32,
+      gpus: 1,
+      gpuMemGB: 12,
+      timeoutMin: 240,
+    });
+    expect(taskOverride(r, "small")).toEqual({ cpus: 4, memGB: 16, gpus: 0, timeoutMin: 240 });
+    expect(() => resolveResources(r, ["small"], ["small"])).toThrow(/unknown tasks: big/);
+    write(file, JSON.stringify({ ...doc, tasks: { big: { memGb: 32 } } }));
+    expect(() => loadResources(file)).toThrow(/tasks\.big: .*memGb/);
+    write(file, "{");
+    expect(() => loadResources(file)).toThrow(/resources file/);
+  });
+
+  it("overrides the adapter's solve resources; --timeout keeps the timeout", () => {
+    const spec = {
+      image: "x",
+      command: ["true"],
+      resources: { cpus: 8, memGB: 32 },
+      timeoutMin: 60,
+    };
+    const o = { cpus: 4, memGB: 16, gpus: 1, timeoutMin: 240 };
+    expect(applyOverride(spec, o, false)).toMatchObject({
+      resources: { cpus: 4, memGB: 16, gpus: 1 },
+      timeoutMin: 240,
+    });
+    expect(applyOverride(spec, o, true).timeoutMin).toBe(60);
+    expect(applyOverride(spec, undefined, false)).toBe(spec);
+  });
+
+  it("suggests from measured peaks with headroom, after OOMs and timeouts, never GPUs", () => {
+    const req = { cpus: 4, memGB: 16, gpus: 1, gpuMemGB: 8, timeoutMin: 60 };
+    const measured = (u: Partial<NonNullable<Run["usage"]>>, p: Partial<Run> = {}) =>
+      run({
+        startedAt: "2026-01-01T00:00:00Z",
+        endedAt: "2026-01-01T01:00:00Z",
+        usage: {
+          samples: 5,
+          peakMemGB: 14,
+          peakCpus: 6.5,
+          meanCpus: 1,
+          peakGpuMemGB: 9,
+          oomKills: 0,
+          oomKilled: false,
+          ...u,
+        },
+        ...p,
+      });
+    const row = usageRow("t", req, [measured({}), measured({ peakMemGB: 10 })]);
+    expect(row).toMatchObject({ runs: 2, peakMemGB: 14, maxMinutes: 60 });
+    expect(row.suggest).toEqual({ memGB: 24, gpuMemGB: 12, cpus: 8, timeoutMin: 120 });
+    const oom = usageRow("t", { ...req, memGB: 48 }, [measured({ peakMemGB: 2, oomKilled: true })]);
+    expect(oom.suggest.memGB).toBe(64);
+    expect(oom.notes[0]).toMatch(/killed for memory/);
+    const quiet = measured({ peakMemGB: 3, peakGpuMemGB: 0.1 });
+    expect(usageRow("t", { ...req, memGB: 64 }, [quiet]).suggest.memGB).toBeUndefined();
+    const small = usageRow("t", { ...req, memGB: 64 }, [quiet, quiet]);
+    expect(small.suggest.memGB).toBe(4);
+    expect(small.notes.join()).toMatch(/hardly used/);
+    expect(small.suggest).not.toHaveProperty("gpus");
+    const timeout = usageRow("t", req, [
+      measured({}, { state: "failed", reason: "timeout after 60 min" }),
+    ]);
+    expect(timeout.suggest.timeoutMin).toBe(120);
+    expect(usageRow("t", req, [run({})]).notes).toEqual(["no measured runs"]);
   });
 });
 

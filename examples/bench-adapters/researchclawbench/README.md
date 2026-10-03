@@ -9,6 +9,7 @@ judge.
 # judge credentials from the daemon environment (or -c dotenv=1 to read evaluation/.env)
 orbit bench add rcb /path/to/ResearchClawBench \
   --adapter /path/to/examples/bench-adapters/researchclawbench/adapter.py \
+  --resources /path/to/ResearchClawBench/orbit/resources.json \
   --pass-env OPENAI_API_KEY --pass-env OPENAI_BASE_URL --pass-env SCORER_MODEL
 orbit bench tasks rcb
 orbit bench run rcb -t Astronomy_000 -m empty -n smoke
@@ -25,4 +26,6 @@ orbit bench run rcb -t Astronomy_000 -m gpt=codex,auth=<profile>,model=<model>,b
   valid 0; a failed judge call or a judge error makes the trial invalid. There is no reference
   solution, so `oracle` is refused.
 
-Settings (`-c KEY=VALUE`) are listed at the top of `adapter.py`.
+Settings (`-c KEY=VALUE`) are listed at the top of `adapter.py`. Per-task solve resources come from
+the resources file (`--resources`; see the bench adapter guide); `-c cpus/memGB/gpus/timeoutMin` only
+set the adapter's own defaults for tasks the file does not cover.
