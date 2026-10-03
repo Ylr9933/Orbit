@@ -27,6 +27,7 @@ import {
   type NodeStatus,
   type NotifyTarget,
   type Run,
+  type RunSessions,
   RunState,
 } from "../contracts/index.ts";
 import { sameSecret, tokenMatches } from "../lib/tokens.ts";
@@ -41,7 +42,7 @@ import {
   readMetrics,
 } from "../records/index.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
-import { loadTranscript } from "../sessions/index.ts";
+import { loadRunAgentTranscript, loadTranscript } from "../sessions/index.ts";
 import type { DatasetRegistry } from "../workspace/datasets.ts";
 import { runDoctor } from "./doctor.ts";
 
@@ -203,9 +204,15 @@ export function createApp(deps: AppDeps): Hono {
 
   api.get("/runs/:id/session", async (c) => {
     const run = must(runs.get(c.req.param("id")));
-    if (!run.spec.agent) return c.json({ error: "run has no linked agent session" }, 404);
-    const t = await loadTranscript(run.spec.agent);
-    return t ? c.json(t) : c.json({ error: "session transcript not found on this node" }, 404);
+    const submitter = run.spec.agent ? await loadTranscript(run.spec.agent) : null;
+    // A run executed on a worker keeps its Agent home there: only local runs have one here.
+    const agent = run.remote ? null : await loadRunAgentTranscript(runs.dirs(run.id).agent);
+    return c.json<RunSessions>({
+      submitter,
+      submitterError:
+        run.spec.agent && !submitter ? "session transcript not found on this node" : null,
+      agent,
+    });
   });
 
   // Cluster: worker nodes this node places runs on, and this node's own listener for a primary.

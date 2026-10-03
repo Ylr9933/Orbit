@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   codexOutputText,
   findClaudeSession,
   findCodexSession,
+  loadRunAgentTranscript,
   loadTranscript,
   parseClaude,
   parseCodex,
@@ -115,5 +116,41 @@ describe("codex transcripts", () => {
       text: JSON.stringify({ chunk_id: "c", exit_code: 0, output: "[]" }),
     };
     expect(codexOutputText([bare])).toBe("[]");
+  });
+});
+
+describe("sessions of the Agent inside a run", () => {
+  it("loads the newest Codex or Claude Code transcript from the run's Agent home", async () => {
+    const agent = join(root, "run-agent");
+    expect(await loadRunAgentTranscript(agent)).toBeNull();
+    const codexDir = join(agent, "codex", "sessions", "2026", "10", "03");
+    mkdirSync(codexDir, { recursive: true });
+    const id = "01a100f0-5e45-7542-badf-61943b49d4bf";
+    const f = join(codexDir, `rollout-2026-10-03T08-45-24-${id}.jsonl`);
+    writeFileSync(
+      f,
+      jl([
+        { type: "session_meta", payload: { id, cwd: "/task" } },
+        {
+          type: "response_item",
+          payload: { type: "message", role: "user", content: [{ type: "input_text", text: "go" }] },
+        },
+      ]),
+    );
+    const t = await loadRunAgentTranscript(agent);
+    expect(t).toMatchObject({ harness: "codex", sessionId: id, file: f });
+    expect(t?.messages.map((m) => m.text)).toEqual(["go"]);
+
+    // Claude Code: <home>/projects/<escaped cwd>/<id>.jsonl; subagent transcripts are skipped.
+    const proj = join(agent, "claude", "projects", "-task");
+    mkdirSync(join(proj, "subagents"), { recursive: true });
+    const row = { type: "user", timestamp: "t", message: { content: "hello" } };
+    writeFileSync(join(proj, "subagents", "agent-x.jsonl"), jl([row]));
+    rmSync(join(agent, "codex"), { recursive: true });
+    writeFileSync(join(proj, "abc-def-123456.jsonl"), jl([row]));
+    expect(await loadRunAgentTranscript(agent)).toMatchObject({
+      harness: "claude-code",
+      sessionId: "abc-def-123456",
+    });
   });
 });

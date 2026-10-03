@@ -390,6 +390,17 @@ export const SessionTranscript = z.object({
   messages: z.array(SessionMessage),
 });
 export type SessionTranscript = z.infer<typeof SessionTranscript>;
+/**
+ * The sessions of a run: `submitter` is the host Agent session that submitted it (`spec.agent`),
+ * `agent` the session of an Agent that ran inside it (kept in the run directory).
+ */
+export const RunSessions = z.object({
+  submitter: SessionTranscript.nullable(),
+  /** Why the submitter's transcript is missing although the run is linked to one. */
+  submitterError: z.string().nullable(),
+  agent: SessionTranscript.nullable(),
+});
+export type RunSessions = z.infer<typeof RunSessions>;
 
 // ---- R4: multi-node ----
 

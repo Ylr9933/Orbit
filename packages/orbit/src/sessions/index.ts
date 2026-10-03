@@ -287,3 +287,53 @@ export async function loadTranscript(
     messages: messages.slice(-MAX_MESSAGES),
   };
 }
+
+/** All `.jsonl` files below `dir` (depth-limited), newest first. */
+async function jsonlBelow(dir: string, depth: number): Promise<{ file: string; mtime: number }[]> {
+  const out: { file: string; mtime: number }[] = [];
+  const walk = async (d: string, left: number) => {
+    const entries = await readdir(d, { withFileTypes: true }).catch(() => []);
+    for (const e of entries) {
+      const p = join(d, e.name);
+      // Claude Code keeps subagent transcripts in their own directories: not the main session.
+      if (e.isDirectory() && left > 0 && e.name !== "subagents") await walk(p, left - 1);
+      else if (e.isFile() && e.name.endsWith(".jsonl"))
+        out.push({ file: p, mtime: (await stat(p).catch(() => null))?.mtimeMs ?? 0 });
+    }
+  };
+  await walk(dir, depth);
+  return out.sort((a, b) => b.mtime - a.mtime);
+}
+
+/**
+ * The session of an Agent that ran inside the run (its home is kept in the run directory as
+ * `<agentDir>/codex` or `<agentDir>/claude`): the most recently written transcript.
+ */
+export async function loadRunAgentTranscript(agentDir: string): Promise<SessionTranscript | null> {
+  const candidates = [
+    ...(await jsonlBelow(join(agentDir, "codex", "sessions"), 4)).map((f) => ({
+      ...f,
+      harness: "codex",
+    })),
+    ...(await jsonlBelow(join(agentDir, "claude", "projects"), 2)).map((f) => ({
+      ...f,
+      harness: "claude-code",
+    })),
+  ].sort((a, b) => b.mtime - a.mtime);
+  const hit = candidates[0];
+  if (!hit) return null;
+  const messages =
+    hit.harness === "codex" ? await parseCodex(hit.file) : await parseClaude(hit.file);
+  const base =
+    hit.file
+      .split("/")
+      .pop()
+      ?.replace(/\.jsonl$/, "") ?? "";
+  const id = /([0-9a-f]{8}-[0-9a-f-]{27,})$/i.exec(base)?.[1] ?? base;
+  return {
+    harness: hit.harness,
+    sessionId: id,
+    file: hit.file,
+    messages: messages.slice(-MAX_MESSAGES),
+  };
+}

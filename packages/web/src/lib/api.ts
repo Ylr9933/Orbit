@@ -17,7 +17,7 @@ import type {
   NotifyTarget,
   Run,
   RunEvent,
-  SessionTranscript,
+  RunSessions,
 } from "@zjunlp/orbit/contracts";
 
 export type {
@@ -42,6 +42,7 @@ export type {
   Outcome,
   Run,
   RunEvent,
+  RunSessions,
   RunState,
   SessionMessage,
   SessionTranscript,
@@ -93,7 +94,7 @@ export const api = {
   metrics: (id: string) => req<Metrics>(`/runs/${enc(id)}/metrics`),
   artifacts: (id: string) => req<Artifacts>(`/runs/${enc(id)}/artifacts`),
   diff: (id: string) => req<{ patch: string; truncated: boolean }>(`/runs/${enc(id)}/diff`),
-  session: (id: string) => req<SessionTranscript>(`/runs/${enc(id)}/session`),
+  session: (id: string) => req<RunSessions>(`/runs/${enc(id)}/session`),
   ledger: () => req<Ledger>("/ledger"),
   doctor: () => req<DoctorReport>("/doctor"),
   authProfiles: () => req<{ profiles: AuthProfile[] }>("/auth").then((r) => r.profiles),

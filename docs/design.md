@@ -146,6 +146,10 @@ NVIDIA spec 时），否则 `--gpus device=<UUID>`；启动后核对 `nvidia-smi
 `CLAUDE_CODE_SESSION_ID` / `CODEX_THREAD_ID`；Codex 无 ID 时按 cwd 找最近的会话文件。daemon 读取
 `~/.claude/projects/**/<id>.jsonl` 或 `~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`，
 归一为 `SessionMessage`（text / thinking / tool_call / tool_result），Web 标出提交该 Run 的那一步。
+Run 内运行的 Agent（auth profile、bench solve）的会话随 Agent home 留在 Run 目录（`orbit/agent/{codex,claude}`），
+取其中最新的会话文件（跳过 Claude 的 subagents）。`GET runs/:id/session` 返回 `RunSessions { submitter,
+submitterError, agent }`；Web Session 页两种都有时左右两栏（左提交者、右 Run 内 Agent），只有一种时单独显示
+（带提示列表与侧栏）。远端 Run 的 Agent 会话留在 worker 上，主节点不显示。
 
 **失败也要保留证据**：任何终态都先采集日志与 `$ORBIT_OUTPUT`，再清理容器；日志读到 EOF，截断必须标记。
 
@@ -174,7 +178,7 @@ Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行�
 - **Runs**：按 group 折叠、状态筛选、全文过滤（名称/参数/标签/分支），多选对比，键盘导航。
 - **Run 详情**：Overview（生命周期时间线、清理核对、笔记、指标迷你图、日志尾）、Logs（虚拟列表、ANSI、
   搜索、跟随）、Metrics（uPlot，平滑、同步十字线）、Artifacts、Code（相对快照 commit 的 diff）、
-  Session（Agent 轨迹，标出提交点）、Events。
+  Session（提交者会话标出提交点，与 Run 内 Agent 会话并排）、Events。
 - **Compare**：`?ids=` / `?group=`，按 seed 聚合 mean ± std、相对基线的变化、曲线叠加、配置差异。
 - **Resources**：GPU 卡片（Orbit 租约 / 外部占用 / 空闲、显存与利用率）、租约与队列、worker 节点表（§8）。
 - **Bench**：job 列表、job 详情（分数矩阵）、方法对比（§7）。

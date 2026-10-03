@@ -48,6 +48,19 @@ separate `orbit-bench` skill.
 | RCB with the user's resources.json, `empty` | same | passed | Chemistry_000 got 1 GPU / 4 CPU / 32 GB / 300 min, Astronomy_000 default 0 / 4 / 16 / 240; both valid 0; `bench usage` skips empty |
 | Agent-method `bench usage` on real runs | — | not_run | no auth profile on this machine |
 
+## Follow-up: in-run Agent sessions
+
+- `RunSessions { submitter, submitterError, agent }` from `GET runs/:id/session`; `agent` is the newest
+  transcript in the run's Agent home (`orbit/agent/codex/sessions`, `orbit/agent/claude/projects`,
+  Claude subagents skipped); remote runs have none on the primary.
+- Web Session tab: both → two panes (submitter left, in-run Agent right); one → that one full width.
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| `pnpm verify` | passed | + test for finding Codex / Claude transcripts in a run's Agent home |
+| Real auth-test run | passed | container Codex session parsed: 6 messages ending `ORBIT_AUTH_OK` |
+| Browser (headless Chromium, test daemon) | passed | both → 2 panes; agent only → full; submitter only → full with "Where this run was submitted"; linked but missing submitter + agent → agent |
+
 ## Next / open issues
 
 - Requests and limits are the same value (no oversubscription); Agent solves are mostly idle.

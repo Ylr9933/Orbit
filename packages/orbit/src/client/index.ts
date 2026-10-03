@@ -35,9 +35,9 @@ import {
   Run,
   RunEvents,
   RunList,
+  RunSessions,
   type RunSpecInput,
   type RunState,
-  SessionTranscript,
 } from "../contracts/index.ts";
 
 const Ok = z.object({ ok: z.boolean() });
@@ -106,7 +106,7 @@ export class OrbitClient {
   metrics = (id: string) => this.call(Metrics, `/runs/${enc(id)}/metrics`);
   artifacts = (id: string) => this.call(Artifacts, `/runs/${enc(id)}/artifacts`);
   diff = (id: string) => this.call(CodeDiff, `/runs/${enc(id)}/diff`);
-  session = (id: string) => this.call(SessionTranscript, `/runs/${enc(id)}/session`);
+  session = (id: string) => this.call(RunSessions, `/runs/${enc(id)}/session`);
 
   authList = () =>
     this.call(z.object({ profiles: z.array(AuthProfile) }), "/auth").then((r) => r.profiles);
