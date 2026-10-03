@@ -145,11 +145,14 @@ export class OrbitClient {
 
   benchmarks = () => this.call(BenchmarkList, "/benchmarks").then((r) => r.benchmarks);
   benchmarkPut = (b: BenchmarkInput) =>
-    this.call(Benchmark, "/benchmarks", { method: "POST", body: b });
+    // Registration lists the tasks through the adapter (up to its 120 s limit).
+    this.call(Benchmark, "/benchmarks", { method: "POST", body: b, timeoutMs: 180_000 });
   benchmarkRemove = (name: string) =>
     this.call(Ok, `/benchmarks/${enc(name)}`, { method: "DELETE" });
   benchTasks = (name: string) =>
-    this.call(BenchTaskList, `/benchmarks/${enc(name)}/tasks`).then((r) => r.tasks);
+    this.call(BenchTaskList, `/benchmarks/${enc(name)}/tasks`, { timeoutMs: 180_000 }).then(
+      (r) => r.tasks,
+    );
   benchSubmit = (spec: BenchJobSpecInput) =>
     this.call(BenchJob, "/bench/jobs", { method: "POST", body: spec, timeoutMs: 600_000 });
   benchJobs = (limit = 200) =>

@@ -3,8 +3,12 @@
 // shim), the verify run is `asibench score` against the public references.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Benchmark, BenchTask, Method, RunSpecInput } from "../contracts/index.ts";
-import type { Adapter, ScoreResult, TrialContext } from "./adapter.ts";
+import type { AdapterRequest, BenchTask, Method } from "../contracts/index.ts";
+import type { AdapterHandlers, RunDescription, ScoreReply, TrialRequest } from "./adapter.ts";
+
+/** The registered benchmark as the adapter sees it; `config.python`, `config.instances`. */
+type Bench = AdapterRequest["benchmark"];
+type Trial = TrialRequest["trial"];
 
 export const ASI_SEED_SUFFIX = "__seed31415";
 export const PROMPT_LEVELS = ["b1", "b2", "b3", "b4"];
@@ -62,11 +66,11 @@ export function parseTaskMeta(text: string): AsiTaskMeta {
   return meta;
 }
 
-export const instancesDir = (b: Benchmark) =>
-  b.instances ?? join(b.path, "bench_runs", "instances_seed31415");
+export const instancesDir = (b: Bench) =>
+  b.config.instances ?? join(b.path, "bench_runs", "instances_seed31415");
 
 /** Task catalogue: `tasks/<domain>/<name>/task_meta.yaml`, indexed by id. */
-function taskCatalog(b: Benchmark): Map<string, AsiTaskMeta> {
+function taskCatalog(b: Bench): Map<string, AsiTaskMeta> {
   const out = new Map<string, AsiTaskMeta>();
   const root = join(b.path, "tasks");
   const ls = (d: string) => {
@@ -86,13 +90,13 @@ function taskCatalog(b: Benchmark): Map<string, AsiTaskMeta> {
   return out;
 }
 
-function taskMeta(b: Benchmark, id: string): AsiTaskMeta {
+function taskMeta(b: Bench, id: string): AsiTaskMeta {
   const m = taskCatalog(b).get(id);
   if (!m) throw new Error(`ASI task not found: ${id}`);
   return m;
 }
 
-function listTasks(b: Benchmark): BenchTask[] {
+function listTasks(b: Bench): BenchTask[] {
   const catalog = taskCatalog(b);
   let names: string[] = [];
   try {
@@ -158,16 +162,15 @@ const withOutput = (flag: string, sub: string, argv: string[]) => [
   ...argv,
 ];
 
-function baseEnv(b: Benchmark): Record<string, string> {
-  return { ...b.env, PYTHONPATH: b.path, PYTHONDONTWRITEBYTECODE: "1" };
+function baseEnv(b: Bench): Record<string, string> {
+  return { PYTHONPATH: b.path, PYTHONDONTWRITEBYTECODE: "1" };
 }
 
-function asiCli(b: Benchmark): string[] {
-  return [b.python ?? "python3", "-m", "ai4sci_bench.cli"];
+function asiCli(b: Bench): string[] {
+  return [b.config.python ?? "python3", "-m", "ai4sci_bench.cli"];
 }
 
-export function asiSolveSpec(ctx: TrialContext & { hostNetwork?: boolean }): RunSpecInput {
-  const b = ctx.benchmark;
+export function asiSolveSpec(b: Bench, ctx: Trial): RunDescription {
   const meta = taskMeta(b, ctx.task);
   const level = ctx.options.promptLevel ?? "b1";
   if (!PROMPT_LEVELS.includes(level)) throw new Error(`unknown ASI prompt level: ${level}`);
@@ -200,9 +203,6 @@ export function asiSolveSpec(ctx: TrialContext & { hostNetwork?: boolean }): Run
     command: withOutput("--output-dir", "native", argv),
     resources: { gpus: meta.requiresGpu ? 1 : 0, cpus: 2, memGB: 8 },
     env,
-    auth: m.auth,
-    agentBundle: m.bundle,
-    snapshot: false,
     // The runner's own timeout ends the agent; this bounds the whole wrapper.
     timeoutMin: ctx.timeoutMin ? ctx.timeoutMin + 15 : undefined,
   };
@@ -221,8 +221,7 @@ const PREPARE_RESULTS =
   '[ -e "$f" ] && mkdir -p "${f%.json}.outputs"; done; ' +
   'exec "$@" --results-dir "$r" --output "$ORBIT_OUTPUT/score.json"';
 
-export function asiVerifySpec(ctx: TrialContext, solveOutput: string): RunSpecInput {
-  const b = ctx.benchmark;
+export function asiVerifySpec(b: Bench, solveOutput: string): RunDescription {
   return {
     backend: "process",
     command: [
@@ -242,9 +241,6 @@ export function asiVerifySpec(ctx: TrialContext, solveOutput: string): RunSpecIn
     ],
     resources: { gpus: 0, cpus: 1, memGB: 4 },
     env: baseEnv(b),
-    passEnv: b.passEnv,
-    snapshot: false,
-    priority: 1,
     timeoutMin: 30,
   };
 }
@@ -321,14 +317,10 @@ interface ScoreItem {
   scorer_internal_error?: boolean;
 }
 
-export function asiScore(
-  ctx: TrialContext,
-  solveOutput: string,
-  verifyOutput: string,
-): ScoreResult {
+export function asiScore(ctx: Trial, solveOutput: string, verifyOutput: string): ScoreReply {
   const instance = `${ctx.task}${ASI_SEED_SUFFIX}`;
   const level = ctx.options.promptLevel ?? "b1";
-  const bad = (issue: string): ScoreResult => ({
+  const bad = (issue: string): ScoreReply => ({
     score: null,
     maxScore: 100,
     issues: [issue],
@@ -366,9 +358,9 @@ export function asiScore(
   return { score: item.final_score, maxScore, issues, invalid };
 }
 
-export const asiAdapter = (hostNetwork: (method: Method) => boolean): Adapter => ({
-  tasks: listTasks,
-  solveSpec: (ctx) => asiSolveSpec({ ...ctx, hostNetwork: hostNetwork(ctx.method) }),
-  verifySpec: (ctx, _solve, solveOutput) => ({ spec: asiVerifySpec(ctx, solveOutput), issues: [] }),
-  score: (ctx, _solve, solveOutput, verifyOutput) => asiScore(ctx, solveOutput, verifyOutput),
-});
+export const asiAdapter: AdapterHandlers = {
+  tasks: (req) => listTasks(req.benchmark),
+  solve: ({ benchmark, trial }) => ({ spec: asiSolveSpec(benchmark, trial) }),
+  verify: ({ benchmark, solve }) => ({ spec: asiVerifySpec(benchmark, solve.output) }),
+  score: ({ trial, solve, verify }) => asiScore(trial, solve.output, verify.output),
+};

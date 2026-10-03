@@ -8,6 +8,14 @@ import {
 } from "../contracts/index.ts";
 import { nowIso } from "../lib/ids.ts";
 
+/** Entries written before adapter settings moved into `config` (asi `python`, `instances`). */
+function upgrade(v: unknown): unknown {
+  if (!v || typeof v !== "object") return v;
+  const { python, instances, ...rest } = v as Record<string, unknown> & { config?: object };
+  const old = Object.entries({ python, instances }).filter(([, x]) => typeof x === "string");
+  return old.length ? { ...rest, config: { ...Object.fromEntries(old), ...rest.config } } : rest;
+}
+
 export class BenchmarkRegistry {
   private readonly file: string;
 
@@ -18,7 +26,7 @@ export class BenchmarkRegistry {
   private read(): Benchmark[] {
     if (!existsSync(this.file)) return [];
     const raw = JSON.parse(readFileSync(this.file, "utf8")) as { benchmarks?: unknown[] };
-    return (raw.benchmarks ?? []).map((b) => Benchmark.parse(b));
+    return (raw.benchmarks ?? []).map((b) => Benchmark.parse(upgrade(b)));
   }
 
   private write(all: Benchmark[]): void {

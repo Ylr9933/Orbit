@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { type AuthEntry, parseCodexLogin, secretValues } from "../auth/index.ts";
-import type { Harness } from "../contracts/index.ts";
+import type { Harness, Method } from "../contracts/index.ts";
 import { exec } from "../lib/exec.ts";
 
 /** Where the Agent home lives inside the container (under the `/orbit` mount). */
@@ -249,4 +249,28 @@ export function finishHarness(entry: AuthEntry | null, agentDir: string): { refr
 export function containerPath(pathDirs: string[], imagePath: string | null): string {
   const base = imagePath || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
   return [...pathDirs, base].join(":");
+}
+
+/**
+ * Headless Agent CLI invocation for a method, with full permissions (the container is the sandbox).
+ * Benchmark adapters only give the instruction; the CLI flags live here, next to the harness setup.
+ */
+export function agentCommand(method: Method, instruction: string): string[] {
+  if (method.agent === "codex") {
+    const cmd = [
+      "codex",
+      "exec",
+      "--skip-git-repo-check",
+      "--dangerously-bypass-approvals-and-sandbox",
+    ];
+    if (method.model) cmd.push("--model", method.model);
+    if (method.effort) cmd.push("-c", `model_reasoning_effort=${JSON.stringify(method.effort)}`);
+    return [...cmd, instruction];
+  }
+  if (method.agent === "claude-code") {
+    const cmd = ["claude", "-p", "--dangerously-skip-permissions"];
+    if (method.model) cmd.push("--model", method.model);
+    return [...cmd, instruction];
+  }
+  throw new Error(`${method.agent} is not an Agent CLI`);
 }

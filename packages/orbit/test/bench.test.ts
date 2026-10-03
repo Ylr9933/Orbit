@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { agentCommand } from "../src/bench/adapter.ts";
+import { handle } from "../src/bench/adapter.ts";
 import { asiScore, modelError, oracleTemplate, parseTaskMeta } from "../src/bench/asi.ts";
 import { classify, solveVerdict } from "../src/bench/classify.ts";
 import {
@@ -13,9 +13,17 @@ import {
   harborVerifySpec,
   parseArtifacts,
 } from "../src/bench/harbor.ts";
+import { AdapterClient, callAdapter, toRunSpec } from "../src/bench/protocol.ts";
 import { compareJobs, summarize } from "../src/bench/service.ts";
 import { parseMethod } from "../src/cli/bench.ts";
-import type { BenchJob, Benchmark, Run, Trial } from "../src/contracts/index.ts";
+import {
+  AdapterRunSpec,
+  type BenchJob,
+  type Benchmark,
+  type Run,
+  type Trial,
+} from "../src/contracts/index.ts";
+import { agentCommand } from "../src/harness/index.ts";
 import { rewriteDockerArgs, type ShimConfig } from "../src/runs/shim.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "orbit-bench-"));
@@ -155,6 +163,19 @@ SEED = 1
     expect(by.shared?.reason).toMatch(/environment_mode "shared"/);
     expect(by.compose?.reason).toMatch(/docker-compose/);
     expect(by.broken?.reason).toMatch(/^task.toml:/);
+    const req = { protocol: 1 as const, op: "tasks" as const };
+    const reply = handle(harborAdapter, {
+      ...req,
+      benchmark: { name: "t", path: root, config: {} },
+    });
+    expect((reply as { tasks: { id: string }[] }).tasks.map((t) => t.id)).toContain("sr");
+    expect(() =>
+      handle(harborAdapter, {
+        ...req,
+        op: "solve",
+        benchmark: { name: "t", path: root, config: {} },
+      }),
+    ).toThrow(/solve request without trial/);
   });
 
   it("builds oracle, empty and agent solve runs, and a verify run with copied artifacts", () => {
@@ -175,8 +196,9 @@ SEED = 1
       staging,
       5,
     );
-    expect(agent.command?.slice(0, 2)).toEqual(["codex", "exec"]);
-    expect(agent.network).toBe(true);
+    // The adapter only gives the instruction; Orbit turns it into the Agent CLI command.
+    expect(agent.command).toBeUndefined();
+    expect(agent.agentTask).toEqual({ instruction: "x\n" });
     expect(agent.timeoutMin).toBe(5);
 
     const solveOut = join(tmp, "solve-out");
@@ -185,25 +207,50 @@ SEED = 1
     write(join(solveOut, "collected", "app", "out", "result.txt"), "42\n");
     const plan = harborVerifySpec(t, solveOut, staging);
     expect(plan.missing).toEqual([]);
-    expect(plan.spec.priority).toBe(1);
     expect(plan.spec.timeoutMin).toBe(2);
     expect(plan.spec.collect).toEqual(["/logs/verifier"]);
     expect(JSON.stringify(plan.spec.mounts)).toContain("/app/out");
   });
 
-  it("gives benchmark passEnv (grader secrets) to the verifier, not to the Agent", () => {
-    const benchmark = { name: "tbs", path: root, env: {}, passEnv: ["GRADER_KEY"] } as Benchmark;
-    const ctx = {
-      benchmark,
-      task: "sr",
-      method: { name: "oracle", agent: "oracle" as const },
-      seed: 1,
-      options: {},
-      staging: join(tmp, "staging-pe"),
-    };
-    expect(harborAdapter.solveSpec(ctx).passEnv ?? []).toEqual([]);
-    const solveOut = join(tmp, "solve-out");
-    expect(harborAdapter.verifySpec(ctx, {} as Run, solveOut).spec.passEnv).toEqual(["GRADER_KEY"]);
+  it("lets Orbit add the Agent command, auth, env and grader secrets", () => {
+    const t = findHarborTasks(root).find((x) => x.id === "sr");
+    if (!t) throw new Error("task missing");
+    const b = {
+      name: "tbs",
+      adapter: "harbor",
+      path: root,
+      config: {},
+      env: { B: "1" },
+      passEnv: ["GRADER_KEY"],
+    } as unknown as Benchmark;
+    const staging = join(tmp, "staging-pe");
+    const codex = { name: "c", agent: "codex" as const, auth: "p", bundle: "/m", model: "m" };
+    const oracle = { name: "oracle", agent: "oracle" as const };
+
+    const agent = toRunSpec(harborSolveSpec(t, codex, staging), codex, b, "solve");
+    expect(agent.command?.slice(0, 2)).toEqual(["codex", "exec"]);
+    expect(agent.command?.at(-1)).toBe("x\n");
+    expect(agent).toMatchObject({ auth: "p", agentBundle: "/m", network: true, snapshot: false });
+    expect(agent.env).toEqual({ B: "1" });
+    expect(agent.passEnv ?? []).toEqual([]);
+
+    const solve = toRunSpec(harborSolveSpec(t, oracle, staging), oracle, b, "solve");
+    expect(solve.auth).toBeUndefined();
+    expect(solve.env).toEqual({ B: "1", SEED: "1" });
+    const verify = toRunSpec(
+      harborVerifySpec(t, join(tmp, "solve-out"), staging).spec,
+      oracle,
+      b,
+      "verify",
+    );
+    expect(verify).toMatchObject({ passEnv: ["GRADER_KEY"], priority: 1 });
+
+    const task = { agentTask: { instruction: "go" }, image: "x" };
+    expect(() => toRunSpec(task, oracle, b, "solve")).toThrow(/asked for an Agent/);
+    expect(() => toRunSpec(task, codex, b, "verify")).toThrow(/cannot ask for an Agent/);
+    expect(() => toRunSpec({ command: ["true"] }, oracle, b, "solve")).toThrow(/image/);
+    expect(AdapterRunSpec.safeParse({ command: ["true"], auth: "p" }).success).toBe(false);
+    expect(AdapterRunSpec.safeParse({ image: "x" }).success).toBe(false);
   });
 
   it("reads rewards from reward.txt or reward.json", () => {
@@ -218,6 +265,88 @@ SEED = 1
     expect(harborReward(d("single")).score).toBe(0.5);
     expect(harborReward(d("bad")).invalid).toBe(true);
     expect(harborReward(d("none"))).toMatchObject({ score: null, invalid: true });
+  });
+});
+
+describe("adapter protocol", () => {
+  // An external adapter: answers each op from the request, or misbehaves on demand via config.
+  const script = join(tmp, "adapter.mjs");
+  write(
+    script,
+    `#!${process.execPath}
+let input = "";
+process.stdin.on("data", (c) => (input += c));
+process.stdin.on("end", () => {
+  const req = JSON.parse(input);
+  const mode = req.benchmark.config.mode;
+  if (mode === "fail") { console.error("no tasks here"); process.exit(3); }
+  if (mode === "garbage") return console.log("not json");
+  if (mode === "sleep") return setTimeout(() => {}, 10000);
+  if (mode === "secret") return console.log(JSON.stringify({ tasks: [{ id: String(process.env.SECRET_KEY), title: null, supported: true, reason: null }] }));
+  if (process.argv[2] !== req.op) process.exit(9);
+  if (req.op === "tasks")
+    return console.log(JSON.stringify({ tasks: [{ id: "a", title: req.benchmark.path, supported: true, reason: null }] }));
+  if (req.op === "solve") return console.log(JSON.stringify({ spec: { image: "x", agentTask: { instruction: req.trial.task } } }));
+  if (req.op === "verify") return console.log(JSON.stringify({ spec: { image: "x", command: ["true"] }, issues: ["w"] }));
+  console.log(JSON.stringify({ score: req.verify.run.exitCode === 0 ? 1 : 0 }));
+});
+`,
+  );
+  chmodSync(script, 0o755);
+  const bench = (config: Record<string, string> = {}) =>
+    ({
+      name: "x",
+      adapter: script,
+      path: tmp,
+      config,
+      env: {},
+      passEnv: [],
+    }) as unknown as Benchmark;
+  const trial = {
+    id: "j.1",
+    task: "a",
+    method: { name: "c", agent: "codex" as const, auth: "p" },
+    seed: 1,
+    options: {},
+    staging: tmp,
+    hostNetwork: false,
+  };
+
+  it("runs each op with the request on stdin and validates the reply", async () => {
+    const c = new AdapterClient(bench(), undefined);
+    expect(await c.tasks()).toEqual([
+      { id: "a", title: tmp, supported: true, reason: null, tags: {} },
+    ]);
+    expect((await c.solve(trial)).spec).toMatchObject({ agentTask: { instruction: "a" } });
+    const ref = { run: run({ exitCode: 0 }), output: tmp };
+    expect((await c.verify(trial, ref)).issues).toEqual(["w"]);
+    expect(await c.score(trial, ref, ref)).toEqual({
+      score: 1,
+      maxScore: 1,
+      invalid: false,
+      issues: [],
+    });
+  });
+
+  it("reports failures, bad replies and timeouts, and keeps daemon secrets away", async () => {
+    await expect(new AdapterClient(bench({ mode: "fail" }), undefined).tasks()).rejects.toThrow(
+      /adapter tasks: exit 3: no tasks here/,
+    );
+    await expect(new AdapterClient(bench({ mode: "garbage" }), undefined).tasks()).rejects.toThrow(
+      /not one JSON value/,
+    );
+    const req = { protocol: 1 as const, op: "tasks" as const, benchmark: bench({ mode: "sleep" }) };
+    await expect(callAdapter([script], tmp, req, 300)).rejects.toThrow(/timed out/);
+    process.env.SECRET_KEY = "s3cret";
+    try {
+      const ts = await new AdapterClient(bench({ mode: "secret" }), undefined).tasks();
+      expect(ts[0]?.id).toBe("undefined");
+    } finally {
+      delete process.env.SECRET_KEY;
+    }
+    expect(() => new AdapterClient({ ...bench(), adapter: "harbor" }, undefined)).toThrow(
+      /built-in adapters are not available/,
+    );
   });
 });
 
@@ -266,12 +395,13 @@ output:
 
   it("scores the latest attempt and marks scorer or model failures invalid", () => {
     const ctx = {
-      benchmark: {} as Benchmark,
+      id: "j.00001",
       task: "math.sigma",
       method: { name: "c", agent: "codex" as const, auth: "p" },
       seed: 1,
       options: {},
       staging: tmp,
+      hostNetwork: false,
     };
     const solve = join(tmp, "asi-solve");
     const verify = join(tmp, "asi-verify");

@@ -1,0 +1,182 @@
+// The daemon side of the bench protocol (design §7): run an adapter executable with a JSON request on
+// stdin, validate its JSON reply, and turn an adapter's run description into a RunSpec. Orbit adds
+// what it owns: the Agent CLI command, auth and bundle of Agent methods, benchmark env and the
+// verifier's pass-through secrets.
+import { spawn } from "node:child_process";
+import type { z } from "zod";
+import {
+  ADAPTER_PROTOCOL,
+  type AdapterOp,
+  type AdapterRequest,
+  type AdapterRunRef,
+  type AdapterRunSpec,
+  AdapterSpecResponse,
+  AdapterTasksResponse,
+  type Benchmark,
+  type BenchTask,
+  BUILTIN_ADAPTERS,
+  type Method,
+  RunSpec,
+  type RunSpecInput,
+  ScoreResult,
+} from "../contracts/index.ts";
+import { agentCommand } from "../harness/index.ts";
+
+export class AdapterError extends Error {}
+
+const OUTPUT_LIMIT = 64 * 1024 * 1024;
+/** Variables an adapter process sees; secrets in the daemon environment are not passed on. */
+const ADAPTER_ENV = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TZ", "TMPDIR"];
+
+export const isBuiltin = (adapter: string) =>
+  (BUILTIN_ADAPTERS as readonly string[]).includes(adapter);
+
+/** argv of a benchmark's adapter; built-ins run through this orbit binary (`self`). */
+export function adapterArgv(b: Benchmark, self: string[] | undefined): string[] {
+  if (!isBuiltin(b.adapter)) return [b.adapter];
+  if (!self) throw new AdapterError("built-in adapters are not available in this daemon");
+  return [...self, "__adapter", b.adapter];
+}
+
+/** Run `<argv> <op>` in the benchmark directory; resolves to the parsed JSON reply. */
+export function callAdapter(
+  argv: string[],
+  cwd: string,
+  req: AdapterRequest,
+  timeoutMs: number,
+): Promise<unknown> {
+  const env: NodeJS.ProcessEnv = { ORBIT_ADAPTER_PROTOCOL: String(ADAPTER_PROTOCOL) };
+  for (const k of ADAPTER_ENV) if (process.env[k] !== undefined) env[k] = process.env[k];
+  return new Promise((resolve, reject) => {
+    const fail = (msg: string) => reject(new AdapterError(`adapter ${req.op}: ${msg}`));
+    const child = spawn(argv[0] as string, [...argv.slice(1), req.op], {
+      cwd,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const out: Buffer[] = [];
+    let outBytes = 0;
+    let err = "";
+    let killed: string | null = null;
+    const timer = setTimeout(() => {
+      killed = `timed out after ${Math.round(timeoutMs / 1000)} s`;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.stdout.on("data", (c: Buffer) => {
+      outBytes += c.length;
+      if (outBytes > OUTPUT_LIMIT) {
+        killed = "reply larger than 64 MiB";
+        child.kill("SIGKILL");
+      } else out.push(c);
+    });
+    child.stderr.on("data", (c: Buffer) => {
+      err = (err + c.toString("utf8")).slice(-4000);
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      fail(e.message);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (killed) return fail(killed);
+      const detail = err.trim().split("\n").slice(-5).join("\n");
+      if (code !== 0) return fail(`exit ${code}${detail ? `: ${detail}` : ""}`);
+      try {
+        resolve(JSON.parse(Buffer.concat(out).toString("utf8")));
+      } catch {
+        fail("stdout is not one JSON value");
+      }
+    });
+    // An adapter may exit without reading its request.
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(JSON.stringify(req));
+  });
+}
+
+const describe = (e: z.ZodError) =>
+  e.issues.map((i) => `${i.path.join(".") || "reply"}: ${i.message}`).join("; ");
+
+function parse<S extends z.ZodType>(schema: S, op: AdapterOp, v: unknown): z.output<S> {
+  const r = schema.safeParse(v);
+  if (r.success) return r.data;
+  throw new AdapterError(`adapter ${op}: invalid reply: ${describe(r.error)}`);
+}
+
+export type TrialInput = NonNullable<AdapterRequest["trial"]>;
+
+/** Typed calls of one benchmark's adapter. */
+export class AdapterClient {
+  private readonly argv: string[];
+  private readonly b: Benchmark;
+  private readonly timeoutMs: number;
+
+  constructor(b: Benchmark, self: string[] | undefined, timeoutMs = 120_000) {
+    this.argv = adapterArgv(b, self);
+    this.b = b;
+    this.timeoutMs = timeoutMs;
+  }
+
+  private call(op: AdapterOp, rest: Partial<AdapterRequest> = {}): Promise<unknown> {
+    const { name, path, config } = this.b;
+    return callAdapter(
+      this.argv,
+      path,
+      { protocol: ADAPTER_PROTOCOL, op, benchmark: { name, path, config }, ...rest },
+      this.timeoutMs,
+    );
+  }
+
+  async tasks(): Promise<BenchTask[]> {
+    return parse(AdapterTasksResponse, "tasks", await this.call("tasks")).tasks;
+  }
+
+  async solve(trial: TrialInput) {
+    return parse(AdapterSpecResponse, "solve", await this.call("solve", { trial }));
+  }
+
+  async verify(trial: TrialInput, solve: AdapterRunRef) {
+    return parse(AdapterSpecResponse, "verify", await this.call("verify", { trial, solve }));
+  }
+
+  async score(trial: TrialInput, solve: AdapterRunRef, verify: AdapterRunRef) {
+    return parse(ScoreResult, "score", await this.call("score", { trial, solve, verify }));
+  }
+}
+
+const isAgent = (m: Method) => m.agent === "codex" || m.agent === "claude-code";
+
+/** The RunSpec of an adapter's run description, with what Orbit owns filled in. */
+export function toRunSpec(
+  s: AdapterRunSpec,
+  method: Method,
+  b: Benchmark,
+  phase: "solve" | "verify",
+): RunSpecInput {
+  const { agentTask, command, ...rest } = s;
+  if (agentTask && (phase === "verify" || !isAgent(method)))
+    throw new AdapterError(
+      phase === "verify"
+        ? "verify runs cannot ask for an Agent"
+        : `the adapter asked for an Agent, but method ${method.name} is ${method.agent}`,
+    );
+  const spec = {
+    ...rest,
+    command: agentTask ? agentCommand(method, agentTask.instruction) : command,
+    env: { ...b.env, ...((rest.env as Record<string, string> | undefined) ?? {}) },
+    snapshot: false,
+  } as RunSpecInput;
+  if (phase === "solve" && isAgent(method)) {
+    // The Agent reaches its model API; native runners get the auth to inject into their containers.
+    spec.auth = method.auth;
+    spec.agentBundle = method.bundle;
+    spec.network = true;
+  }
+  if (phase === "verify") {
+    // Grader secrets go to the verifier, never to the Agent under test.
+    spec.passEnv = b.passEnv;
+    spec.priority = 1;
+  }
+  const r = RunSpec.safeParse(spec);
+  if (!r.success) throw new AdapterError(`invalid ${phase} run: ${describe(r.error)}`);
+  return spec;
+}

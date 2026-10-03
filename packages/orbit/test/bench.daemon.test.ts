@@ -49,6 +49,27 @@ if (a[2] === "run") {
 } else process.exit(2);
 `;
 
+// An external adapter: process runs; the oracle writes the answer, the verifier copies it to a score.
+const EXTERNAL_ADAPTER = `#!${process.execPath}
+let input = "";
+process.stdin.on("data", (c) => (input += c));
+process.stdin.on("end", () => {
+  const req = JSON.parse(input);
+  const say = (v) => console.log(JSON.stringify(v));
+  if (req.benchmark.config.broken) { console.error("checkout has no tasks/"); process.exit(1); }
+  if (req.op === "tasks") return say({ tasks: [{ id: "t1", title: "one", supported: true, reason: null }] });
+  const node = ${JSON.stringify(process.execPath)};
+  if (req.op === "solve") {
+    const v = req.trial.method.agent === "oracle" ? "7" : "0";
+    return say({ spec: { backend: "process", command: ["sh", "-c", "echo " + v + " > $ORBIT_OUTPUT/answer"] } });
+  }
+  if (req.op === "verify")
+    return say({ spec: { backend: "process", command: ["sh", "-c", "cp " + req.solve.output + "/answer $ORBIT_OUTPUT/score"] } });
+  const fs = require("node:fs");
+  say({ score: Number(fs.readFileSync(req.verify.output + "/score", "utf8")), maxScore: 7 });
+});
+`;
+
 beforeAll(async () => {
   for (const [task, status] of [
     ["math.a", "final"],
@@ -71,7 +92,7 @@ beforeAll(async () => {
   daemon = await startDaemon(paths, {
     port: 0,
     tickMs: 100,
-    shim: [process.execPath, fileURLToPath(new URL("../src/bin.ts", import.meta.url))],
+    self: [process.execPath, fileURLToPath(new URL("../src/bin.ts", import.meta.url))],
     // ASI solve runs lease 8 GB; small CI runners have less, and these runs are tiny fake runners.
     probe: async () => ({
       ...(await probeNode(paths.home, { node: paths.node, gpus: paths.gpus })),
@@ -82,7 +103,11 @@ beforeAll(async () => {
   const c = await tryConnect(paths);
   if (!c) throw new Error("daemon not reachable");
   client = c;
-  await client.benchmarkPut({ name: "asi", adapter: "asi", path: asi, python: runner });
+  await client.benchmarkPut({ name: "asi", adapter: "asi", path: asi, config: { python: runner } });
+  const external = join(home, "adapter.cjs");
+  writeFileSync(external, EXTERNAL_ADAPTER);
+  chmodSync(external, 0o755);
+  await client.benchmarkPut({ name: "ext", adapter: external, path: home });
 });
 afterAll(async () => {
   // Let run cleanup finish before the home directory goes away.
@@ -153,5 +178,38 @@ describe("bench jobs", () => {
     const c = await client.benchCompare([job.id]);
     expect(c.means).toEqual({ oracle: { all: 100, paired: 100 }, empty: { all: 0, paired: 0 } });
     expect((await client.benchJobs()).map((j) => j.id)).toContain(job.id);
+  });
+
+  it("runs an external adapter and refuses to register one that fails", async () => {
+    const adapter = join(home, "adapter.cjs");
+    await expect(
+      client.benchmarkPut({ name: "bad", adapter, path: home, config: { broken: "1" } }),
+    ).rejects.toThrow(/adapter tasks: exit 1: checkout has no tasks/);
+    await expect(client.benchmarkPut({ name: "bad", adapter: home, path: home })).rejects.toThrow(
+      /not an executable file/,
+    );
+    expect((await client.benchmarks()).map((b) => b.name)).toEqual(["asi", "ext"]);
+
+    const job = await client.benchSubmit({
+      benchmark: "ext",
+      methods: [
+        { name: "oracle", agent: "oracle" },
+        { name: "empty", agent: "empty" },
+      ],
+    });
+    let d = await client.benchJob(job.id);
+    for (let i = 0; i < 300 && d.job.state === "running"; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      d = await client.benchJob(job.id);
+    }
+    expect(d.job.state).toBe("done");
+    expect(d.trials.map((t) => [t.method, t.outcome?.evaluation, t.outcome?.score])).toEqual([
+      ["oracle", "valid", 7],
+      ["empty", "valid", 0],
+    ]);
+    expect(d.summary.map((s) => [s.method, s.meanPct])).toEqual([
+      ["oracle", 100],
+      ["empty", 0],
+    ]);
   });
 });

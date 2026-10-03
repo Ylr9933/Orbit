@@ -111,6 +111,24 @@ Each trial is a solve run plus a separate verify run. Only `valid` trials count;
 `invalid` ones (environment or scorer failures, unusable model) instead of treating them as zeros.
 Run `oracle` and `empty` first on a new benchmark or task set: oracle should score full, empty zero.
 
+To add a benchmark Orbit does not know, write an adapter executable (any language; do not modify or
+rebuild Orbit) and register it with `orbit bench add <name> <checkout> --adapter /abs/adapter.py
+[-c key=value] [--pass-env JUDGE_KEY]`. Orbit runs `<adapter> tasks|solve|verify|score` in the checkout
+with one JSON request on stdin and expects one JSON reply on stdout (non-zero exit + stderr on error):
+
+- `tasks` → `{"tasks": [{"id", "title", "supported", "reason", "tags"}]}`
+- `solve` (request has `trial.method`, `trial.task`, `trial.staging`) → `{"spec": run}`; for `codex` /
+  `claude-code` methods give `"agentTask": {"instruction": "..."}` instead of `command` — Orbit builds the
+  Agent CLI command, auth and bundle. Never write Agent CLI flags, `auth`, `passEnv` or `name` yourself.
+- `verify` (request adds `solve.output`, the solve run's output dir) → `{"spec": run}`
+- `score` (request adds `verify.output`) → `{"score", "maxScore", "invalid", "issues"}`; `invalid` only
+  when the grader itself failed; "produced nothing" is a valid 0.
+
+`run` uses `orbit run` fields (`image`/`dockerfile`, `resources`, `mounts`, `env`, `workdir`, `collect`,
+`timeoutMin`, `backend: "process"`). Follow `docs/guides/bench-adapter.md` in the Orbit repository;
+`examples/bench-adapters/researchclawbench/` is a complete example. Check with `-m empty` and compare a
+sample against the benchmark's own scorer before real runs.
+
 ## 7. Record conclusions
 
 After analysing a run or a group, attach a short note so the human sees it next to the results:

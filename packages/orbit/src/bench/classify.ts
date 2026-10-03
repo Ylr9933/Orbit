@@ -1,8 +1,7 @@
 // Trial outcome: execution (how the solve run ended), evaluation (whether the score can be trusted)
 // and cleanup are kept apart. Only `valid` outcomes enter means; `unknown` means Orbit cannot tell
 // (cancelled or lost), `invalid` means the environment or verifier failed to produce a real score.
-import type { Outcome, Run } from "../contracts/index.ts";
-import type { ScoreResult } from "./adapter.ts";
+import type { Outcome, Run, ScoreResult } from "../contracts/index.ts";
 
 const cleanupOf = (...runs: (Run | null)[]): Outcome["cleanup"] => {
   const rs = runs.filter((r): r is Run => r !== null);

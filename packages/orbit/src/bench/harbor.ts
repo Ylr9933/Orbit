@@ -4,8 +4,8 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { parse as parseToml } from "smol-toml";
-import type { Benchmark, BenchTask, Method, RunSpecInput } from "../contracts/index.ts";
-import { type Adapter, agentCommand, type ScoreResult } from "./adapter.ts";
+import type { BenchTask, Method } from "../contracts/index.ts";
+import type { AdapterHandlers, RunDescription, ScoreReply } from "./adapter.ts";
 
 export interface Artifact {
   /** Absolute path in the solve container. */
@@ -201,36 +201,31 @@ export function harborSolveSpec(
   method: Method,
   staging: string,
   timeoutMin?: number,
-): RunSpecInput {
-  const mounts: RunSpecInput["mounts"] = [];
-  let command: string[];
-  let env = t.env.vars;
+): RunDescription {
+  const mounts: RunDescription["mounts"] = [];
+  const env = method.agent === "oracle" ? { ...t.env.vars, ...t.solutionEnv } : t.env.vars;
+  const run = {
+    dockerfile: join(t.dir, "environment", "Dockerfile"),
+    resources: { gpus: t.env.gpus, cpus: t.env.cpus, memGB: t.env.memGB },
+    mounts,
+    env,
+    network: t.env.network,
+    root: true,
+    workdir: "image",
+    timeoutMin: timeoutMin ?? (t.agentTimeoutSec ? t.agentTimeoutSec / 60 : undefined),
+    collect: t.artifacts.map((a) => a.source),
+  };
   if (method.agent === "oracle") {
     const sol = join(staging, "solution");
     mkdirSync(staging, { recursive: true });
     cpSync(join(t.dir, "solution"), sol, { recursive: true });
     mounts.push({ source: sol, target: "/solution", mode: "rw" });
-    command = ["bash", "/solution/solve.sh"];
-    env = { ...env, ...t.solutionEnv };
-  } else if (method.agent === "empty") {
-    command = ["true"];
-  } else {
-    command = agentCommand(method, readFileSync(join(t.dir, "instruction.md"), "utf8"));
+    return { ...run, command: ["bash", "/solution/solve.sh"] };
   }
+  if (method.agent === "empty") return { ...run, command: ["true"] };
   return {
-    dockerfile: join(t.dir, "environment", "Dockerfile"),
-    command,
-    resources: { gpus: t.env.gpus, cpus: t.env.cpus, memGB: t.env.memGB },
-    mounts,
-    env,
-    network: t.env.network || Boolean(method.auth),
-    auth: method.auth,
-    agentBundle: method.bundle,
-    snapshot: false,
-    root: true,
-    workdir: "image",
-    timeoutMin: timeoutMin ?? (t.agentTimeoutSec ? t.agentTimeoutSec / 60 : undefined),
-    collect: t.artifacts.map((a) => a.source),
+    ...run,
+    agentTask: { instruction: readFileSync(join(t.dir, "instruction.md"), "utf8") },
   };
 }
 
@@ -242,8 +237,8 @@ export function harborVerifySpec(
   t: HarborTask,
   solveOutput: string,
   staging: string,
-): { spec: RunSpecInput; missing: string[] } {
-  const mounts: RunSpecInput["mounts"] = [];
+): { spec: RunDescription; missing: string[] } {
+  const mounts: RunDescription["mounts"] = [];
   const missing: string[] = [];
   for (const a of t.artifacts) {
     const src = join(solveOutput, "collected", a.source);
@@ -264,10 +259,8 @@ export function harborVerifySpec(
       mounts,
       env: t.verifier.vars,
       network: t.verifier.network,
-      snapshot: false,
       root: true,
       workdir: "image",
-      priority: 1,
       timeoutMin: t.verifierTimeoutSec ? t.verifierTimeoutSec / 60 : 10,
       collect: ["/logs/verifier"],
     },
@@ -276,10 +269,10 @@ export function harborVerifySpec(
 }
 
 /** Reward from `reward.json` (the `reward` key, or its only key) or `reward.txt` (one number). */
-export function harborReward(verifierDir: string): ScoreResult {
+export function harborReward(verifierDir: string): ScoreReply {
   const json = join(verifierDir, "reward.json");
   const txt = join(verifierDir, "reward.txt");
-  const bad = (issue: string): ScoreResult => ({
+  const bad = (issue: string): ScoreReply => ({
     score: null,
     maxScore: 1,
     issues: [issue],
@@ -310,33 +303,27 @@ export function harborReward(verifierDir: string): ScoreResult {
   return bad("verifier wrote no reward");
 }
 
-function harborTask(b: Benchmark, id: string): HarborTask {
-  const t = findHarborTasks(b.path).find((x) => x.id === id);
+function harborTask(root: string, id: string): HarborTask {
+  const t = findHarborTasks(root).find((x) => x.id === id);
   if (!t) throw new Error(`task not found: ${id}`);
   if (!t.supported) throw new Error(`task ${id} is not supported: ${t.reason}`);
   return t;
 }
 
-export const harborAdapter: Adapter = {
-  tasks: (b) => findHarborTasks(b.path).map(toBenchTask),
-  solveSpec: (ctx) => {
-    const spec = harborSolveSpec(
-      harborTask(ctx.benchmark, ctx.task),
-      ctx.method,
-      ctx.staging,
-      ctx.timeoutMin,
-    );
-    return { ...spec, env: { ...ctx.benchmark.env, ...spec.env } };
+export const harborAdapter: AdapterHandlers = {
+  tasks: (req) => findHarborTasks(req.benchmark.path).map(toBenchTask),
+  solve: ({ benchmark, trial }) => ({
+    spec: harborSolveSpec(
+      harborTask(benchmark.path, trial.task),
+      trial.method,
+      trial.staging,
+      trial.timeoutMin,
+    ),
+  }),
+  verify: ({ benchmark, trial, solve }) => {
+    const t = harborTask(benchmark.path, trial.task);
+    const { spec, missing } = harborVerifySpec(t, solve.output, trial.staging);
+    return { spec, issues: missing.map((m) => `artifact not produced: ${m}`) };
   },
-  verifySpec: (ctx, _solve, solveOutput) => {
-    const t = harborTask(ctx.benchmark, ctx.task);
-    const { spec, missing } = harborVerifySpec(t, solveOutput, ctx.staging);
-    return {
-      // `passEnv` names grader secrets: the verifier gets them, the Agent under test does not.
-      spec: { ...spec, env: { ...ctx.benchmark.env, ...spec.env }, passEnv: ctx.benchmark.passEnv },
-      issues: missing.map((m) => `artifact not produced: ${m}`),
-    };
-  },
-  score: (_ctx, _solve, _solveOutput, verifyOutput) =>
-    harborReward(join(verifyOutput, "collected", "logs", "verifier")),
+  score: ({ verify }) => harborReward(join(verify.output, "collected", "logs", "verifier")),
 };

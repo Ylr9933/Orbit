@@ -84,6 +84,7 @@ function ScoreCell({
 
 const CLI_HINT = [
   "orbit bench add tbs /path/to/terminal-bench-science --adapter harbor",
+  "orbit bench add mine /path/to/benchmark --adapter /path/to/adapter.py",
   "orbit bench run tbs -m oracle -m empty -m codex=codex,auth=<profile>,model=<model>",
 ];
 
@@ -160,7 +161,9 @@ export function BenchJobs() {
                         <b>{b.name}</b>
                       </td>
                       <td>
-                        <span className="chip mono">{b.adapter}</span>
+                        <span className="chip mono" title={b.adapter}>
+                          {b.adapter.startsWith("/") ? b.adapter.split("/").pop() : b.adapter}
+                        </span>
                       </td>
                       <td className="mono faint ellipsis">{b.path}</td>
                       <td className="r faint">{ago(b.updatedAt)}</td>

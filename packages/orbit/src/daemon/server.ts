@@ -55,8 +55,11 @@ function findWebDir(): string | null {
 export interface DaemonOptions {
   port?: number;
   tickMs?: number;
-  /** Command running this orbit binary, for the process-run docker shim (default: detected). */
-  shim?: string[];
+  /**
+   * Command running this orbit binary (default: detected), for the process-run docker shim and the
+   * built-in bench adapters.
+   */
+  self?: string[];
   /** Worker heartbeat and remote-run sync periods (tests shorten them). */
   heartbeatMs?: number;
   syncMs?: number;
@@ -65,7 +68,7 @@ export interface DaemonOptions {
 }
 
 /** `node [execArgv] <entry>` when this process is the orbit CLI (not e.g. a test runner). */
-function detectShim(): string[] | undefined {
+function detectSelf(): string[] | undefined {
   const entry = process.argv[1];
   if (!entry || !/^(bin\.ts|cli\.mjs|orbit)$/.test(basename(entry))) return undefined;
   return [process.execPath, ...process.execArgv, entry];
@@ -81,6 +84,7 @@ export async function startDaemon(
   const store = new Store(paths.db);
   const auth = new AuthStore(paths.auth);
   const datasets = new DatasetRegistry(paths.datasets);
+  const self = opts.self ?? detectSelf();
   const runs = new RunService({
     store,
     paths,
@@ -88,7 +92,7 @@ export async function startDaemon(
     datasets,
     probe: opts.probe ?? (() => probeNode(paths.home, { node: paths.node, gpus: paths.gpus })),
     tickMs: opts.tickMs,
-    shim: opts.shim ?? detectShim(),
+    shim: self,
   });
   const cluster = new ClusterService({
     store,
@@ -116,6 +120,7 @@ export async function startDaemon(
     registry: benchmarks,
     paths,
     auth,
+    self,
     log: (msg) => console.error(`orbit ${msg}`),
   });
   let webUrl: string | undefined;
@@ -169,7 +174,7 @@ export async function startDaemon(
   webUrl = url;
   await runs.start();
   await cluster.start();
-  await bench.start();
+  bench.start();
   writeDaemonInfo(paths, { url, token, pid: process.pid });
 
   const stop = async () => {

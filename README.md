@@ -217,7 +217,9 @@ summary when a group has finished). Failure messages include the reason and the 
 
 ```bash
 orbit bench add tbs ../terminal-bench-science --adapter harbor
-orbit bench add asi ../ASI-Bench --adapter asi --python /path/to/venv/bin/python --pass-env JUDGE_KEY
+orbit bench add asi ../ASI-Bench --adapter asi -c python=/path/to/venv/bin/python --pass-env JUDGE_KEY
+orbit bench add rcb ../ResearchClawBench --adapter ./examples/bench-adapters/researchclawbench/adapter.py \
+  --pass-env OPENAI_API_KEY --pass-env OPENAI_BASE_URL
 orbit bench tasks tbs           # tasks, and why unsupported ones cannot run
 orbit bench run tbs -t symbolic-regression -m oracle -m empty \
   -m gpt=codex,auth=gpt,model=gpt-5,effort=high --seeds 3 -n first-try
@@ -232,7 +234,8 @@ Methods are `name=agent[,auth=P,model=M,effort=E,bundle=DIR]` with agent `codex`
 trial records execution (how the solve run ended), evaluation (`valid` / `invalid` / `unknown`) and
 cleanup separately; only valid scores count. The Web UI shows jobs, a task × method matrix and
 cross-job comparison under **Bench**. Grader secrets given with `--pass-env` reach only the verify
-run. Writing a new adapter: [docs/guides/bench-adapter.md](docs/guides/bench-adapter.md).
+run. Any other benchmark needs only an adapter executable that speaks a small JSON protocol (no
+rebuild of Orbit): [docs/guides/bench-adapter.md](docs/guides/bench-adapter.md).
 
 ### Several machines
 

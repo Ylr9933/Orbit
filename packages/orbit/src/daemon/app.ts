@@ -1,4 +1,4 @@
-import { createReadStream, existsSync } from "node:fs";
+import { accessSync, constants, createReadStream, existsSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -280,13 +280,25 @@ export function createApp(deps: AppDeps): Hono {
   api.post("/benchmarks", async (c) => {
     const input = BenchmarkInput.parse(await c.req.json());
     if (!existsSync(input.path)) throw new UserError(`benchmark path not found: ${input.path}`);
+    if (input.adapter.startsWith("/")) {
+      try {
+        if (!statSync(input.adapter).isFile()) throw new Error();
+        accessSync(input.adapter, constants.X_OK);
+      } catch {
+        throw new UserError(`adapter is not an executable file: ${input.adapter}`);
+      }
+    }
+    // Listing the tasks once checks that the adapter answers before it is saved.
+    await bench.tasksOf({ ...BenchmarkInput.parse(input), createdAt: "", updatedAt: "" });
     return c.json(benchmarks.put(input), 201);
   });
   api.delete("/benchmarks/:name", (c) => {
     if (!benchmarks.remove(c.req.param("name"))) throw new NotFoundError("benchmark not found");
     return c.json({ ok: true });
   });
-  api.get("/benchmarks/:name/tasks", (c) => c.json({ tasks: bench.tasks(c.req.param("name")) }));
+  api.get("/benchmarks/:name/tasks", async (c) =>
+    c.json({ tasks: await bench.tasks(c.req.param("name")) }),
+  );
   api.get("/bench/jobs", (c) => c.json(bench.jobs(num(c.req.query("limit"), 200))));
   api.post("/bench/jobs", async (c) => c.json(await bench.submit(await c.req.json()), 201));
   api.get("/bench/jobs/:id", (c) => c.json(bench.job(c.req.param("id"))));

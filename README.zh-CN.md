@@ -205,7 +205,9 @@ orbit notify list
 
 ```bash
 orbit bench add tbs ../terminal-bench-science --adapter harbor
-orbit bench add asi ../ASI-Bench --adapter asi --python /path/to/venv/bin/python --pass-env JUDGE_KEY
+orbit bench add asi ../ASI-Bench --adapter asi -c python=/path/to/venv/bin/python --pass-env JUDGE_KEY
+orbit bench add rcb ../ResearchClawBench --adapter ./examples/bench-adapters/researchclawbench/adapter.py \
+  --pass-env OPENAI_API_KEY --pass-env OPENAI_BASE_URL
 orbit bench tasks tbs           # 任务列表，以及不支持的任务的原因
 orbit bench run tbs -t symbolic-regression -m oracle -m empty \
   -m gpt=codex,auth=gpt,model=gpt-5,effort=high --seeds 3 -n first-try
@@ -219,7 +221,8 @@ orbit bench cancel <job>
 `oracle`（参考解）或 `empty`（不提交任何内容，用于检查 verifier 给 0 分）。每个 trial 分别记录执行结果
 （solve Run 如何结束）、评测有效性（`valid` / `invalid` / `unknown`）与清理状态；只有有效分数计入统计。
 Web 的 **Bench** 页面展示 job、任务 × 方法矩阵和跨 job 对比。`--pass-env` 传入的评审密钥只给 verify
-Run。编写新适配器见 [docs/guides/bench-adapter.md](docs/guides/bench-adapter.md)。
+Run。其他 benchmark 只需一个说小型 JSON 协议的适配器可执行文件，不用重新构建 Orbit，见
+[docs/guides/bench-adapter.md](docs/guides/bench-adapter.md)。
 
 ### 多机
 

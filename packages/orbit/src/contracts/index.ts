@@ -466,23 +466,29 @@ export type Ledger = z.infer<typeof Ledger>;
 
 // ---- R3: benchmarks ----
 
-export const BenchAdapter = z.enum(["harbor", "asi"]);
-export type BenchAdapter = z.infer<typeof BenchAdapter>;
+/** Adapters shipped with Orbit (`orbit __adapter <name>`). */
+export const BUILTIN_ADAPTERS = ["harbor", "asi"] as const;
 
 /** A registered benchmark checkout. */
 export const BenchmarkInput = z.object({
   name: ProfileName,
-  /** `harbor`: task directories with task.toml; `asi`: ASI-Bench wrapped with its native runner. */
-  adapter: BenchAdapter,
-  /** Absolute path of the benchmark checkout. */
+  /**
+   * A built-in adapter (`harbor`: task.toml task directories; `asi`: ASI-Bench with its native
+   * runner) or the absolute path of an executable speaking the adapter protocol (design §7).
+   */
+  adapter: z
+    .string()
+    .refine(
+      (a) => (BUILTIN_ADAPTERS as readonly string[]).includes(a) || a.startsWith("/"),
+      `adapter must be ${BUILTIN_ADAPTERS.join(" or ")}, or the absolute path of an executable`,
+    ),
+  /** Absolute path of the benchmark checkout (the adapter's working directory). */
   path: z.string().refine((p) => p.startsWith("/"), "path must be absolute"),
-  /** asi: Python with ai4sci_bench installed (default: `python3`). */
-  python: z.string().optional(),
-  /** asi: instances directory (default: `<path>/bench_runs/instances_seed31415`). */
-  instances: z.string().optional(),
+  /** Adapter settings, e.g. asi `python` and `instances`. Non-secret. */
+  config: z.record(z.string(), z.string()).default({}),
   /** Extra non-secret variables for every run of this benchmark. */
   env: z.record(EnvName, z.string()).default({}),
-  /** Variables copied from the daemon environment (e.g. judge API keys); never stored. */
+  /** Variables copied from the daemon environment into verify runs (judge API keys); never stored. */
   passEnv: z.array(EnvName).default([]),
 });
 export type BenchmarkInput = z.input<typeof BenchmarkInput>;
@@ -627,3 +633,95 @@ export const BenchCompare = z.object({
   pairedTasks: z.number().int(),
 });
 export type BenchCompare = z.infer<typeof BenchCompare>;
+
+// ---- Bench adapter protocol (design §7) ----
+
+export const ADAPTER_PROTOCOL = 1;
+export const AdapterOp = z.enum(["tasks", "solve", "verify", "score"]);
+export type AdapterOp = z.infer<typeof AdapterOp>;
+
+/** RunSpec fields Orbit sets itself; an adapter's run spec may not contain them. */
+export const ORBIT_OWNED_SPEC_FIELDS = [
+  "name",
+  "group",
+  "params",
+  "project",
+  "snapshot",
+  "auth",
+  "agentBundle",
+  "agent",
+  "parentId",
+  "priority",
+  "passEnv",
+] as const;
+
+/**
+ * A run as an adapter describes it: RunSpec fields (validated as a RunSpec once Orbit has added its
+ * own) with either `command`, or `agentTask` for Agent methods, which Orbit turns into the method's
+ * Agent CLI command with its auth and bundle.
+ */
+export const AdapterRunSpec = z
+  .looseObject({
+    command: z.array(z.string()).min(1).optional(),
+    agentTask: z.object({ instruction: z.string().min(1) }).optional(),
+  })
+  .refine((s) => !ORBIT_OWNED_SPEC_FIELDS.some((k) => k in s), {
+    message: `adapter run specs may not set ${ORBIT_OWNED_SPEC_FIELDS.join(", ")}`,
+  })
+  .refine((s) => Boolean(s.command) !== Boolean(s.agentTask), {
+    message: "an adapter run spec needs exactly one of command or agentTask",
+  });
+export type AdapterRunSpec = z.infer<typeof AdapterRunSpec>;
+
+export const AdapterRunRef = z.object({
+  run: Run,
+  /** Host path of the run's output directory (`$ORBIT_OUTPUT`). */
+  output: z.string(),
+});
+export type AdapterRunRef = z.infer<typeof AdapterRunRef>;
+
+/** Request on the adapter's stdin; `trial` from `solve` on, `solve` from `verify`, `verify` for `score`. */
+export const AdapterRequest = z.object({
+  protocol: z.literal(ADAPTER_PROTOCOL),
+  op: AdapterOp,
+  benchmark: z.object({
+    name: z.string(),
+    path: z.string(),
+    config: z.record(z.string(), z.string()),
+  }),
+  trial: z
+    .object({
+      id: z.string(),
+      task: z.string(),
+      method: Method,
+      seed: z.number().int(),
+      /** Job options (`orbit bench run -o key=value`). */
+      options: z.record(z.string(), z.string()),
+      timeoutMin: z.number().positive().optional(),
+      /** Private per-trial host directory for files mounted into the runs; removed with the trial. */
+      staging: z.string(),
+      /** The method's auth profile uses the host network (for runners that start containers). */
+      hostNetwork: z.boolean(),
+    })
+    .optional(),
+  solve: AdapterRunRef.optional(),
+  verify: AdapterRunRef.optional(),
+});
+export type AdapterRequest = z.infer<typeof AdapterRequest>;
+
+export const AdapterTasksResponse = z.object({ tasks: z.array(BenchTask) });
+export const AdapterSpecResponse = z.object({
+  spec: AdapterRunSpec,
+  /** Recorded on the trial (e.g. artifacts the solve run did not produce). */
+  issues: z.array(z.string()).default([]),
+});
+export type AdapterSpecResponse = z.input<typeof AdapterSpecResponse>;
+
+/** `score`: `invalid` when the verifier could not produce a trustworthy score. */
+export const ScoreResult = z.object({
+  score: z.number().nullable(),
+  maxScore: z.number().positive().default(1),
+  invalid: z.boolean().default(false),
+  issues: z.array(z.string()).default([]),
+});
+export type ScoreResult = z.infer<typeof ScoreResult>;

@@ -62,6 +62,7 @@ packages/orbit/src/
 packages/web/  React SPA (Vite, uPlot); imports `@zjunlp/orbit/contracts` types only; built into
                packages/orbit/dist/web and served by the daemon
 plugin/        skills/orbit/SKILL.md for Codex / Claude Code (+ .claude-plugin manifest)
+examples/      bench-adapters/<benchmark>/: external bench adapters (not part of the package)
 ```
 
 规则（由 `pnpm check:boundaries` 强制，定义在 `scripts/boundaries.ts`）：
@@ -224,8 +225,10 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
   `oracle` 运行参考解、`empty` 什么都不交，用于检验适配器；Agent 方法必须有 harness 匹配的 auth profile。
   `bundle` 目录（AGENTS.md / CLAUDE.md、skills）复制进 Agent home（`RunSpec.agentBundle`）；harness 版本由 Run 的
   `harness` 事件记录。
-- **Benchmark 登记**：`~/.orbit/benchmarks.json`（0600，daemon 写）存 `{ name, adapter: harbor | asi, path, python?,
-  instances?, env, passEnv[] }`。`passEnv` 只记变量名（如评审模型的 API key），启动 Run 时从 daemon 环境读取，不落盘。
+- **Benchmark 登记**：`~/.orbit/benchmarks.json`（0600，daemon 写）存 `{ name, adapter, path, config, env, passEnv[] }`。
+  `adapter` 为内置名（`harbor`、`asi`）或适配器可执行文件的绝对路径；`config` 是适配器自己的非密钥设置（如 asi 的
+  `python`、`instances`）；`env` 进入两个 Run；`passEnv` 只记变量名（如评审模型的 API key），只给 verify Run，启动时
+  从 daemon 环境读取，不落盘。登记时先调用一次适配器的 `tasks`，失败则不保存。
 - **Job / Trial**：sqlite 表 `bench_jobs`、`bench_trials`。每个 trial 独立推进：`pending → solving → verifying → done`；
   `BenchService` 监听 Run 变化推进，daemon 重启后从库中恢复未完成的 trial。solve 与 verify 都是普通 Run
   （同一租约、队列、记录、Web 详情），`group = bench-<job>`，tags `{bench, job, trial, phase}`；verify Run
@@ -244,17 +247,36 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 - **聚合**：每个方法的均分 = valid trial 的 `score / maxScore` 百分比均值。跨 job 对比时列为 `<job>/<method>`，
   给出全部 valid 任务的均值和**配对均值**（只取每一列都 valid 的任务），避免方法在不同任务子集上比较。
 
-**适配器**（`bench/adapter.ts`：`tasks`、`solveSpec`、`verifySpec`、`score`，只生成 RunSpec 与读文件，不提交 Run）：
+**适配器协议**（`bench/protocol.ts` 调用方，`bench/adapter.ts` 内置适配器一侧；契约 `contracts.Adapter*`）。
+内置与外部适配器只有这一种机制，用户的 Agent 写一个可执行文件即可接入新 benchmark，不需要重新构建 Orbit：
+
+- 调用：daemon 执行 `<adapter> <op>`（内置为 `orbit __adapter <name> <op>`），cwd 为 benchmark 目录，stdin 为一个 JSON
+  请求，stdout 为一个 JSON 回复；退出码非 0 即失败（stderr 末尾几行作为原因）。环境只含 `PATH`、`HOME`、`USER`、
+  `LANG`、`LC_ALL`、`TZ`、`TMPDIR` 与 `ORBIT_ADAPTER_PROTOCOL=1`，daemon 环境里的密钥不传给适配器。每次调用 120 s 超时。
+- 请求：`{ protocol: 1, op, benchmark: { name, path, config }, trial?, solve?, verify? }`；`trial` =
+  `{ id, task, method, seed, options, timeoutMin?, staging, hostNetwork }`（`staging` 是 trial 私有的宿主目录，用于要挂进
+  Run 的副本，trial 结束时删除）；`solve` / `verify` = `{ run, output }`（Run 记录与其 `$ORBIT_OUTPUT` 的宿主路径）。
+- 回复：`tasks` → `{ tasks: BenchTask[] }`；`solve` / `verify` → `{ spec, issues? }`；`score` →
+  `{ score, maxScore?, invalid?, issues? }`。适配器只生成 Run 描述、读文件，不提交 Run，不判定取消、超时、未启动。
+- Run 描述是 RunSpec 字段，但不能含 Orbit 自己管的字段（`name group params project snapshot auth agentBundle agent
+  parentId priority passEnv`），且 `command` 与 `agentTask: { instruction }` 二选一。Agent 方法（codex / claude-code）的
+  solve 用 `agentTask`：Orbit 按方法生成 Agent CLI 命令（`harness.agentCommand`，参数只在这里维护），并设置 auth、bundle 与
+  网络；也可以给 `command`（原生 runner 自己启动 Agent，如 ASI），Orbit 同样设置 auth 与 bundle。oracle / empty 只能给
+  `command`，verify 不能请求 Agent。Orbit 再加上 benchmark `env`（两个 Run）、`passEnv` 与 `priority = 1`（verify），
+  `snapshot = false`，最后按 RunSpec 校验。
+- 提交 job 与 daemon 重启后恢复 trial 都在后台依次推进（每次调用是一个进程），不阻塞 API 与 daemon 启动。
+
+内置适配器：
 
 1. **Harbor 格式**（`bench/harbor.ts`，TB-Science）：任务目录含 `task.toml`、`instruction.md`、`environment/Dockerfile`、
    `tests/`、`solution/`。solve Run 从 `environment/Dockerfile` 构建，以镜像的 WORKDIR 与 root 运行（与 Harbor 一致），
-   资源、网络、超时来自 `task.toml`；Agent 命令为 headless CLI + `instruction.md`，oracle 把 `solution/` 挂到
+   资源、网络、超时来自 `task.toml`；Agent 方法给出 `agentTask`（`instruction.md`），oracle 把 `solution/` 挂到
    `/solution` 执行 `solve.sh`。顶层 `artifacts` 声明的路径在 solve 结束时采集（`RunSpec.collect`，
    写入 `output/collected/<abs path>`），verify Run 从 `tests/Dockerfile` 构建，把采集到的产物复制挂载到目标路径，
    运行 `bash /tests/test.sh`，采集 `/logs/verifier`，读取 `reward.json`（`reward` 键或唯一键）或 `reward.txt`。
    只支持 `environment_mode = "separate"`；docker-compose 环境、其他 service 的 artifacts 标为不支持。
 2. **原生包装**（`bench/asi.ts`，ASI-Bench seed31415）：solve Run 以 **process 后端**运行
-   `python -m ai4sci_bench.cli run`（单实例、单 prompt level，`--output-dir $ORBIT_OUTPUT/native`）；Agent 方法走
+   `config.python -m ai4sci_bench.cli run`（单实例、单 prompt level，`--output-dir $ORBIT_OUTPUT/native`）；Agent 方法走
    ASI 自己的 `codex_cli` / `claude_code_cli` 适配器，oracle 用 `--agent-cmd` 复制 `reference/` 中的声明输出，empty 为
    `true`。verify Run 把 solve 结果复制到自己的输出目录，给没有产出任何声明文件的结果补一个空 `.outputs/`
    （原生 scorer 否则直接报错），再运行 `ai4sci_bench.cli score`；分数取该实例最新 attempt 的 `final_score / max_score`。
@@ -270,12 +292,16 @@ daemon 重启后按 pid + 启动时间重新接管进程。运行中的 process 
 
 **接口**：API `GET/POST /benchmarks`、`DELETE /benchmarks/:name`、`GET /benchmarks/:name/tasks`、
 `GET/POST /bench/jobs`、`GET /bench/jobs/:id`、`POST /bench/jobs/:id/cancel`、`GET /bench/compare?jobs=a,b`；
-CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|compare`；Web `/bench`（job 列表与登记的 benchmark）、
+CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|compare`（`add --adapter <name|path> -c KEY=VALUE`）；Web `/bench`（job 列表与登记的 benchmark）、
 `/bench/<job>`（方法均分、有效性分布、任务 × 方法分数矩阵、问题列表与 solve/verify Run 链接）、
 `/bench/compare?jobs=`（逐任务对比、全部与配对均值、相对第一列的差值）。接入新 benchmark 见
 [guides/bench-adapter.md](guides/bench-adapter.md)。
 
-- **接入验收（任意新 benchmark）**：oracle 满分、空答案零分、抽样与原版结果一致。
+- **外部适配器示例**：ResearchClawBench（`examples/bench-adapters/researchclawbench/`）。solve 为 Ubuntu 22.04 容器，
+  任务 workspace 在 `/task`（`data/`、`related_work/` 只读，其余可写，结束时采集），原版指令模板，RCB 的 venv 按宿主路径
+  只读挂载；verify 为 process Run，在 RCB `.venv` 中调用原版 `evaluation.score.score_run`。没有 report 为有效 0 分，
+  judge 调用失败为 invalid；分数 0–100（50 ≈ 原论文水平），多次 judge 取均值。RCB 没有参考解，oracle 不可用。
+- **接入验收（任意新 benchmark）**：oracle 满分（没有参考解时省略）、空答案零分、抽样与原版结果一致。
 - **已知限制**：verify Run 在 solve 结束后才提交，group 通知可能在 job 中途（某一时刻组内无排队/运行 Run）提前发出；
   ASI 包装每个 trial 调一次原生 runner，不复用其并行调度。
 

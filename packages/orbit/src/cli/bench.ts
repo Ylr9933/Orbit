@@ -129,10 +129,17 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
 
   bench
     .command("add <name> <path>")
-    .description("register a benchmark checkout")
-    .requiredOption("--adapter <adapter>", "harbor (task.toml tasks) | asi (ASI-Bench seed31415)")
-    .option("--python <python>", "asi: Python with the benchmark's dependencies")
-    .option("--instances <dir>", "asi: instances directory")
+    .description("register a benchmark checkout (its adapter must list the tasks)")
+    .requiredOption(
+      "--adapter <adapter>",
+      "harbor (task.toml tasks) | asi (ASI-Bench seed31415) | path of an adapter executable",
+    )
+    .option(
+      "-c, --config <KEY=VALUE>",
+      "adapter setting, e.g. python=/venv/bin/python for asi",
+      (v, p: string[]) => [...p, v],
+      [],
+    )
     .option(
       "-e, --env <KEY=VALUE>",
       "non-secret variable for every run",
@@ -141,7 +148,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
     )
     .option(
       "--pass-env <VAR>",
-      "variable copied from the daemon environment at launch (e.g. a judge API key)",
+      "variable copied from the daemon environment into verify runs (e.g. a judge API key)",
       (v, p: string[]) => [...p, v],
       [],
     )
@@ -151,9 +158,8 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
         name: string,
         path: string,
         o: {
-          adapter: "harbor" | "asi";
-          python?: string;
-          instances?: string;
+          adapter: string;
+          config: string[];
           env: string[];
           passEnv: string[];
           json?: boolean;
@@ -161,10 +167,9 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
       ) => {
         const b = await (await client()).benchmarkPut({
           name,
-          adapter: o.adapter,
+          adapter: o.adapter.includes("/") ? resolve(o.adapter) : o.adapter,
           path: resolve(path),
-          python: o.python,
-          instances: o.instances ? resolve(o.instances) : undefined,
+          config: kv(o.config, "--config"),
           env: kv(o.env, "--env"),
           passEnv: o.passEnv,
         });

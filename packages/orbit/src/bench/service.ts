@@ -20,15 +20,14 @@ import {
   type Outcome,
   type Run,
   type RunSpecInput,
+  type ScoreResult,
   type Trial,
 } from "../contracts/index.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import type { Store } from "../store/index.ts";
-import type { Adapter, TrialContext } from "./adapter.ts";
-import { asiAdapter } from "./asi.ts";
 import { classify, solveVerdict } from "./classify.ts";
-import { harborAdapter } from "./harbor.ts";
+import { AdapterClient, type TrialInput, toRunSpec } from "./protocol.ts";
 import type { BenchmarkRegistry } from "./registry.ts";
 
 export interface BenchServiceDeps {
@@ -37,6 +36,8 @@ export interface BenchServiceDeps {
   registry: BenchmarkRegistry;
   paths: OrbitPaths;
   auth?: AuthStore;
+  /** Command running this orbit binary; built-in adapters run as `<self> __adapter <name>`. */
+  self?: string[];
   log?: (msg: string) => void;
 }
 
@@ -132,9 +133,19 @@ export class BenchService {
     deps.runs.on("change", ({ run }) => this.onRun(run));
   }
 
-  /** Pick up trials left open by a previous daemon (after RunService has recovered its runs). */
-  async start(): Promise<void> {
-    for (const t of this.deps.store.openTrials()) await this.advance(t.id);
+  /**
+   * Pick up trials left open by a previous daemon (after RunService has recovered its runs), in the
+   * background: advancing them may call adapters, which must not hold up the daemon's start.
+   */
+  start(): void {
+    this.advanceAll(this.deps.store.openTrials().map((t) => t.id));
+  }
+
+  /** Advance trials one after another in the background (each may run adapter processes). */
+  private advanceAll(ids: string[]): void {
+    void (async () => {
+      for (const id of ids) await this.advance(id);
+    })();
   }
 
   // ---- benchmarks ----
@@ -145,17 +156,22 @@ export class BenchService {
     return b;
   }
 
-  private adapter(b: Benchmark): Adapter {
-    if (b.adapter === "harbor") return harborAdapter;
-    return asiAdapter((m) =>
-      m.auth ? Boolean(this.deps.auth?.get(m.auth)?.profile.hostNetwork) : false,
-    );
+  private adapter(b: Benchmark): AdapterClient {
+    return new AdapterClient(b, this.deps.self);
   }
 
-  tasks(name: string): BenchTask[] {
-    const b = this.benchmark(name);
+  /** Tasks as the adapter lists them; adapter failures are the user's to fix. */
+  async tasksOf(b: Benchmark): Promise<BenchTask[]> {
     if (!existsSync(b.path)) throw new UserError(`benchmark path not found: ${b.path}`);
-    return this.adapter(b).tasks(b);
+    try {
+      return await this.adapter(b).tasks();
+    } catch (e) {
+      throw new UserError((e as Error).message);
+    }
+  }
+
+  tasks(name: string): Promise<BenchTask[]> {
+    return this.tasksOf(this.benchmark(name));
   }
 
   // ---- jobs ----
@@ -165,7 +181,7 @@ export class BenchService {
     if (!parsed.success) throw new UserError(parsed.error.issues.map((i) => i.message).join("; "));
     const spec = parsed.data;
     const b = this.benchmark(spec.benchmark);
-    const all = this.tasks(b.name);
+    const all = await this.tasks(b.name);
     const names = new Set<string>();
     for (const m of spec.methods) {
       if (names.has(m.name)) throw new UserError(`duplicate method name: ${m.name}`);
@@ -209,8 +225,8 @@ export class BenchService {
           this.deps.store.putTrial(t);
           ids.push(t.id);
         }
-    for (const id of ids) await this.advance(id);
-    return this.deps.store.getJob(job.id) ?? job;
+    this.advanceAll(ids);
+    return job;
   }
 
   private checkMethod(m: Method): void {
@@ -301,18 +317,28 @@ export class BenchService {
     }
   }
 
-  private context(job: BenchJob, t: Trial): TrialContext {
+  private context(job: BenchJob, t: Trial): { b: Benchmark; trial: TrialInput } {
     const method = job.spec.methods.find((m) => m.name === t.method);
     if (!method) throw new Error(`method ${t.method} not in job ${job.id}`);
     return {
-      benchmark: this.benchmark(job.spec.benchmark),
-      task: t.task,
-      method,
-      seed: t.seed,
-      options: job.spec.options,
-      timeoutMin: job.spec.timeoutMin,
-      staging: join(this.deps.paths.bench, job.id, t.id),
+      b: this.benchmark(job.spec.benchmark),
+      trial: {
+        id: t.id,
+        task: t.task,
+        method,
+        seed: t.seed,
+        options: job.spec.options,
+        timeoutMin: job.spec.timeoutMin,
+        staging: join(this.deps.paths.bench, job.id, t.id),
+        hostNetwork: method.auth
+          ? Boolean(this.deps.auth?.get(method.auth)?.profile.hostNetwork)
+          : false,
+      },
     };
+  }
+
+  private ref(run: Run) {
+    return { run, output: this.deps.runs.dirs(run.id).output };
   }
 
   private async submitRun(job: BenchJob, t: Trial, phase: "solve" | "verify", spec: RunSpecInput) {
@@ -393,11 +419,12 @@ export class BenchService {
 
     if (t.state === "pending") {
       if (job.state === "cancelled") return this.skipped(t, "unknown", "job cancelled");
-      let ctx: TrialContext;
       let spec: RunSpecInput;
       try {
-        ctx = this.context(job, t);
-        spec = this.adapter(ctx.benchmark).solveSpec(ctx);
+        const { b, trial } = this.context(job, t);
+        const reply = await this.adapter(b).solve(trial);
+        spec = toRunSpec(reply.spec, trial.method, b, "solve");
+        t.issues = [...t.issues, ...reply.issues];
       } catch (e) {
         return this.skipped(t, "invalid", `solve spec: ${(e as Error).message}`);
       }
@@ -427,16 +454,17 @@ export class BenchService {
         }
         return this.finish(t, outcome);
       }
-      let plan: ReturnType<Adapter["verifySpec"]>;
+      let spec: RunSpecInput;
       try {
-        const ctx = this.context(job, t);
-        plan = this.adapter(ctx.benchmark).verifySpec(ctx, solve, runs.dirs(solve.id).output);
+        const { b, trial } = this.context(job, t);
+        const reply = await this.adapter(b).verify(trial, this.ref(solve));
+        spec = toRunSpec(reply.spec, trial.method, b, "verify");
+        t.issues = [...t.issues, ...reply.issues];
       } catch (e) {
         return this.finish(t, failed(solve, t.issues, `verify spec: ${(e as Error).message}`));
       }
-      t.issues = [...t.issues, ...plan.issues];
       try {
-        const run = await this.submitRun(job, t, "verify", plan.spec);
+        const run = await this.submitRun(job, t, "verify", spec);
         t.verifyRunId = run.id;
         t.state = "verifying";
         this.deps.store.putTrial(t);
@@ -452,16 +480,11 @@ export class BenchService {
     if (!verify)
       return this.finish(t, classify(solve, null, null, [...t.issues, "verify run missing"]));
     if (!isTerminal(verify.state)) return this.cancelIfJobCancelled(job.id, verify.id);
-    let score = null;
+    let score: ScoreResult | null = null;
     if (verify.startedAt && verify.state !== "cancelled" && verify.state !== "lost") {
       try {
-        const ctx = this.context(job, t);
-        score = this.adapter(ctx.benchmark).score(
-          ctx,
-          solve,
-          runs.dirs(solve.id).output,
-          runs.dirs(verify.id).output,
-        );
+        const { b, trial } = this.context(job, t);
+        score = await this.adapter(b).score(trial, this.ref(solve), this.ref(verify));
       } catch (e) {
         score = {
           score: null,
