@@ -27,6 +27,7 @@ import {
 } from "../contracts/index.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
+import { runAgentFailure } from "../sessions/index.ts";
 import type { Store } from "../store/index.ts";
 import { classify, solveVerdict } from "./classify.ts";
 import { AdapterClient, type TrialInput, toRunSpec } from "./protocol.ts";
@@ -569,6 +570,7 @@ export class BenchService {
         };
       }
     }
-    this.finish(t, classify(solve, verify, score, t.issues));
+    const agent = await runAgentFailure(runs.dirs(solve.id).agent).catch(() => null);
+    this.finish(t, classify(solve, verify, score, t.issues, agent));
   }
 }

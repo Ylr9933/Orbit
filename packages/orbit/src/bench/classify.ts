@@ -1,8 +1,10 @@
 // Trial outcome: execution (how the solve run ended), evaluation (whether the score can be trusted)
 // and cleanup are kept apart. Only `valid` outcomes enter means; `unknown` means Orbit cannot tell
 // (cancelled or lost), `invalid` means the environment or verifier failed to produce a real score,
-// or the solve run was killed for exceeding its memory request.
+// the solve run was killed for exceeding its memory request, or its Agent could not work (credentials,
+// model access, quota, endpoint).
 import type { Outcome, Run, ScoreResult } from "../contracts/index.ts";
+import type { AgentFailure } from "../sessions/index.ts";
 
 const cleanupOf = (...runs: (Run | null)[]): Outcome["cleanup"] => {
   const rs = runs.filter((r): r is Run => r !== null);
@@ -41,12 +43,15 @@ export function classify(
   verify: Run | null,
   score: ScoreResult | null,
   issues: string[] = [],
+  agent: AgentFailure | null = null,
 ): Outcome {
   const base = { execution: solve.state as string, maxScore: score?.maxScore ?? 1 };
   const all = [...issues];
   if (solve.state === "failed" && timedOut(solve)) all.push("solve timed out");
   // Out of memory is the resource request's fault, not the method's: the score is kept but invalid.
   const oom = solve.usage?.oomKilled ? oomIssue(solve) : null;
+  // Like OOM: the setup's fault, not the method's; the score is kept but invalid.
+  const agentIssue = agent ? `Agent stopped: ${agent.kind} (${agent.message})` : null;
   if (!oom && solve.usage?.oomKills)
     all.push(`${solve.usage.oomKills} process(es) in the solve run killed for memory`);
   const out = (
@@ -71,8 +76,9 @@ export function classify(
     return out("invalid", null, [`verifier environment failed: ${verify.reason ?? "not started"}`]);
   if (timedOut(verify)) return out("invalid", null, ["verify timed out"]);
   if (verify.usage?.oomKilled) return out("invalid", null, [`verify ${oomIssue(verify)}`]);
-  if (!score) return out("invalid", null, ["no score", ...(oom ? [oom] : [])]);
-  if (score.invalid || score.score === null || oom)
-    return out("invalid", score.score, [...score.issues, ...(oom ? [oom] : [])]);
+  const setup = [oom, agentIssue].filter((x): x is string => x !== null);
+  if (!score) return out("invalid", null, ["no score", ...setup]);
+  if (score.invalid || score.score === null || setup.length)
+    return out("invalid", score.score, [...score.issues, ...setup]);
   return out("valid", score.score, score.issues);
 }

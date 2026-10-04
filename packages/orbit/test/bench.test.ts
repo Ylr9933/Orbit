@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { handle } from "../src/bench/adapter.ts";
-import { asiScore, modelError, oracleTemplate, parseTaskMeta } from "../src/bench/asi.ts";
+import {
+  asiScore,
+  modelError,
+  oracleTemplate,
+  parseTaskMeta,
+  scorerIssues,
+} from "../src/bench/asi.ts";
 import { classify, solveVerdict } from "../src/bench/classify.ts";
 import {
   findHarborTasks,
@@ -30,7 +36,7 @@ import {
   type Run,
   type Trial,
 } from "../src/contracts/index.ts";
-import { agentCommand } from "../src/harness/index.ts";
+import { agentCommand, agentErrorKind } from "../src/harness/index.ts";
 import { rewriteDockerArgs, type ShimConfig } from "../src/runs/shim.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "orbit-bench-"));
@@ -398,6 +404,51 @@ output:
     ).toBe("model_unavailable");
     expect(modelError(ev({ type: "error", message: "rate limited" }))).toBeNull();
     expect(modelError(null)).toBeNull();
+    // Quota; reconnect notices are not the outcome, the final turn.failed is.
+    const quota = "You've hit your usage limit. Try again later.";
+    expect(modelError(ev({ type: "turn.failed", error: { message: quota } }))).toBe(
+      "model_quota_exhausted",
+    );
+    const retried = [
+      { type: "error", message: "Reconnecting... 1/5 (401 Unauthorized: invalid_api_key)" },
+      { type: "turn.failed", error: { message: "unexpected status 401 Unauthorized" } },
+    ];
+    expect(modelError(retried.map((e) => JSON.stringify(e)).join("\n"))).toBe(
+      "model_authentication_failed",
+    );
+    expect(
+      modelError(JSON.stringify({ type: "error", message: "Reconnecting... 2/5 (usage limit)" })),
+    ).toBeNull();
+  });
+
+  it("names why an Agent CLI could not work, and nothing else", () => {
+    expect(agentErrorKind("unexpected status 401 Unauthorized: Incorrect API key")).toBe(
+      "model_authentication_failed",
+    );
+    expect(agentErrorKind("insufficient_quota")).toBe("model_quota_exhausted");
+    expect(agentErrorKind("Credit balance is too low")).toBe("model_quota_exhausted");
+    expect(agentErrorKind("The 'x' model is not supported when using Codex")).toBe(
+      "model_unavailable",
+    );
+    expect(agentErrorKind("stream disconnected before completion: Connection reset")).toBe(
+      "model_unreachable",
+    );
+    expect(agentErrorKind("python: No module named numpy")).toBeNull();
+    expect(agentErrorKind("Model metadata for x not found")).toBeNull();
+  });
+
+  it("finds judge and file problems inside an ASI score item", () => {
+    expect(
+      scorerIssues({
+        gate_results: [{ scorer_name: "g", details: { error: "FileNotFoundError: pred/a.npy" } }],
+        score_results: [
+          { scorer_name: "judge", details: { evaluator_unavailable: true, error: "400" } },
+          { scorer_name: "ok", details: { error: null } },
+          { scorer_name: "m", message: "open: No such file or directory", details: null },
+        ],
+      }),
+    ).toEqual({ judgeUnavailable: ["judge"], missingFile: ["g", "m"] });
+    expect(scorerIssues({})).toEqual({ judgeUnavailable: [], missingFile: [] });
   });
 
   it("scores the latest attempt and marks scorer or model failures invalid", () => {
@@ -462,6 +513,21 @@ output:
       invalid: true,
       issues: ["model_authentication_failed", "runner status failed"],
     });
+    native("completed");
+    report([
+      {
+        ...item,
+        final_score: 20,
+        score_results: [{ scorer_name: "llm", details: { evaluator_unavailable: true } }],
+        gate_results: [{ scorer_name: "files", details: { error: "No such file or directory" } }],
+      },
+    ]);
+    // A judge that could not run makes the score untrustworthy; a missing file alone is a note.
+    expect(asiScore(ctx, solve, verify)).toMatchObject({
+      invalid: true,
+      score: 20,
+      issues: ["judge unavailable: llm", "scorer could not find a file: files"],
+    });
   });
 });
 
@@ -512,6 +578,14 @@ describe("outcome classification", () => {
       cleanup: "failed",
     });
     expect(classify(run({}), null, null).evaluation).toBe("unknown");
+    // The Agent could not work (credentials, quota, ...): the score is kept but not trusted.
+    const agent = { kind: "model_quota_exhausted", message: "usage limit" };
+    expect(classify(run({}), run({}), { ...score, score: 0 }, [], agent)).toMatchObject({
+      evaluation: "invalid",
+      score: 0,
+      issues: ["Agent stopped: model_quota_exhausted (usage limit)"],
+    });
+    expect(classify(run({}), run({}), score, [], null).evaluation).toBe("valid");
   });
 
   it("makes an out-of-memory solve invalid and notes memory kills of a surviving run", () => {

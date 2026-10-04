@@ -268,7 +268,8 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 | solve 未启动（镜像构建、租约、认证失败） | invalid（环境问题，不是方法的结果） |
 | solve 失败或超时 | 照常 verify（方法的结果；超时记入 issues） |
 | solve 因内存不足被杀（`usage.oomKilled`，资源申请的问题，不是方法的结果；仍照常 verify 并保留分数） | invalid |
-| verify 未启动、超时、内存不足，没有分数，或适配器判为无效（无 reward、scorer 内部错误、模型不可用且 0 分） | invalid |
+| solve 内的 Agent 最后一轮以认证、额度、模型不可用或连不上模型结束（`sessions.runAgentFailure` 读 Run 的 Agent home，规则在 `harness.agentErrorKind`；对所有适配器生效，保留分数） | invalid |
+| verify 未启动、超时、内存不足，没有分数，或适配器判为无效（无 reward、scorer 内部错误、judge 不可用、模型不可用且 0 分） | invalid |
 | 其余 | valid |
 
   只有 `valid` 的分数进入均分；无效或未知单独列出，不静默计入。清理状态汇总两个 Run 的 `cleanup`。

@@ -11,6 +11,7 @@ import {
   loadTranscript,
   parseClaude,
   parseCodex,
+  runAgentFailure,
 } from "../src/sessions/index.ts";
 
 const root = mkdtempSync(join(tmpdir(), "orbit-sessions-"));
@@ -152,5 +153,51 @@ describe("sessions of the Agent inside a run", () => {
       harness: "claude-code",
       sessionId: "abc-def-123456",
     });
+  });
+});
+
+describe("how the Agent inside a run ended", () => {
+  it("reports a Codex turn that ended on a credential or quota error, not earlier retries", async () => {
+    const agent = join(root, "fail-codex");
+    expect(await runAgentFailure(agent)).toBeNull();
+    const dir = join(agent, "codex", "sessions", "2026", "10", "04");
+    mkdirSync(dir, { recursive: true });
+    const done = (error: unknown) => ({
+      type: "event_msg",
+      payload: { type: "task_complete", last_agent_message: null, error },
+    });
+    const f = join(dir, "rollout-a.jsonl");
+    writeFileSync(
+      f,
+      jl([
+        { type: "session_meta", payload: {} },
+        done({ message: "401 Unauthorized: invalid_api_key" }),
+      ]),
+    );
+    expect(await runAgentFailure(agent)).toEqual({
+      kind: "model_authentication_failed",
+      message: "401 Unauthorized: invalid_api_key",
+    });
+    // A later turn that finished normally wins; an ordinary failure is the method's result.
+    writeFileSync(f, jl([done({ message: "usage limit" }), done(null)]));
+    expect(await runAgentFailure(agent)).toBeNull();
+    writeFileSync(f, jl([done({ message: "tool crashed" })]));
+    expect(await runAgentFailure(agent)).toBeNull();
+  });
+
+  it("reports a Claude Code session whose last reply is an API error", async () => {
+    const agent = join(root, "fail-claude");
+    const dir = join(agent, "claude", "projects", "-task");
+    mkdirSync(dir, { recursive: true });
+    const reply = (text: string, api: boolean) => ({
+      type: "assistant",
+      isApiErrorMessage: api,
+      message: { content: [{ type: "text", text }] },
+    });
+    const f = join(dir, "0b6c2a1e-5f3d-4c7a-9e21-7d4b8f2a6c11.jsonl");
+    writeFileSync(f, jl([reply("working", false), reply("Credit balance is too low", true)]));
+    expect(await runAgentFailure(agent)).toMatchObject({ kind: "model_quota_exhausted" });
+    writeFileSync(f, jl([reply("Credit balance is too low", true), reply("done", false)]));
+    expect(await runAgentFailure(agent)).toBeNull();
   });
 });

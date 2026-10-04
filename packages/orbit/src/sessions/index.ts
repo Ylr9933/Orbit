@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { AgentRef, SessionMessage, SessionTranscript } from "../contracts/index.ts";
+import { agentErrorKind } from "../harness/index.ts";
 
 const MAX_TEXT = 8000;
 const MAX_TOOL_TEXT = 4000;
@@ -336,4 +337,44 @@ export async function loadRunAgentTranscript(agentDir: string): Promise<SessionT
     file: hit.file,
     messages: messages.slice(-MAX_MESSAGES),
   };
+}
+
+export interface AgentFailure {
+  kind: string;
+  message: string;
+}
+
+const errorText = (v: unknown): string => {
+  const m = (v as { message?: unknown } | null)?.message;
+  return typeof m === "string" ? m : typeof v === "string" ? v : JSON.stringify(v ?? "");
+};
+
+/**
+ * How the Agent that ran inside the run ended, when the CLI could not work (see
+ * `harness.agentErrorKind`): the error of Codex's last turn (`task_complete.error`), or Claude Code's
+ * last reply when it is an API error. Earlier, retried errors do not count.
+ */
+export async function runAgentFailure(agentDir: string): Promise<AgentFailure | null> {
+  let text: string | null = null;
+  const codex = (await jsonlBelow(join(agentDir, "codex", "sessions"), 4))[0];
+  if (codex) {
+    for await (const e of jsonLines(codex.file)) {
+      const p = e.payload as { type?: unknown; error?: unknown } | undefined;
+      if (e.type === "event_msg" && p?.type === "task_complete")
+        text = p.error ? errorText(p.error) : null;
+    }
+  } else {
+    const claude = (await jsonlBelow(join(agentDir, "claude", "projects"), 2))[0];
+    if (!claude) return null;
+    for await (const e of jsonLines(claude.file)) {
+      if (e.type !== "assistant") continue;
+      const content = (e.message as { content?: unknown } | undefined)?.content;
+      const first = Array.isArray(content)
+        ? (content[0] as { text?: unknown } | undefined)
+        : undefined;
+      text = e.isApiErrorMessage === true ? String(first?.text ?? "API error") : null;
+    }
+  }
+  const kind = text ? agentErrorKind(text) : null;
+  return kind && text ? { kind, message: clip(text, 200).text } : null;
 }

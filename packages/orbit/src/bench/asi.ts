@@ -4,6 +4,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AdapterRequest, BenchTask, Method } from "../contracts/index.ts";
+import { agentErrorKind } from "../harness/index.ts";
 import type { AdapterHandlers, RunDescription, ScoreReply, TrialRequest } from "./adapter.ts";
 
 /** The registered benchmark as the adapter sees it; `config.python`, `config.instances`. */
@@ -281,11 +282,13 @@ export function nativeResults(nativeDir: string): NativeResult[] {
 }
 
 /**
- * A model the harness could not use (unknown model, no access, bad credentials): a zero from such a
- * run measures the setup, not the method. Reads the JSON event lines the CLI adapters record.
+ * A model the harness could not use (credentials, model access, quota, endpoint): a zero from such a
+ * run measures the setup, not the method. Reads the JSON event lines the CLI adapters record; the
+ * final `turn.failed` wins over earlier errors, and reconnect notices do not count.
  */
 export function modelError(message: unknown): string | null {
   if (typeof message !== "string" || !message) return null;
+  let found: string | null = null;
   for (const line of message.split("\n")) {
     const text = line.trim();
     if (!text.startsWith("{")) continue;
@@ -296,16 +299,40 @@ export function modelError(message: unknown): string | null {
       continue;
     }
     if (ev.type !== "error" && ev.type !== "turn.failed") continue;
-    const detail = JSON.stringify(ev.error ?? ev.message ?? "").toLowerCase();
-    if (/invalid_api_key|authentication_error|unauthorized/.test(detail))
-      return "model_authentication_failed";
-    if (
-      detail.includes("model") &&
-      /not supported|does not exist|do not have access|model_not_found/.test(detail)
-    )
-      return "model_unavailable";
+    const detail = JSON.stringify(ev.error ?? ev.message ?? "");
+    if (ev.type === "error" && detail.includes("Reconnecting...")) continue;
+    const kind = agentErrorKind(detail);
+    if (ev.type === "turn.failed") return kind;
+    found = kind ?? found;
   }
-  return null;
+  return found;
+}
+
+interface ScoreDetail {
+  scorer_name?: string;
+  message?: unknown;
+  details?: Record<string, unknown> | null;
+}
+
+/**
+ * Scorer problems hidden inside a report item: a judge that could not be reached scores 0 with
+ * `details.evaluator_unavailable` (the score is not a real one), and a scorer that could not find a
+ * file says so in its error (worth a look: the scorer's setup or the Agent's missing output).
+ */
+export function scorerIssues(item: { gate_results?: unknown; score_results?: unknown }): {
+  judgeUnavailable: string[];
+  missingFile: string[];
+} {
+  const judgeUnavailable: string[] = [];
+  const missingFile: string[] = [];
+  const all = [item.gate_results, item.score_results].flatMap((x) => (Array.isArray(x) ? x : []));
+  for (const d of all as ScoreDetail[]) {
+    const name = d?.scorer_name ?? "scorer";
+    if (d?.details?.evaluator_unavailable === true) judgeUnavailable.push(name);
+    const text = `${String(d?.details?.error ?? "")} ${String(d?.details?.setup_error ?? "")} ${String(d?.message ?? "")}`;
+    if (/FileNotFoundError|No such file or directory/.test(text)) missingFile.push(name);
+  }
+  return { judgeUnavailable, missingFile };
 }
 
 interface ScoreItem {
@@ -315,6 +342,8 @@ interface ScoreItem {
   final_score?: number;
   max_score?: number;
   scorer_internal_error?: boolean;
+  gate_results?: unknown;
+  score_results?: unknown;
 }
 
 export function asiScore(ctx: Trial, solveOutput: string, verifyOutput: string): ScoreReply {
@@ -349,12 +378,20 @@ export function asiScore(ctx: Trial, solveOutput: string, verifyOutput: string):
   if (!existsSync(join(solveOutput, "native", ctx.task, `${instance}__${level}.outputs`)))
     issues.push("no declared output files produced");
   if (item.scorer_internal_error) issues.push("scorer_internal_error");
+  const hidden = scorerIssues(item);
+  if (hidden.judgeUnavailable.length)
+    issues.push(`judge unavailable: ${hidden.judgeUnavailable.join(", ")}`);
+  if (hidden.missingFile.length)
+    issues.push(`scorer could not find a file: ${hidden.missingFile.join(", ")}`);
   const err = modelError(native.at(-1)?.agent_output?.error_message);
   if (err && item.final_score === 0) issues.push(err);
   const status = native.at(-1)?.status;
   if (status && status !== "success" && status !== "completed")
     issues.push(`runner status ${status}`);
-  const invalid = Boolean(item.scorer_internal_error) || (err !== null && item.final_score === 0);
+  const invalid =
+    Boolean(item.scorer_internal_error) ||
+    hidden.judgeUnavailable.length > 0 ||
+    (err !== null && item.final_score === 0);
   return { score: item.final_score, maxScore, issues, invalid };
 }
 
