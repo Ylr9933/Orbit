@@ -165,6 +165,48 @@ def verify(req):
     }}
 
 
+def review(req, attempts):
+    """What the Orbit trial page shows: the report, the judge's per-item scores and settings."""
+    solve_out = req["solve"]["output"]
+    files = []
+    report = os.path.join(solve_out, "collected", WORKSPACE.lstrip("/"), "report", "report.md")
+    if os.path.isfile(report):
+        files.append({"label": "Report", "phase": "solve", "kind": "markdown",
+                      "path": os.path.relpath(report, solve_out)})
+    instructions = os.path.join(solve_out, "collected", WORKSPACE.lstrip("/"), "INSTRUCTIONS.md")
+    if os.path.isfile(instructions):
+        files.append({"label": "Instructions", "phase": "solve", "kind": "markdown",
+                      "path": os.path.relpath(instructions, solve_out)})
+    items = []
+    details = {}
+    score_file = os.path.join(req["verify"]["output"], "workspaces", req["trial"]["id"], "_score.json")
+    try:
+        with open(score_file, encoding="utf-8") as f:
+            data = json.load(f)
+        for it in data.get("items", []):
+            items.append({
+                "criterion": str(it.get("content", "")),
+                "type": str(it.get("type", "")),
+                "weight": float(it.get("weight", 1.0)),
+                "score": it.get("score"),
+                "maxScore": 100,
+                "reasoning": str(it.get("reasoning", "")),
+            })
+        details = {
+            "scorer model": data.get("scorer_model"),
+            "scoring mode": data.get("scoring_mode"),
+            "total weight": data.get("total_weight"),
+        }
+        files.append({"label": "Judge result", "phase": "verify", "kind": "json",
+                      "path": os.path.relpath(score_file, req["verify"]["output"])})
+    except (OSError, ValueError):
+        pass
+    if len(attempts) > 1:
+        details["attempts"] = ", ".join(f"{a['total']:.2f}" for a in attempts if "total" in a)
+    return {"files": files, "items": items,
+            "details": {k: v for k, v in details.items() if v is not None}}
+
+
 def score(req):
     def bad(issue):
         return {"score": None, "maxScore": 100, "invalid": True, "issues": [issue]}
@@ -179,7 +221,8 @@ def score(req):
     error = attempts[0].get("error")
     if error == NO_REPORT:
         # The method produced no report: its result, scored zero.
-        return {"score": 0, "maxScore": 100, "issues": ["no report in report/"]}
+        return {"score": 0, "maxScore": 100, "issues": ["no report in report/"],
+                "review": review(req, attempts)}
     if error:
         return bad(f"judge: {error}")
     issues = []
@@ -192,7 +235,7 @@ def score(req):
     if len(totals) > 1:
         issues.append("judge attempts: " + ", ".join(f"{t:.2f}" for t in totals))
     return {"score": sum(totals) / len(totals), "maxScore": 100, "invalid": invalid,
-            "issues": issues}
+            "issues": issues, "review": review(req, attempts)}
 
 
 def main():

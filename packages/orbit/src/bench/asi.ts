@@ -358,9 +358,33 @@ export function asiScore(ctx: Trial, solveOutput: string, verifyOutput: string):
   return { score: item.final_score, maxScore, issues, invalid };
 }
 
+/** The native result of the instance and the scorer report, for the trial page. */
+export function asiReview(
+  ctx: Trial,
+  solveOutput: string,
+  verifyOutput: string,
+): ScoreReply["review"] {
+  const level = ctx.options.promptLevel ?? "b1";
+  const name = `${ctx.task}${ASI_SEED_SUFFIX}__${level}.json`;
+  const files: NonNullable<ScoreReply["review"]>["files"] = [];
+  if (existsSync(join(solveOutput, "native", ctx.task, name)))
+    files.push({
+      label: "Runner result",
+      phase: "solve",
+      kind: "json",
+      path: join("native", ctx.task, name),
+    });
+  if (existsSync(join(verifyOutput, "score.json")))
+    files.push({ label: "Score report", phase: "verify", kind: "json", path: "score.json" });
+  return { files, items: [], details: { "prompt level": level } };
+}
+
 export const asiAdapter: AdapterHandlers = {
   tasks: (req) => listTasks(req.benchmark),
   solve: ({ benchmark, trial }) => ({ spec: asiSolveSpec(benchmark, trial) }),
   verify: ({ benchmark, solve }) => ({ spec: asiVerifySpec(benchmark, solve.output) }),
-  score: ({ trial, solve, verify }) => asiScore(trial, solve.output, verify.output),
+  score: ({ trial, solve, verify }) => ({
+    ...asiScore(trial, solve.output, verify.output),
+    review: asiReview(trial, solve.output, verify.output),
+  }),
 };

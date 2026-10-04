@@ -184,7 +184,7 @@ function Preview({
   return <pre>{text}</pre>;
 }
 
-function Csv({ text, sep }: { text: string; sep: string }) {
+export function Csv({ text, sep }: { text: string; sep: string }) {
   const rows = text
     .split(/\r?\n/)
     .filter(Boolean)

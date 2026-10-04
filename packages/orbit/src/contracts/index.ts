@@ -589,6 +589,62 @@ export type BenchJobSpecInput = z.input<typeof BenchJobSpec>;
 export const Evaluation = z.enum(["valid", "invalid", "unknown"]);
 export type Evaluation = z.infer<typeof Evaluation>;
 
+/**
+ * Kinds of review content the Web UI renders, each with its own built-in style. The set is closed:
+ * an adapter picks a kind, it never sends markup or styles. Unknown kinds are kept and shown with
+ * their `fallback` kind, else by file extension, else as text.
+ */
+export const REVIEW_KINDS = ["markdown", "image", "text", "json", "table"] as const;
+export type ReviewKind = (typeof REVIEW_KINDS)[number];
+const LIMIT_TEXT = 20_000;
+const clipText = (max: number) =>
+  z.string().transform((s) => (s.length > max ? `${s.slice(0, max)}…` : s));
+
+/** A file of the solve or verify run to show on the trial page. */
+export const ReviewFile = z.looseObject({
+  label: clipText(60),
+  phase: z.enum(["solve", "verify"]),
+  /** Relative to the run's output directory, without `..`. */
+  path: z
+    .string()
+    .min(1)
+    .refine(
+      (p) => !p.startsWith("/") && !p.split("/").includes(".."),
+      "path must stay in the output",
+    ),
+  /** One of REVIEW_KINDS, or a newer kind an older Orbit does not know (then `fallback` is used). */
+  kind: z.string().max(40).optional(),
+  fallback: z.enum(REVIEW_KINDS).optional(),
+});
+export type ReviewFile = z.infer<typeof ReviewFile>;
+
+/** One graded criterion. */
+export const ReviewItem = z.looseObject({
+  criterion: clipText(4000),
+  score: z.number().nullable().optional(),
+  maxScore: z.number().optional(),
+  weight: z.number().optional(),
+  /** Free label, e.g. `text` / `image` / `test`. */
+  type: clipText(40).optional(),
+  reasoning: clipText(LIMIT_TEXT).optional(),
+});
+export type ReviewItem = z.infer<typeof ReviewItem>;
+
+/**
+ * What the trial page shows besides the score: files to render, graded items, and short key/value
+ * details. Fields Orbit does not know are kept and listed under Details.
+ */
+export const Review = z.looseObject({
+  files: z.array(ReviewFile).max(20).default([]),
+  items: z.array(ReviewItem).max(500).default([]),
+  /** Short facts shown as a key/value table (scorer model, attempts, ...). */
+  details: z
+    .record(z.string().max(80), z.union([z.string().max(2000), z.number(), z.boolean(), z.null()]))
+    .refine((d) => Object.keys(d).length <= 50, "at most 50 details")
+    .default({}),
+});
+export type Review = z.infer<typeof Review>;
+
 /** Execution, evaluation and cleanup are separate: only `valid` scores enter means. */
 export const Outcome = z.object({
   /** How the solve run ended (RunState, or `skipped`). */
@@ -598,6 +654,8 @@ export const Outcome = z.object({
   maxScore: z.number(),
   issues: z.array(z.string()),
   cleanup: z.enum(["pending", "done", "failed"]),
+  /** What the adapter asked the trial page to show (null for older trials and adapters). */
+  review: Review.nullable().default(null),
 });
 export type Outcome = z.infer<typeof Outcome>;
 
@@ -802,6 +860,7 @@ export const ScoreResult = z.object({
   maxScore: z.number().positive().default(1),
   invalid: z.boolean().default(false),
   issues: z.array(z.string()).default([]),
+  review: Review.optional(),
 });
 export type ScoreResult = z.infer<typeof ScoreResult>;
 

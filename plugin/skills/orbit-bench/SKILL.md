@@ -38,7 +38,7 @@ experiments or grading inside the adapter.
 | `tasks` | `{"tasks": [{"id", "title", "supported", "reason", "tags"}]}` |
 | `solve` | `{"spec": run, "issues": []}` — request has `trial` (`task`, `method`, `seed`, `options`, `staging`, `timeoutMin`) |
 | `verify` | `{"spec": run}` — request adds `solve.output` (host path of the solve run's `$ORBIT_OUTPUT`) |
-| `score` | `{"score": n or null, "maxScore": m, "invalid": bool, "issues": []}` — request adds `verify.output` |
+| `score` | `{"score": n or null, "maxScore": m, "invalid": bool, "issues": [], "review": {...}}` — request adds `verify.output` |
 
 `run` uses `orbit run` fields: `image` or `dockerfile`, `resources`, `mounts`
 (`{source, target, mode}`), `env`, `network`, `workdir`, `collect` (container paths copied to
@@ -52,6 +52,10 @@ Rules:
 - `oracle` / `empty` get a plain `command`; without a reference solution, raise an error for `oracle`.
 - Writable copies and mount points go under `trial.staging` (create directories before mounting).
   The benchmark checkout stays read-only; set `PYTHONDONTWRITEBYTECODE=1` for Python.
+- Give `score` a `review` so the trial page shows the right things: `files` (`label`, `phase`
+  solve|verify, `path` relative to that run's output, `kind` markdown|image|text|json|table),
+  `items` (graded criteria: `criterion`, `score`, `maxScore`, `weight`, `reasoning`) and short
+  `details`. Never send HTML or styles; unknown kinds need a `fallback` from that list.
 - `invalid: true` only when the grader itself failed (API error, internal error, unusable model). A
   method that produced nothing gets a valid 0. Cancel, timeout, not-started and out-of-memory are
   judged by Orbit.

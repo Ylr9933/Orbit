@@ -80,6 +80,27 @@ orbit logs <solve 或 verify run>
 也可以手工喂请求：`echo '{"protocol":1,"op":"tasks","benchmark":{"name":"x","path":"/p","config":{}}}' | ./adapter.py tasks`。
 修改适配器后不需要重新登记（除非改了 `config`）。
 
+### 在 trial 页展示什么（`review`，可选）
+
+`score` 回复可以带 `review`，Orbit 存进 trial，Web trial 页按它生成标签：
+
+```json
+"review": {
+  "files": [
+    { "label": "Report", "phase": "solve", "kind": "markdown", "path": "collected/task/report/report.md" },
+    { "label": "Test output", "phase": "verify", "kind": "text", "path": "collected/logs/verifier/test-stdout.txt" }
+  ],
+  "items": [{ "criterion": "…", "type": "image", "weight": 0.45, "score": 5, "maxScore": 100, "reasoning": "…" }],
+  "details": { "scorer model": "gpt-5.1", "attempts": "13.95, 16.35" }
+}
+```
+
+- `path` 相对对应 Run 的 `$ORBIT_OUTPUT`（即请求里的 `solve.output` / `verify.output`），不能以 `/` 开头或含 `..`。
+- `kind` 只能选 `markdown`、`image`、`text`、`json`、`table`（CSV / TSV）。样式由 Orbit 决定，不要也不能传 HTML 或 CSS。
+  将来新增的 kind，旧版 Orbit 会用 `fallback`（上述五种之一）、再按扩展名、再按纯文本显示，并标注“未知类型”。
+- 其他字段不会丢：Details 标签按键值列出。文本过长会截断，条目数有上限（文件 20、items 500、details 50）。
+- 不给 `review` 时，trial 页退回通用猜测（solve 中的 Markdown 报告、verify 中的 JSON），Outputs 标签始终可看全部文件。
+
 ## 4. 任务资源文件
 
 不同任务需要的资源差别很大（有的要 GPU 训练，有的只做表格分析）。不要在适配器里硬编码，也不要每次让 Agent

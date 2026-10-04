@@ -36,12 +36,12 @@ import {
   runTitle,
   STATE_LABEL,
   STATES,
+  trialPath,
 } from "../lib/format.ts";
 import { overlayOpen, useHotkeys } from "../lib/hotkeys.ts";
 import { navigate, onLinkClick, setQuery, useLocation } from "../lib/router.ts";
 import { useRuns, useRunsState } from "../lib/runs-store.ts";
 import { useAsync } from "../lib/use.ts";
-import { trialPath } from "./Trial.tsx";
 
 type Job = BenchJobList["jobs"][number];
 const KINDS = ["all", "experiments", "bench"] as const;
@@ -101,6 +101,7 @@ export function Runs() {
     [jobByGroup],
   );
   const [deleting, setDeleting] = useState<string[] | null>(null);
+  const [deletingJob, setDeletingJob] = useState<Job | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -393,7 +394,9 @@ export function Runs() {
               ids={[...selected]}
               runs={runs}
               isBench={isBench}
+              jobs={[...jobByGroup.values()]}
               onDelete={(ids) => setDeleting(ids)}
+              onDeleteJob={(job) => setDeletingJob(job)}
             />
             <button
               type="button"
@@ -406,6 +409,28 @@ export function Runs() {
           </div>
         )}
       </div>
+      {deletingJob && (
+        <ConfirmDialog
+          title={`Delete bench job ${deletingJob.spec.name ?? deletingJob.id}`}
+          expected={deletingJob.id}
+          action="Delete this job"
+          onClose={() => setDeletingJob(null)}
+          onConfirm={async () => {
+            const r = await api.benchDeleteJob(deletingJob.id);
+            setSelected(new Set());
+            jobs.reload();
+            toast(
+              `Deleted job and ${r.deleted.length} run(s)${r.leftovers.length ? `; ${r.leftovers.length} folder(s) left on disk` : ""}`,
+            );
+          }}
+        >
+          <p>
+            This deletes the job <b>{deletingJob.spec.name ?? deletingJob.id}</b> (
+            {deletingJob.spec.benchmark}), its trials and all of their solve and verify runs: logs,
+            outputs, reports, Agent sessions and scores.
+          </p>
+        </ConfirmDialog>
+      )}
       {deleting && (
         <ConfirmDialog
           title={`Delete ${deleting.length} run${deleting.length > 1 ? "s" : ""}`}
@@ -450,31 +475,60 @@ function matchesJob(job: Job | undefined, terms: string[]): boolean {
   return terms.every((t) => hay.includes(t));
 }
 
-/** Finished runs outside bench jobs can be deleted; jobs are deleted from their page. */
+/**
+ * Finished runs outside bench jobs are deleted as runs; a bench job only as a whole, when every
+ * run of it is selected and the job is not running. Anything else says why it is left out.
+ */
 function DeleteSelected(props: {
   ids: string[];
   runs: Run[];
   isBench: (r: Run) => boolean;
+  jobs: Job[];
   onDelete: (ids: string[]) => void;
+  onDeleteJob: (job: Job) => void;
 }) {
-  const chosen = props.runs.filter((r) => props.ids.includes(r.id));
+  const sel = new Set(props.ids);
+  const chosen = props.runs.filter((r) => sel.has(r.id));
   const ok = chosen.filter((r) => !isActive(r.state) && r.cleanup === "done" && !props.isBench(r));
-  const skipped = chosen.length - ok.length;
-  if (!ok.length) return null;
+  const jobRuns = (j: Job) => props.runs.filter((r) => r.spec.group === `bench-${j.id}`);
+  const touched = props.jobs.filter((j) => jobRuns(j).some((r) => sel.has(r.id)));
+  const whole = touched.filter((j) => jobRuns(j).every((r) => sel.has(r.id)));
+  const partial = touched.length - whole.length;
+  const skipped = chosen.filter((r) => !props.isBench(r)).length - ok.length;
   return (
-    <button
-      type="button"
-      className="btn danger sm"
-      onClick={() => props.onDelete(ok.map((r) => r.id))}
-      title={
-        skipped
-          ? `${skipped} selected run(s) are active, not cleaned up, or part of a bench job (delete the job instead)`
-          : undefined
-      }
-    >
-      Delete {ok.length}
-      {skipped ? ` (${skipped} skipped)` : ""}
-    </button>
+    <>
+      {ok.length > 0 && (
+        <button
+          type="button"
+          className="btn danger sm"
+          onClick={() => props.onDelete(ok.map((r) => r.id))}
+          title={
+            skipped ? `${skipped} selected run(s) are still active or not cleaned up` : undefined
+          }
+        >
+          Delete {ok.length} run{ok.length > 1 ? "s" : ""}
+          {skipped ? ` (${skipped} skipped)` : ""}
+        </button>
+      )}
+      {whole.length === 1 && (
+        <button
+          type="button"
+          className="btn danger sm"
+          disabled={whole[0]?.state === "running"}
+          title={whole[0]?.state === "running" ? "Cancel the job before deleting it" : undefined}
+          onClick={() => props.onDeleteJob(whole[0] as Job)}
+        >
+          Delete job
+        </button>
+      )}
+      {(whole.length > 1 || partial > 0) && (
+        <span className="faint" style={{ fontSize: 12 }}>
+          {whole.length > 1
+            ? "Select one bench job at a time to delete it"
+            : "Runs of a bench job are deleted with the whole job: select its row"}
+        </span>
+      )}
+    </>
   );
 }
 

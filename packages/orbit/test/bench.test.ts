@@ -635,6 +635,7 @@ describe("aggregation", () => {
           maxScore: 2,
           issues: [],
           cleanup: "done",
+          review: null,
         }
       : null,
     createdAt: "t",
@@ -691,5 +692,59 @@ describe("methods", () => {
     expect(
       agentCommand({ name: "c", agent: "claude-code", auth: "p", model: "opus" }, "do"),
     ).toEqual(["claude", "-p", "--dangerously-skip-permissions", "--model", "opus", "do"]);
+  });
+});
+
+describe("review", () => {
+  it("validates declared files and items, keeps unknown fields and clips long text", async () => {
+    const { ScoreResult } = await import("../src/contracts/index.ts");
+    const r = ScoreResult.parse({
+      score: 1,
+      review: {
+        files: [
+          {
+            label: "Report",
+            phase: "solve",
+            path: "a/report.md",
+            kind: "notebook",
+            fallback: "markdown",
+            extra: 1,
+          },
+        ],
+        items: [{ criterion: "c", score: 5, reasoning: "x".repeat(30_000) }],
+        details: { model: "m", attempts: 3 },
+        futureField: [1, 2],
+      },
+    });
+    expect(r.review?.files[0]).toMatchObject({ kind: "notebook", fallback: "markdown", extra: 1 });
+    expect(r.review?.items[0]?.reasoning?.length).toBe(20_001);
+    expect((r.review as Record<string, unknown>).futureField).toEqual([1, 2]);
+    for (const path of ["/etc/passwd", "../x", "a/../../b"])
+      expect(
+        ScoreResult.safeParse({
+          score: 1,
+          review: { files: [{ label: "x", phase: "solve", path }] },
+        }).success,
+      ).toBe(false);
+    expect(
+      ScoreResult.safeParse({
+        score: 1,
+        review: { files: [{ label: "x", phase: "solve", path: "a", fallback: "html" }] },
+      }).success,
+    ).toBe(false);
+    expect(ScoreResult.parse({ score: 1 }).review).toBeUndefined();
+  });
+
+  it("keeps the review on the outcome, also when the score is not trusted", () => {
+    const review = { files: [], items: [{ criterion: "c" }], details: {} };
+    expect(
+      classify(run({}), run({}), { score: 1, maxScore: 1, issues: [], invalid: false, review })
+        .review,
+    ).toEqual(review);
+    expect(
+      classify(run({}), run({}), { score: 0, maxScore: 1, issues: [], invalid: true, review })
+        .review,
+    ).toEqual(review);
+    expect(classify(run({}), null, null).review).toBeNull();
   });
 });

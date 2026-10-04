@@ -96,3 +96,35 @@ describe("report paths", () => {
     ]);
   });
 });
+
+describe("review kinds", () => {
+  it("renders known kinds, falls back for unknown ones and says so", async () => {
+    const { resolveKind, extraFields, showValue, KNOWN_KINDS } = await import(
+      "../src/lib/review.ts"
+    );
+    const { REVIEW_KINDS } = await import("../../orbit/src/contracts/index.ts");
+    expect([...KNOWN_KINDS]).toEqual([...REVIEW_KINDS]);
+    expect(resolveKind({ kind: "markdown", path: "r.txt" })).toEqual({
+      kind: "markdown",
+      note: null,
+    });
+    expect(resolveKind({ kind: "notebook", fallback: "json", path: "a.ipynb" })).toEqual({
+      kind: "json",
+      note: 'unknown kind "notebook", shown as json',
+    });
+    expect(resolveKind({ kind: "plot3d", path: "fig.png" })).toEqual({
+      kind: "image",
+      note: 'unknown kind "plot3d", shown as image (file extension)',
+    });
+    expect(resolveKind({ kind: "weird", path: "out.bin" })).toEqual({
+      kind: "text",
+      note: 'unknown kind "weird", shown as text',
+    });
+    expect(resolveKind({ path: "results.csv" })).toEqual({ kind: "table", note: null });
+    expect(extraFields({ a: 1, files: [], newField: { x: 1 } }, ["a", "files"])).toEqual([
+      ["newField", { x: 1 }],
+    ]);
+    expect(showValue({ x: 1 })).toBe('{"x":1}');
+    expect(showValue(null)).toBe("null");
+  });
+});

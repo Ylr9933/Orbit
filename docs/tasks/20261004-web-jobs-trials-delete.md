@@ -37,6 +37,25 @@ name runs, and allow deleting finished runs and jobs behind a typed confirmation
 | CLI on the copy | same | passed | without a terminal refuses unless `--yes`; wrong typed text deletes nothing; group name deletes; `bench rm-job --yes` removes job and 4 runs |
 | Real `~/.orbit` | — | not_run | nothing deleted on the user's own records |
 
+## Follow-up: declared review, job deletion from the list, way back to the trial
+
+- `ScoreResult.review` / `Outcome.review` (contracts): `files` (closed kinds markdown, image, text,
+  json, table, with `fallback`), `items`, `details`; unknown fields kept, text clipped, counts
+  limited, paths kept inside the run output. Design follows Jupyter mimebundles (frontend picks a
+  renderer, text fallback), Adaptive Cards (`fallback`), Inspect AI (fixed score fields + metadata).
+- Adapters: RCB declares the report, instructions and judge result plus per-item scores; Harbor the
+  verifier outputs and reward; ASI the runner result and score report.
+- Trial page tabs come from `review`; Details lists details and unknown fields; Agent session and
+  Outputs always; old trials keep the guessing tabs.
+- Runs page: selecting a whole job row offers "Delete job"; partial selections explain why not.
+- Bench run pages: breadcrumbs `Bench / job / trial / phase` and "← Trial".
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| `pnpm verify` | passed | orbit 99 + 3 skipped, web 9 (review validation, path safety, fallback rules, kind list matches contracts) |
+| RCB adapter `score` on the real Chemistry_000 outputs | passed | 3 files, 3 items, details incl. attempts |
+| Browser on a copy of `~/.orbit` | passed | tabs from review; report 10 figures; Grader 3 rows; Details shows an unknown field; unknown kind shown with the fallback note; "← Trial" returns; job deleted from the run list after typing its id; no page errors |
+
 ## Next / open issues
 
-- No archive (hide without deleting); grader view understands `items` only.
+- No archive (hide without deleting). Trials finished before this change have no review (guessed tabs).

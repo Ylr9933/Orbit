@@ -462,6 +462,7 @@ export class BenchService {
       maxScore: 1,
       issues: [...t.issues, issue],
       cleanup: "done",
+      review: null,
     });
   }
 

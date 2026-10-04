@@ -1,13 +1,24 @@
 // One bench trial (task × method × seed) on one page: its outcome and issues, the solve → verify
-// timeline with measured use, the report the solve produced (Markdown with its figures), the
-// grader's per-item scores when it writes them, and the session of the Agent inside the solve.
-import { useEffect, useMemo, useState } from "react";
+// timeline with measured use, then tabs. The adapter's `review` decides the content tabs (one per
+// declared file, rendered by kind; Grader from its items; Details for its facts and any fields this
+// UI does not know). Without a review (older trials and adapters) the page guesses: the solve's
+// Markdown report and the verifier's JSON. The Agent session and all outputs are always there.
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { IconAlert, IconFile, IconFlask } from "../components/icons.tsx";
 import { joinPath, Markdown } from "../components/Markdown.tsx";
 import { TopBar } from "../components/TopBar.tsx";
 import { Empty, Link, Loading, StateBadge, useNow } from "../components/ui.tsx";
-import { api, fileUrl, type Run, type Trial } from "../lib/api.ts";
 import {
+  api,
+  fileUrl,
+  type Review,
+  type ReviewFile,
+  type ReviewItem,
+  type Run,
+  type Trial,
+} from "../lib/api.ts";
+import {
+  bytes,
   dateTime,
   duration,
   fmtScore,
@@ -17,21 +28,17 @@ import {
   runPath,
 } from "../lib/format.ts";
 import { reportCandidates } from "../lib/report.ts";
+import { extraFields, resolveKind, showValue } from "../lib/review.ts";
 import { setQuery, useLocation } from "../lib/router.ts";
 import { upsertRun, useRun } from "../lib/runs-store.ts";
 import { useAsync } from "../lib/use.ts";
+import { ArtifactsTab, Csv } from "./run/Artifacts.tsx";
 import { SessionTab } from "./run/Session.tsx";
 
-export const trialPath = (jobId: string, trialId: string) =>
-  `${jobPath(jobId)}/trials/${encodeURIComponent(trialId)}`;
-
-const TABS = ["report", "judge", "session"] as const;
-type Tab = (typeof TABS)[number];
-const TAB_LABEL: Record<Tab, string> = {
-  report: "Report",
-  judge: "Grader",
-  session: "Agent session",
-};
+interface TabDef {
+  key: string;
+  label: string;
+}
 
 /** A run from the live store, else fetched once. */
 function useRunOnce(id: string | null): Run | undefined {
@@ -57,7 +64,18 @@ export function TrialPage({ jobId, trialId }: { jobId: string; trialId: string }
   const solve = useRunOnce(trial?.solveRunId ?? null);
   const verify = useRunOnce(trial?.verifyRunId ?? null);
   const loc = useLocation();
-  const tab = (TABS.includes(loc.query.get("tab") as Tab) ? loc.query.get("tab") : "report") as Tab;
+  const review = trial?.outcome?.review ?? null;
+  const tabs: TabDef[] = useMemo(() => {
+    if (!review) return LEGACY_TABS;
+    const out: TabDef[] = review.files.map((f, i) => ({ key: `f${i}`, label: f.label }));
+    if (review.items.length) out.push({ key: "grader", label: "Grader" });
+    if (Object.keys(review.details).length || extraFields(review, REVIEW_FIELDS).length)
+      out.push({ key: "details", label: "Details" });
+    return [...out, ...ALWAYS_TABS];
+  }, [review]);
+  const tab = tabs.some((t) => t.key === loc.query.get("tab"))
+    ? (loc.query.get("tab") as string)
+    : (tabs[0]?.key as string);
   const now = useNow(1000, Boolean(solve && isActive(solve.state)));
   const crumbs = [
     { label: "Bench", href: "/bench" },
@@ -132,42 +150,66 @@ export function TrialPage({ jobId, trialId }: { jobId: string; trialId: string }
         </div>
       </div>
       <nav className="tabs">
-        {TABS.map((t) => (
+        {tabs.map((t, i) => (
           <a
-            key={t}
-            href={`?tab=${t}`}
-            className={tab === t ? "on" : ""}
+            key={t.key}
+            href={`?tab=${t.key}`}
+            className={tab === t.key ? "on" : ""}
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey) return;
               e.preventDefault();
-              setQuery({ tab: t === "report" ? null : t }, { replace: false, hash: "" });
+              setQuery({ tab: i === 0 ? null : t.key }, { replace: false, hash: "" });
             }}
           >
-            {TAB_LABEL[t]}
+            {t.label}
           </a>
         ))}
       </nav>
       <div className="page" style={{ display: "flex", flexDirection: "column" }}>
-        {tab === "report" &&
-          (solve ? (
-            <ReportView run={solve} />
-          ) : (
-            <Empty title="No solve run">The trial has not started a solve run.</Empty>
-          ))}
-        {tab === "judge" &&
-          (verify ? (
-            <GraderView run={verify} />
-          ) : (
-            <Empty title="Not verified">
-              {trial.state === "done"
-                ? "No verify run for this trial."
-                : "Waiting for the solve run."}
-            </Empty>
-          ))}
-        {tab === "session" && (solve ? <SessionTab run={solve} /> : <Empty title="No solve run" />)}
+        <TabBody tab={tab} trial={trial} review={review} solve={solve} verify={verify} />
       </div>
     </>
   );
+}
+
+const ALWAYS_TABS: TabDef[] = [
+  { key: "session", label: "Agent session" },
+  { key: "outputs", label: "Outputs" },
+];
+const LEGACY_TABS: TabDef[] = [
+  { key: "report", label: "Report" },
+  { key: "judge", label: "Grader" },
+  ...ALWAYS_TABS,
+];
+const REVIEW_FIELDS = ["files", "items", "details"] as const;
+
+function TabBody(props: {
+  tab: string;
+  trial: Trial;
+  review: Review | null;
+  solve: Run | undefined;
+  verify: Run | undefined;
+}) {
+  const { tab, trial, review, solve, verify } = props;
+  const notStarted = (phase: string) => (
+    <Empty title={`No ${phase} run`}>
+      {trial.state === "done" ? `This trial has no ${phase} run.` : `Waiting for the ${phase} run.`}
+    </Empty>
+  );
+  const file = /^f(\d+)$/.exec(tab);
+  if (file && review) {
+    const f = review.files[Number(file[1])];
+    if (!f) return <Empty title="No such file" />;
+    const run = f.phase === "solve" ? solve : verify;
+    return run ? <ReviewFileView key={tab} run={run} f={f} /> : notStarted(f.phase);
+  }
+  if (tab === "grader" && review) return <GraderItems items={review.items} />;
+  if (tab === "details" && review) return <DetailsView review={review} />;
+  if (tab === "report") return solve ? <ReportView run={solve} /> : notStarted("solve");
+  if (tab === "judge") return verify ? <GraderView run={verify} /> : notStarted("verify");
+  if (tab === "session") return solve ? <SessionTab run={solve} /> : notStarted("solve");
+  if (tab === "outputs") return <OutputsView solve={solve} verify={verify} />;
+  return <Empty title="Unknown tab" />;
 }
 
 function EvalChip({ t }: { t: Trial }) {
@@ -406,5 +448,194 @@ function Reasoning({ text }: { text: string }) {
         {open ? "less" : "more"}
       </button>
     </>
+  );
+}
+
+// ---- declared review ----
+
+const MAX_PREVIEW = 2 * 1024 * 1024;
+
+/** One declared file, rendered by its kind with Orbit's styles. */
+function ReviewFileView({ run, f }: { run: Run; f: ReviewFile }) {
+  const a = useAsync(() => api.artifacts(run.id), [run.id, run.state]);
+  const { kind, note } = resolveKind(f);
+  const entry = a.data?.files.find((x) => x.path === f.path);
+  const text = useText(
+    run.id,
+    kind !== "image" && entry && entry.bytes <= MAX_PREVIEW ? f.path : undefined,
+  );
+  const files = useMemo(() => new Set((a.data?.files ?? []).map((x) => x.path)), [a.data]);
+  const extras = extraFields(f, ["label", "phase", "path", "kind", "fallback"]);
+  const head = (
+    <div className="toolbar">
+      <span className="mono ellipsis">{f.path}</span>
+      <span className="chip mono">{kind}</span>
+      {entry && <span className="faint">{bytes(entry.bytes)}</span>}
+      {note && <span className="chip warn">{note}</span>}
+      {extras.map(([k, v]) => (
+        <span key={k} className="chip mono" title={showValue(v)}>
+          {k}: {showValue(v).slice(0, 40)}
+        </span>
+      ))}
+      <div className="spacer" />
+      <a className="btn sm" href={fileUrl(run.id, f.path, true)}>
+        Download
+      </a>
+    </div>
+  );
+  let body: React.ReactNode;
+  if (!a.data) body = <Loading />;
+  else if (!entry)
+    body = (
+      <Empty title="File not found">
+        The {f.phase} run has no <code>{f.path}</code>.{" "}
+        <Link href={`${runPath(run.id)}?tab=artifacts`}>Outputs →</Link>
+      </Empty>
+    );
+  else if (kind === "image")
+    body = <img className="review-img" src={fileUrl(run.id, f.path)} alt={f.label} />;
+  else if (entry.bytes > MAX_PREVIEW)
+    body = <Empty title="Too large to preview">{bytes(entry.bytes)} — use Download.</Empty>;
+  else if (text.error) body = <Empty title="Could not load the file">{text.error}</Empty>;
+  else if (text.data == null) body = <Loading />;
+  else if (kind === "markdown") {
+    const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
+    const resolve = (rel: string) => {
+      const p = joinPath(dir, rel.split("#")[0] ?? "");
+      return p && files.has(p) ? fileUrl(run.id, p) : null;
+    };
+    body = <Markdown text={text.data} resolve={resolve} />;
+  } else if (kind === "json") {
+    let shown = text.data;
+    try {
+      shown = JSON.stringify(JSON.parse(text.data), null, 2);
+    } catch {}
+    body = <pre className="review-pre">{shown}</pre>;
+  } else if (kind === "table")
+    body = <Csv text={text.data} sep={/\.tsv$/i.test(f.path) ? "\t" : ","} />;
+  else body = <pre className="review-pre">{text.data}</pre>;
+  return (
+    <div className="report">
+      {head}
+      <div className="report-body">{body}</div>
+    </div>
+  );
+}
+
+const ITEM_FIELDS = ["criterion", "score", "maxScore", "weight", "type", "reasoning"] as const;
+
+function GraderItems({ items }: { items: ReviewItem[] }) {
+  const total = items.reduce((a, it) => a + (it.weight ?? 0), 0);
+  return (
+    <div className="page-pad">
+      <section className="card">
+        <div className="card-h">
+          Graded items <span className="sub">{items.length}</span>
+          {total > 0 && <span className="sub">total weight {fmtScore(total)}</span>}
+        </div>
+        <table className="table">
+          <thead>
+            <tr>
+              <th style={{ width: 36 }}>#</th>
+              <th>Criterion</th>
+              <th className="r" style={{ width: 70 }}>
+                Weight
+              </th>
+              <th className="r" style={{ width: 90 }}>
+                Score
+              </th>
+              <th>Reasoning</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it, i) => {
+              const extras = extraFields(it, ITEM_FIELDS);
+              return (
+                <tr key={String(i)} style={{ verticalAlign: "top" }}>
+                  <td className="faint num">{i + 1}</td>
+                  <td style={{ whiteSpace: "normal", maxWidth: 420 }}>
+                    {it.type && <span className="chip mono">{it.type}</span>} {it.criterion}
+                    {extras.length > 0 && (
+                      <div className="faint mono" style={{ fontSize: 11, marginTop: 4 }}>
+                        {extras.map(([k, v]) => `${k}: ${showValue(v)}`).join(" · ")}
+                      </div>
+                    )}
+                  </td>
+                  <td className="r num muted">
+                    {it.weight === undefined ? "—" : fmtScore(it.weight)}
+                  </td>
+                  <td className="r num">
+                    <b>{it.score == null ? "—" : fmtScore(it.score)}</b>
+                    {it.maxScore !== undefined && (
+                      <span className="faint"> / {fmtScore(it.maxScore)}</span>
+                    )}
+                  </td>
+                  <td className="muted" style={{ whiteSpace: "normal" }}>
+                    <Reasoning text={it.reasoning ?? ""} />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
+/** The adapter's facts, plus any review fields this UI does not know, as key / value rows. */
+function DetailsView({ review }: { review: Review }) {
+  const rows: [string, unknown][] = [
+    ...Object.entries(review.details),
+    ...extraFields(review, REVIEW_FIELDS),
+  ];
+  return (
+    <div className="page-pad">
+      <section className="card">
+        <div className="card-h">Details</div>
+        <div className="card-b">
+          <dl className="kv">
+            {rows.map(([k, v]) => (
+              <Fragment key={k}>
+                <dt>{k}</dt>
+                <dd className="mono" style={{ whiteSpace: "pre-wrap" }}>
+                  {showValue(v)}
+                </dd>
+              </Fragment>
+            ))}
+          </dl>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/** Every output of both runs, through the run page's file browser. */
+function OutputsView({ solve, verify }: { solve: Run | undefined; verify: Run | undefined }) {
+  const loc = useLocation();
+  const phase = loc.query.get("phase") === "verify" ? "verify" : "solve";
+  const run = phase === "verify" ? verify : solve;
+  const a = useAsync(
+    () => (run ? api.artifacts(run.id) : Promise.resolve(undefined)),
+    [run?.id, run?.state],
+  );
+  return (
+    <div className="report">
+      <div className="toolbar">
+        <div className="seg">
+          {(["solve", "verify"] as const).map((p) => (
+            <button
+              type="button"
+              key={p}
+              className={phase === p ? "on" : ""}
+              onClick={() => setQuery({ phase: p === "solve" ? null : p }, { hash: "" })}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      </div>
+      {run ? <ArtifactsTab run={run} artifacts={a.data} /> : <Empty title={`No ${phase} run`} />}
+    </div>
   );
 }

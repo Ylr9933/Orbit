@@ -59,6 +59,8 @@ export function classify(
     score: s,
     issues: [...all, ...extra],
     cleanup: cleanupOf(solve, verify),
+    // Whatever the grader produced stays reviewable, also when the score is not trusted.
+    review: score?.review ?? null,
   });
   const sv = solveVerdict(solve);
   if (!sv.verify) return out(sv.evaluation ?? "unknown", null, sv.issue ? [sv.issue] : []);

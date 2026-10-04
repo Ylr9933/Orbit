@@ -24,6 +24,8 @@ export const STATES: RunState[] = [
 /** In-app paths; ids are encoded so any id survives the URL. */
 export const runPath = (id: string) => `/runs/${encodeURIComponent(id)}`;
 export const jobPath = (id: string) => `/bench/${encodeURIComponent(id)}`;
+export const trialPath = (jobId: string, trialId: string) =>
+  `${jobPath(jobId)}/trials/${encodeURIComponent(trialId)}`;
 
 export const isActive = (s: RunState) => s === "queued" || s === "starting" || s === "running";
 

@@ -12,10 +12,9 @@ import {
   type Outcome,
   type Trial,
 } from "../lib/api.ts";
-import { ago, dateTime, duration, fmtScore, jobPath, runPath } from "../lib/format.ts";
+import { ago, dateTime, duration, fmtScore, jobPath, runPath, trialPath } from "../lib/format.ts";
 import { navigate, onLinkClick, setQuery, useLocation } from "../lib/router.ts";
 import { useAsync } from "../lib/use.ts";
-import { trialPath } from "./Trial.tsx";
 
 const pctOf = (o: Outcome | null) =>
   o && o.score !== null && o.maxScore > 0 ? (100 * o.score) / o.maxScore : null;

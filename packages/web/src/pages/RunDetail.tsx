@@ -28,8 +28,10 @@ import {
   duration,
   harnessLabel,
   isActive,
+  jobPath,
   runDuration,
   runTitle,
+  trialPath,
 } from "../lib/format.ts";
 import { useHotkeys } from "../lib/hotkeys.ts";
 import { navigate, setQuery, useLocation } from "../lib/router.ts";
@@ -126,20 +128,46 @@ function RunView({ run }: { run: Run }) {
   };
   const c = run.code;
   const agent = run.spec.agent;
+  // Solve and verify runs of a bench trial carry its job, trial and phase as tags.
+  const t = run.spec.tags;
+  const bench =
+    t.job && t.trial && t.phase
+      ? {
+          job: t.job,
+          trial: t.trial,
+          phase: t.phase,
+          title:
+            [run.spec.params.task, run.spec.params.method].filter(Boolean).join(" · ") || t.trial,
+        }
+      : null;
   const res = run.spec.resources;
   const gpuIds = run.lease?.gpuIds ?? [];
 
   return (
     <>
       <TopBar
-        crumbs={[
-          { label: "Runs", href: "/" },
-          ...(run.spec.group
-            ? [{ label: run.spec.group, href: `/?q=${encodeURIComponent(run.spec.group)}` }]
-            : []),
-          { label: <span className="mono">{run.id}</span> },
-        ]}
+        crumbs={
+          bench
+            ? [
+                { label: "Bench", href: "/bench" },
+                { label: bench.job, href: jobPath(bench.job) },
+                { label: bench.title, href: trialPath(bench.job, bench.trial) },
+                { label: bench.phase },
+              ]
+            : [
+                { label: "Runs", href: "/" },
+                ...(run.spec.group
+                  ? [{ label: run.spec.group, href: `/?q=${encodeURIComponent(run.spec.group)}` }]
+                  : []),
+                { label: <span className="mono">{run.id}</span> },
+              ]
+        }
       >
+        {bench && (
+          <Link className="btn sm" href={trialPath(bench.job, bench.trial)}>
+            ← Trial
+          </Link>
+        )}
         <button
           type="button"
           className="btn sm"

@@ -310,6 +310,28 @@ function harborTask(root: string, id: string): HarborTask {
   return t;
 }
 
+const REVIEW_SKIP = /^reward\.(json|txt)$/;
+
+/** Verifier outputs worth reading on the trial page (test output, logs), smallest first. */
+export function harborReview(verifyOutput: string): ScoreReply["review"] {
+  const dir = join(verifyOutput, "collected", "logs", "verifier");
+  const files: NonNullable<ScoreReply["review"]>["files"] = [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir);
+  } catch {}
+  for (const n of names.sort()) {
+    const st = statSync(join(dir, n), { throwIfNoEntry: false });
+    if (!st?.isFile() || REVIEW_SKIP.test(n)) continue;
+    files.push({ label: n, phase: "verify", path: relative(verifyOutput, join(dir, n)) });
+    if (files.length >= 8) break;
+  }
+  for (const n of ["reward.json", "reward.txt"])
+    if (existsSync(join(dir, n)))
+      files.push({ label: "Reward", phase: "verify", path: relative(verifyOutput, join(dir, n)) });
+  return { files, items: [], details: {} };
+}
+
 export const harborAdapter: AdapterHandlers = {
   tasks: (req) => findHarborTasks(req.benchmark.path).map(toBenchTask),
   solve: ({ benchmark, trial }) => ({
@@ -325,5 +347,8 @@ export const harborAdapter: AdapterHandlers = {
     const { spec, missing } = harborVerifySpec(t, solve.output, trial.staging);
     return { spec, issues: missing.map((m) => `artifact not produced: ${m}`) };
   },
-  score: ({ verify }) => harborReward(join(verify.output, "collected", "logs", "verifier")),
+  score: ({ verify }) => ({
+    ...harborReward(join(verify.output, "collected", "logs", "verifier")),
+    review: harborReview(verify.output),
+  }),
 };
