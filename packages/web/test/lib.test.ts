@@ -66,3 +66,33 @@ describe("ema", () => {
     expect(s.std).toBeCloseTo(1);
   });
 });
+
+describe("report paths", () => {
+  it("joins relative paths inside the run and refuses to climb out", async () => {
+    const { joinPath } = await import("../src/components/Markdown.tsx");
+    expect(joinPath("collected/task/report", "images/fig1.png")).toBe(
+      "collected/task/report/images/fig1.png",
+    );
+    expect(joinPath("a/b", "./../c.png")).toBe("a/c.png");
+    expect(joinPath("", "../x")).toBeNull();
+  });
+
+  it("puts report/report.md first among Markdown outputs", async () => {
+    const { reportCandidates } = await import("../src/lib/report.ts");
+    const f = (path: string) => ({ path, bytes: 1, mtime: "" });
+    const a = {
+      files: [
+        f("collected/task/INSTRUCTIONS.md"),
+        f("collected/task/outputs/notes.md"),
+        f("collected/task/report/report.md"),
+        f("x.png"),
+      ],
+      truncated: false,
+    };
+    expect(reportCandidates(a)).toEqual([
+      "collected/task/report/report.md",
+      "collected/task/outputs/notes.md",
+      "collected/task/INSTRUCTIONS.md",
+    ]);
+  });
+});

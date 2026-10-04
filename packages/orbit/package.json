@@ -14,7 +14,8 @@
     "dist"
   ],
   "exports": {
-    "./contracts": "./src/contracts/index.ts"
+    "./contracts": "./src/contracts/index.ts",
+    "./naming": "./src/contracts/naming.ts"
   },
   "scripts": {
     "typecheck": "tsc -p .",

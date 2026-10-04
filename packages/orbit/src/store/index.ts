@@ -238,6 +238,18 @@ export class Store {
     return row ? syncOf(row) : null;
   }
 
+  /** Remove runs with their events, leases and mirroring state (one transaction). */
+  deleteRuns(ids: string[]): void {
+    this.tx(() => {
+      for (const id of ids) {
+        this.db.prepare("DELETE FROM runs WHERE id = ?").run(id);
+        this.db.prepare("DELETE FROM events WHERE run_id = ?").run(id);
+        this.db.prepare("DELETE FROM leases WHERE run_id = ?").run(id);
+        this.db.prepare("DELETE FROM remote_sync WHERE run_id = ?").run(id);
+      }
+    });
+  }
+
   deleteSync(runId: string): void {
     this.db.prepare("DELETE FROM remote_sync WHERE run_id = ?").run(runId);
   }
@@ -273,6 +285,14 @@ export class Store {
       .prepare("SELECT doc FROM bench_jobs ORDER BY created_at DESC, id DESC LIMIT ?")
       .all(limit) as { doc: string }[];
     return rows.map((r) => BenchJob.parse(JSON.parse(r.doc)));
+  }
+
+  /** Remove a job and its trials (its runs are removed through RunService). */
+  deleteJob(id: string): void {
+    this.tx(() => {
+      this.db.prepare("DELETE FROM trials WHERE job_id = ?").run(id);
+      this.db.prepare("DELETE FROM bench_jobs WHERE id = ?").run(id);
+    });
   }
 
   putTrial(t: Trial): void {

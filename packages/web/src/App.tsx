@@ -22,6 +22,7 @@ import { Resources } from "./pages/Resources.tsx";
 import { RunDetail } from "./pages/RunDetail.tsx";
 import { Runs } from "./pages/Runs.tsx";
 import { Settings } from "./pages/Settings.tsx";
+import { TrialPage } from "./pages/Trial.tsx";
 
 function useUnauthorized() {
   return useSyncExternalStore(
@@ -71,7 +72,16 @@ export function App() {
   let page: React.ReactNode;
   const m = /^\/runs\/([^/]+)\/?$/.exec(loc.path);
   const bj = /^\/bench\/([^/]+)\/?$/.exec(loc.path);
+  const bt = /^\/bench\/([^/]+)\/trials\/([^/]+)\/?$/.exec(loc.path);
   if (m) page = <RunDetail key={m[1]} id={safeDecode(m[1] as string)} />;
+  else if (bt)
+    page = (
+      <TrialPage
+        key={bt[2]}
+        jobId={safeDecode(bt[1] as string)}
+        trialId={safeDecode(bt[2] as string)}
+      />
+    );
   else if (loc.path === "/bench/compare") page = <BenchComparePage />;
   else if (bj) page = <BenchJobDetail key={bj[1]} id={safeDecode(bj[1] as string)} />;
   else if (loc.path === "/bench" || loc.path === "/bench/") page = <BenchJobs />;

@@ -250,4 +250,31 @@ describe("bench jobs", () => {
     // Oracle runs say nothing about what a task needs: they are left out of the suggestions.
     expect((await client.benchUsage([job.id])).rows).toEqual([]);
   });
+
+  it("deletes finished runs and whole jobs, and refuses what is not finished or belongs to a job", async () => {
+    const run = await client.submit({
+      backend: "process",
+      snapshot: false,
+      resources: { cpus: 1, memGB: 1 },
+      command: ["sh", "-c", "echo hi > $ORBIT_OUTPUT/x; sleep 1"],
+    });
+    await expect(client.deleteRuns([run.id])).rejects.toThrow(/cancel it and wait/);
+    let r = await client.wait(run.id, 30);
+    for (let i = 0; i < 50 && r.cleanup === "pending"; i++) r = await client.wait(run.id, 5);
+    expect(existsSync(join(paths.runs, run.id))).toBe(true);
+    expect(await client.deleteRuns([run.id])).toEqual({ deleted: [run.id], leftovers: [] });
+    expect(existsSync(join(paths.runs, run.id))).toBe(false);
+    await expect(client.get(run.id)).rejects.toThrow(/not found/);
+    await expect(client.deleteRuns([run.id])).rejects.toThrow(/not found/);
+
+    const job = (await client.benchJobs()).find((j) => j.spec.benchmark === "ext");
+    if (!job) throw new Error("ext job missing");
+    const d = await client.benchJob(job.id);
+    const ids = d.trials.flatMap((t) => [t.solveRunId, t.verifyRunId]).filter(Boolean) as string[];
+    await expect(client.deleteRuns([ids[0] as string])).rejects.toThrow(/delete the job instead/);
+    const out = await client.benchDeleteJob(job.id);
+    expect(out.deleted.sort()).toEqual([...ids].sort());
+    for (const id of ids) expect(existsSync(join(paths.runs, id))).toBe(false);
+    await expect(client.benchJob(job.id)).rejects.toThrow(/not found/);
+  });
 });

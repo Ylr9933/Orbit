@@ -10,6 +10,7 @@ import {
 } from "../components/icons.tsx";
 import { TopBar } from "../components/TopBar.tsx";
 import {
+  ConfirmDialog,
   CopyButton,
   copy,
   Empty,
@@ -90,6 +91,7 @@ export function RunDetail({ id }: { id: string }) {
 
 function RunView({ run }: { run: Run }) {
   const loc = useLocation();
+  const [deleting, setDeleting] = useState(false);
   const tab = (
     TABS.includes(loc.query.get("tab") as Tab) ? loc.query.get("tab") : "overview"
   ) as Tab;
@@ -170,7 +172,30 @@ function RunView({ run }: { run: Run }) {
             Cancel run
           </button>
         )}
+        {!active && run.cleanup === "done" && !run.spec.tags.bench && (
+          <button type="button" className="btn danger sm" onClick={() => setDeleting(true)}>
+            Delete run
+          </button>
+        )}
       </TopBar>
+      {deleting && (
+        <ConfirmDialog
+          title={`Delete run ${run.id}`}
+          expected={run.id}
+          action="Delete this run"
+          onClose={() => setDeleting(false)}
+          onConfirm={async () => {
+            const r = await api.deleteRuns([run.id]);
+            toast(r.leftovers.length ? "Run deleted; some files were left on disk" : "Run deleted");
+            navigate("/");
+          }}
+        >
+          <p>
+            This deletes <b>{runTitle(run)}</b>: its record, logs, metrics, outputs, code snapshot
+            and Agent session.
+          </p>
+        </ConfirmDialog>
+      )}
       <div className="run-head">
         <div className="row" style={{ gap: 12 }}>
           <StateBadge state={run.state} large />

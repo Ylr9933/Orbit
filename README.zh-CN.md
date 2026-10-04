@@ -138,6 +138,7 @@ orbit show <id>                 # 详情与最新指标
 orbit logs <id> -f              # 跟随日志（--tail BYTES 从末尾附近开始）
 orbit wait <id>...              # 等待指定 Run
 orbit cancel <id>...
+orbit rm <id>... | -g <group>   # 永久删除已结束的 Run（需输入 id 或组名确认）
 orbit note <id> "lr 3e-4 在 2k 步后发散"   # 记录结论（- 表示从 stdin 读取）
 orbit web <id> --open           # 在 Web 中打开该 Run
 ```
@@ -216,6 +217,7 @@ orbit bench show <job>
 orbit bench compare <job>...    # 按任务对比；paired 均值只用所有方法都有效的任务
 orbit bench usage <job>...      # 每个任务实测的内存 / CPU / 显存峰值与建议资源
 orbit bench cancel <job>
+orbit bench rm-job <job>        # 删除已结束的 job 及其 trial 和 Run（需输入 job id 确认）
 ```
 
 方法格式为 `name=agent[,auth=P,model=M,effort=E,bundle=DIR]`，agent 可为 `codex`、`claude-code`、

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { IconAlert, IconCompare, IconFlask } from "../components/icons.tsx";
 import { TopBar } from "../components/TopBar.tsx";
-import { Empty, Link, Loading, toast } from "../components/ui.tsx";
+import { ConfirmDialog, Empty, Link, Loading, toast } from "../components/ui.tsx";
 import {
   api,
   type BenchJob,
@@ -12,9 +12,10 @@ import {
   type Outcome,
   type Trial,
 } from "../lib/api.ts";
-import { ago, dateTime, duration, jobPath, runPath } from "../lib/format.ts";
+import { ago, dateTime, duration, fmtScore, jobPath, runPath } from "../lib/format.ts";
 import { navigate, onLinkClick, setQuery, useLocation } from "../lib/router.ts";
 import { useAsync } from "../lib/use.ts";
+import { trialPath } from "./Trial.tsx";
 
 const pctOf = (o: Outcome | null) =>
   o && o.score !== null && o.maxScore > 0 ? (100 * o.score) / o.maxScore : null;
@@ -272,6 +273,7 @@ const summaryTitle = (s: MethodSummary) =>
 
 export function BenchJobDetail({ id }: { id: string }) {
   const [running, setRunning] = useState(true);
+  const [deleting, setDeleting] = useState(false);
   const d = useAsync(() => api.benchJob(id), [id], { poll: running, pollMs: 3000 });
   const job = d.data?.job;
   // A finished job no longer changes: stop polling it.
@@ -328,12 +330,36 @@ export function BenchJobDetail({ id }: { id: string }) {
         <Link className="btn sm" href={`/bench/compare?jobs=${job.id}`}>
           <IconCompare size={14} /> Compare
         </Link>
-        {job.state === "running" && (
+        {job.state === "running" ? (
           <button type="button" className="btn sm danger" onClick={cancel}>
             Cancel job
           </button>
+        ) : (
+          <button type="button" className="btn sm danger" onClick={() => setDeleting(true)}>
+            Delete job
+          </button>
         )}
       </TopBar>
+      {deleting && (
+        <ConfirmDialog
+          title={`Delete bench job ${jobLabel(job)}`}
+          expected={job.id}
+          action="Delete this job"
+          onClose={() => setDeleting(false)}
+          onConfirm={async () => {
+            const r = await api.benchDeleteJob(job.id);
+            toast(
+              `Deleted job and ${r.deleted.length} run(s)${r.leftovers.length ? `; ${r.leftovers.length} folder(s) left on disk` : ""}`,
+            );
+            navigate("/bench");
+          }}
+        >
+          <p>
+            This deletes the job <b>{jobLabel(job)}</b>, its {trials.length} trials and all of their
+            solve and verify runs: logs, outputs, reports, Agent sessions and scores.
+          </p>
+        </ConfirmDialog>
+      )}
       <div className="page">
         <div className="page-pad col" style={{ gap: 16 }}>
           <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
@@ -445,7 +471,9 @@ export function BenchJobDetail({ id }: { id: string }) {
                 <tbody>
                   {problems.map((t) => (
                     <tr key={t.id}>
-                      <td className="mono">{t.task}</td>
+                      <td className="mono">
+                        <Link href={trialPath(t.jobId, t.id)}>{t.task}</Link>
+                      </td>
                       <td>
                         {t.method}
                         {job.spec.seeds > 1 && <span className="faint"> #{t.seed}</span>}
@@ -499,7 +527,7 @@ function TrialCell({ t, seeds }: { t: Trial; seeds: number }) {
   const title = [
     `${t.task} · ${t.method}${seeds > 1 ? ` #${t.seed}` : ""}`,
     phase ? `state: ${phase}` : `evaluation: ${o?.evaluation} · execution: ${o?.execution}`,
-    o && o.score !== null ? `score: ${o.score} / ${o.maxScore}` : null,
+    o && o.score !== null ? `score: ${fmtScore(o.score)} / ${fmtScore(o.maxScore)}` : null,
     ...(o?.issues ?? t.issues),
     o?.cleanup === "failed" ? "cleanup failed" : null,
   ]
@@ -509,7 +537,7 @@ function TrialCell({ t, seeds }: { t: Trial; seeds: number }) {
     <ScoreCell
       pct={pctOf(o)}
       evaluation={o ? o.evaluation : "pending"}
-      href={t.solveRunId ? runPath(t.solveRunId) : undefined}
+      href={trialPath(t.jobId, t.id)}
       title={title}
       note={phase === "verifying" ? "verify" : seeds > 1 ? `#${t.seed}` : undefined}
     />

@@ -4,6 +4,7 @@ import {
   IconChevron,
   IconChevronDown,
   IconCompare,
+  IconFlask,
   IconGit,
   IconLayers,
   IconSearch,
@@ -11,6 +12,7 @@ import {
 } from "../components/icons.tsx";
 import { TopBar } from "../components/TopBar.tsx";
 import {
+  ConfirmDialog,
   Empty,
   Kbd,
   Link,
@@ -21,11 +23,12 @@ import {
   toast,
   useNow,
 } from "../components/ui.tsx";
-import { api, type Run, type RunState } from "../lib/api.ts";
+import { api, type BenchJobList, type Run, type RunState, type Trial } from "../lib/api.ts";
 import {
   ago,
   dateTime,
   duration,
+  fmtScore,
   harnessLabel,
   isActive,
   runDuration,
@@ -37,6 +40,17 @@ import {
 import { overlayOpen, useHotkeys } from "../lib/hotkeys.ts";
 import { navigate, onLinkClick, setQuery, useLocation } from "../lib/router.ts";
 import { useRuns, useRunsState } from "../lib/runs-store.ts";
+import { useAsync } from "../lib/use.ts";
+import { trialPath } from "./Trial.tsx";
+
+type Job = BenchJobList["jobs"][number];
+const KINDS = ["all", "experiments", "bench"] as const;
+type Kind = (typeof KINDS)[number];
+const KIND_LABEL: Record<Kind, string> = {
+  all: "All",
+  experiments: "Experiments",
+  bench: "Benchmarks",
+};
 
 type Entry =
   | { kind: "group"; name: string; runs: Run[]; key: string }
@@ -74,6 +88,19 @@ export function Runs() {
     [stateParam],
   );
   const flat = loc.query.get("flat") === "1";
+  const kind = (
+    KINDS.includes(loc.query.get("kind") as Kind) ? loc.query.get("kind") : "all"
+  ) as Kind;
+  const jobs = useAsync(() => api.benchJobs(), [], { poll: true, pollMs: 10_000 });
+  const jobByGroup = useMemo(
+    () => new Map((jobs.data ?? []).map((j) => [`bench-${j.id}`, j])),
+    [jobs.data],
+  );
+  const isBench = useCallback(
+    (r: Run) => Boolean(r.spec.group && (jobByGroup.has(r.spec.group) || r.spec.tags.bench)),
+    [jobByGroup],
+  );
+  const [deleting, setDeleting] = useState<string[] | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -86,9 +113,12 @@ export function Runs() {
   const visible = useMemo(
     () =>
       runs.filter(
-        (r) => (stateFilter.length ? stateFilter.includes(r.state) : true) && matches(r, terms),
+        (r) =>
+          (stateFilter.length ? stateFilter.includes(r.state) : true) &&
+          (kind === "all" || (kind === "bench") === isBench(r)) &&
+          (matches(r, terms) || matchesJob(jobByGroup.get(r.spec.group ?? ""), terms)),
       ),
-    [runs, stateFilter, terms],
+    [runs, stateFilter, terms, kind, isBench, jobByGroup],
   );
 
   const counts = useMemo(() => {
@@ -126,12 +156,12 @@ export function Runs() {
     for (const e of out) {
       rows.push(e);
       if (e.kind !== "group") continue;
-      if (isExpanded(e.name, e.runs))
+      if (isExpanded(e.name, e.runs) && !jobByGroup.has(e.name))
         for (const r of [...e.runs].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)))
           rows.push({ kind: "run", run: r, inGroup: true, key: r.id });
     }
     return rows;
-  }, [visible, flat, isExpanded]);
+  }, [visible, flat, isExpanded, jobByGroup]);
 
   const toggleGroup = (name: string, list: Run[]) => {
     const exp = isExpanded(name, list);
@@ -250,6 +280,18 @@ export function Runs() {
           })}
         </div>
         <div className="spacer" />
+        <div className="seg" title="Kind of runs">
+          {KINDS.map((k) => (
+            <button
+              type="button"
+              key={k}
+              className={kind === k ? "on" : ""}
+              onClick={() => setQuery({ kind: k === "all" ? null : k })}
+            >
+              {k === "bench" && <IconFlask size={12} />} {KIND_LABEL[k]}
+            </button>
+          ))}
+        </div>
         <div className="seg">
           <button
             type="button"
@@ -298,7 +340,20 @@ export function Runs() {
             </thead>
             <tbody>
               {entries.map((e, i) =>
-                e.kind === "group" ? (
+                e.kind === "group" && jobByGroup.has(e.name) ? (
+                  <JobRow
+                    key={e.key}
+                    job={jobByGroup.get(e.name) as Job}
+                    runs={e.runs}
+                    expanded={isExpanded(e.name, e.runs)}
+                    cursor={i === cursor}
+                    selected={e.runs.every((r) => selected.has(r.id))}
+                    onToggle={() => toggleGroup(e.name, e.runs)}
+                    onSelect={() => toggleSel(e.runs.map((r) => r.id))}
+                    onHover={() => setCursor(i)}
+                    now={now}
+                  />
+                ) : e.kind === "group" ? (
                   <GroupRow
                     key={e.key}
                     name={e.name}
@@ -334,6 +389,12 @@ export function Runs() {
               <IconCompare size={13} /> Compare <Kbd>c</Kbd>
             </Link>
             <CancelSelected ids={[...selected]} runs={runs} />
+            <DeleteSelected
+              ids={[...selected]}
+              runs={runs}
+              isBench={isBench}
+              onDelete={(ids) => setDeleting(ids)}
+            />
             <button
               type="button"
               className="btn ghost sm icon"
@@ -345,7 +406,75 @@ export function Runs() {
           </div>
         )}
       </div>
+      {deleting && (
+        <ConfirmDialog
+          title={`Delete ${deleting.length} run${deleting.length > 1 ? "s" : ""}`}
+          expected={
+            deleting.length === 1 ? (deleting[0] as string) : `delete ${deleting.length} runs`
+          }
+          action={`Delete ${deleting.length} run${deleting.length > 1 ? "s" : ""}`}
+          onClose={() => setDeleting(null)}
+          onConfirm={async () => {
+            const r = await api.deleteRuns(deleting);
+            setSelected(new Set());
+            toast(
+              `Deleted ${r.deleted.length} run(s)${r.leftovers.length ? `; ${r.leftovers.length} folder(s) left on disk` : ""}`,
+            );
+          }}
+        >
+          <p>
+            Their records, logs, metrics, outputs, code snapshots and Agent sessions are removed
+            from this machine.
+          </p>
+          <ul
+            className="mono faint"
+            style={{ margin: 0, paddingLeft: 18, maxHeight: 140, overflow: "auto" }}
+          >
+            {deleting.slice(0, 20).map((id) => (
+              <li key={id}>{id}</li>
+            ))}
+            {deleting.length > 20 && <li>… {deleting.length - 20} more</li>}
+          </ul>
+        </ConfirmDialog>
+      )}
     </>
+  );
+}
+
+function matchesJob(job: Job | undefined, terms: string[]): boolean {
+  if (!job || !terms.length) return false;
+  const hay = [job.id, job.spec.name, job.spec.benchmark, ...job.spec.methods.map((m) => m.name)]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return terms.every((t) => hay.includes(t));
+}
+
+/** Finished runs outside bench jobs can be deleted; jobs are deleted from their page. */
+function DeleteSelected(props: {
+  ids: string[];
+  runs: Run[];
+  isBench: (r: Run) => boolean;
+  onDelete: (ids: string[]) => void;
+}) {
+  const chosen = props.runs.filter((r) => props.ids.includes(r.id));
+  const ok = chosen.filter((r) => !isActive(r.state) && r.cleanup === "done" && !props.isBench(r));
+  const skipped = chosen.length - ok.length;
+  if (!ok.length) return null;
+  return (
+    <button
+      type="button"
+      className="btn danger sm"
+      onClick={() => props.onDelete(ok.map((r) => r.id))}
+      title={
+        skipped
+          ? `${skipped} selected run(s) are active, not cleaned up, or part of a bench job (delete the job instead)`
+          : undefined
+      }
+    >
+      Delete {ok.length}
+      {skipped ? ` (${skipped} skipped)` : ""}
+    </button>
   );
 }
 
@@ -617,6 +746,222 @@ function GroupRow(props: {
         </Link>
         {duration(span)}
       </td>
+    </tr>
+  );
+}
+
+const pct = (v: number | null | undefined) => (v == null ? "—" : `${v.toFixed(1)}%`);
+
+/** A bench job in the run list: progress and method means; expands to its trials. */
+function JobRow(props: {
+  job: Job;
+  runs: Run[];
+  expanded: boolean;
+  cursor: boolean;
+  selected: boolean;
+  onToggle: () => void;
+  onSelect: () => void;
+  onHover: () => void;
+  now: number;
+}) {
+  const { job, runs } = props;
+  const trials = job.summary.reduce((a, s) => a + s.trials, 0);
+  const pending = job.summary.reduce((a, s) => a + s.pending, 0);
+  const done = trials - pending;
+  const starts = runs
+    .map((r) => r.startedAt)
+    .filter(Boolean)
+    .map((t) => Date.parse(t as string));
+  const end = job.endedAt ? Date.parse(job.endedAt) : props.now;
+  const cls = ["click", "group-row", "job-row", props.cursor && "cursor", props.selected && "sel"]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <>
+      <tr className={cls} onClick={props.onToggle} onMouseMove={props.onHover}>
+        <td onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            className="check"
+            checked={props.selected}
+            onChange={props.onSelect}
+          />
+        </td>
+        <td>
+          <div className="row" style={{ gap: 6 }} title={`${done}/${trials} trials done`}>
+            <div className="stackbar">
+              <span
+                style={
+                  {
+                    "--c": "var(--st-succeeded)",
+                    width: `${(100 * done) / Math.max(1, trials)}%`,
+                  } as React.CSSProperties
+                }
+              />
+              <span
+                style={
+                  {
+                    "--c": job.state === "running" ? "var(--st-running)" : "var(--st-cancelled)",
+                    width: `${(100 * pending) / Math.max(1, trials)}%`,
+                  } as React.CSSProperties
+                }
+              />
+            </div>
+          </div>
+        </td>
+        <td style={{ maxWidth: 520 }}>
+          <div className="row" style={{ gap: 6 }}>
+            {props.expanded ? <IconChevronDown size={14} /> : <IconChevron size={14} />}
+            <IconFlask size={14} style={{ color: "var(--accent)" }} />
+            <Link
+              href={`/bench/${encodeURIComponent(job.id)}`}
+              className="ellipsis"
+              style={{ color: "var(--text)", fontWeight: 500 }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onLinkClick(e);
+              }}
+            >
+              {job.spec.name ?? job.id}
+            </Link>
+            <span className="chip mono">{job.spec.benchmark}</span>
+            <span className="chip">
+              {done}/{trials} trials
+            </span>
+            {job.state !== "done" && <span className="faint">{job.state}</span>}
+          </div>
+        </td>
+        <td colSpan={3}>
+          <span className="params">
+            {job.summary.map((s) => (
+              <span
+                key={s.method}
+                className="param"
+                title={`${s.valid} valid · ${s.invalid} invalid · ${s.unknown} unknown`}
+              >
+                <i>{s.method}</i> {pct(s.meanPct)}
+                {s.invalid + s.unknown > 0 && (
+                  <span className="faint"> ({s.invalid + s.unknown} not valid)</span>
+                )}
+              </span>
+            ))}
+          </span>
+        </td>
+        <td>{runs[0] && <AgentCell run={runs[0]} />}</td>
+        <td className="muted" title={dateTime(job.createdAt)}>
+          {ago(job.createdAt, props.now)}
+        </td>
+        <td className="r num muted">
+          {duration(starts.length ? end - Math.min(...starts) : null)}
+        </td>
+      </tr>
+      {props.expanded && <JobTrials job={job} runs={runs} now={props.now} />}
+    </>
+  );
+}
+
+/** One row per trial: task, method, solve → verify states, score, evaluation. */
+function JobTrials({ job, runs, now }: { job: Job; runs: Run[]; now: number }) {
+  const byId = useMemo(() => new Map(runs.map((r) => [r.id, r])), [runs]);
+  const states = runs.map((r) => r.state).join(",");
+  const d = useAsync(() => api.benchJob(job.id), [job.id, states]);
+  if (!d.data)
+    return (
+      <tr>
+        <td />
+        <td colSpan={8} className="faint" style={{ paddingLeft: 40 }}>
+          {d.error ?? "Loading trials…"}
+        </td>
+      </tr>
+    );
+  return (
+    <>
+      {d.data.trials.map((t) => (
+        <TrialRow
+          key={t.id}
+          t={t}
+          seeds={job.spec.seeds}
+          solve={byId.get(t.solveRunId ?? "")}
+          verify={byId.get(t.verifyRunId ?? "")}
+          now={now}
+        />
+      ))}
+    </>
+  );
+}
+
+function PhaseDot({ run, label }: { run: Run | undefined; label: string }) {
+  return (
+    <span className="row" style={{ gap: 4 }} title={`${label}: ${run ? run.state : "not started"}`}>
+      <span
+        className="dot"
+        style={
+          { "--c": run ? stateColor(run.state) : "var(--border-strong)" } as React.CSSProperties
+        }
+      />
+      <span className="faint" style={{ fontSize: 11 }}>
+        {label}
+      </span>
+    </span>
+  );
+}
+
+function TrialRow(props: { t: Trial; seeds: number; solve?: Run; verify?: Run; now: number }) {
+  const { t, solve, verify } = props;
+  const o = t.outcome;
+  const href = trialPath(t.jobId, t.id);
+  const ev = o?.evaluation;
+  return (
+    <tr className="click trial-row" onClick={() => navigate(href)}>
+      <td />
+      <td>
+        <div className="row" style={{ gap: 8 }}>
+          <PhaseDot run={solve} label="solve" />
+          <PhaseDot run={verify} label="verify" />
+        </div>
+      </td>
+      <td>
+        <div className="row" style={{ gap: 8, paddingLeft: 18 }}>
+          <Link
+            href={href}
+            className="mono"
+            style={{ color: "var(--text)" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onLinkClick(e);
+            }}
+          >
+            {t.task}
+          </Link>
+          <span className="muted">{t.method}</span>
+          {props.seeds > 1 && <span className="faint">#{t.seed}</span>}
+        </div>
+      </td>
+      <td colSpan={3}>
+        {o && o.score !== null && (
+          <span className="num">
+            <b>{fmtScore(o.score)}</b>
+            <span className="faint"> / {fmtScore(o.maxScore)}</span>
+          </span>
+        )}{" "}
+        {ev && (
+          <span className={`chip ${ev === "valid" ? "good" : ev === "invalid" ? "bad" : "warn"}`}>
+            {ev}
+          </span>
+        )}{" "}
+        {(o?.issues ?? t.issues).length > 0 && (
+          <span
+            className="faint ellipsis"
+            style={{ fontSize: 12 }}
+            title={(o?.issues ?? t.issues).join("\n")}
+          >
+            {(o?.issues ?? t.issues)[0]}
+          </span>
+        )}
+      </td>
+      <td />
+      <td className="muted">{ago(t.createdAt, props.now)}</td>
+      <td className="r num muted">{duration(solve ? runDuration(solve, props.now) : null)}</td>
     </tr>
   );
 }

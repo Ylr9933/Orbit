@@ -148,6 +148,7 @@ orbit show <id>                 # details and latest metrics
 orbit logs <id> -f              # follow the log (--tail BYTES to start near the end)
 orbit wait <id>...              # wait for specific runs
 orbit cancel <id>...
+orbit rm <id>... | -g <group>   # permanently delete finished runs (asks you to type the id or group)
 orbit note <id> "lr 3e-4 diverges after step 2k"   # attach a conclusion (- reads stdin)
 orbit web <id> --open           # open the run in the Web UI
 ```
@@ -228,6 +229,7 @@ orbit bench show <job>
 orbit bench compare <job>...    # per-task comparison; paired means use tasks valid for every method
 orbit bench usage <job>...      # measured peak memory / CPU / GPU per task, suggested resources
 orbit bench cancel <job>
+orbit bench rm-job <job>        # delete a finished job with its trials and runs (type the job id)
 ```
 
 Methods are `name=agent[,auth=P,model=M,effort=E,bundle=DIR]` with agent `codex`, `claude-code`,

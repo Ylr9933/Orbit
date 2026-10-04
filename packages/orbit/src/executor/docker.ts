@@ -314,3 +314,32 @@ export async function containersWithLabel(label: string, value: string): Promise
   if (r.code !== 0) return null;
   return r.stdout.split("\n").filter(Boolean);
 }
+
+/**
+ * Empty a directory with files a container created as root, from a throwaway container of `image`
+ * (no network). The directory itself is left for the caller.
+ */
+export async function emptyDirAsRoot(dir: string, image: string): Promise<boolean> {
+  const r = await exec(
+    "docker",
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--user",
+      "0",
+      "-v",
+      `${dir}:/x`,
+      "--entrypoint",
+      "find",
+      image,
+      "/x",
+      "-mindepth",
+      "1",
+      "-delete",
+    ],
+    { timeoutMs: 120_000 },
+  );
+  return r.code === 0;
+}

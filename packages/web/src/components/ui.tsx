@@ -158,3 +158,80 @@ export function Params({ params }: { params: Record<string, string> }) {
     </span>
   );
 }
+
+/**
+ * Irreversible actions, confirmed GitHub-style: the button stays disabled until `expected` is typed
+ * exactly. Escape or a click outside closes it.
+ */
+export function ConfirmDialog(props: {
+  title: string;
+  children: React.ReactNode;
+  expected: string;
+  action: string;
+  onConfirm: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const ok = typed === props.expected && !busy;
+  const run = async () => {
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await props.onConfirm();
+      props.onClose();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="overlay" onMouseDown={props.onClose}>
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") props.onClose();
+        }}
+      >
+        <div className="dialog-h" id="confirm-title">
+          {props.title}
+        </div>
+        <div className="dialog-b">
+          {props.children}
+          <div className="warnbox">This cannot be undone.</div>
+          <label htmlFor="confirm-input" className="faint" style={{ fontSize: 12.5 }}>
+            To confirm, type <b className="mono">{props.expected}</b> below
+          </label>
+          <input
+            id="confirm-input"
+            className="input mono"
+            // biome-ignore lint/a11y/noAutofocus: the dialog exists to take this input
+            autoFocus
+            autoComplete="off"
+            spellCheck={false}
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void run();
+            }}
+          />
+          {error && <div className="errbox">{error}</div>}
+        </div>
+        <div className="dialog-f">
+          <button type="button" className="btn" onClick={props.onClose}>
+            Cancel
+          </button>
+          <button type="button" className="btn danger" disabled={!ok} onClick={() => void run()}>
+            {busy ? "Deleting…" : props.action}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

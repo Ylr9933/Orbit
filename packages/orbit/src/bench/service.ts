@@ -20,6 +20,7 @@ import {
   type MethodSummary,
   type Outcome,
   type Run,
+  type RunDeletion,
   type RunSpecInput,
   type ScoreResult,
   type Trial,
@@ -322,6 +323,26 @@ export class BenchService {
       );
     });
     return { jobs: ids, rows };
+  }
+
+  /**
+   * Delete a finished or cancelled job: its trials, all their solve and verify runs (with their
+   * directories) and its staging files. Irreversible; refused while any of its runs is not done.
+   */
+  async deleteJob(id: string): Promise<RunDeletion> {
+    const job = this.deps.store.getJob(id);
+    if (!job) throw new NotFoundError(`bench job not found: ${id}`);
+    if (job.state === "running") throw new UserError(`bench job ${id} is running; cancel it first`);
+    const trials = this.deps.store.trials(id);
+    if (trials.some((t) => this.busy.has(t.id)))
+      throw new UserError(`bench job ${id} is still being updated; try again shortly`);
+    const ids = trials
+      .flatMap((t) => [t.solveRunId, t.verifyRunId])
+      .filter((r): r is string => Boolean(r && this.deps.runs.get(r)));
+    const out = await this.deps.runs.delete(ids, { forJob: true });
+    this.deps.store.deleteJob(id);
+    rmSync(join(this.deps.paths.bench, id), { recursive: true, force: true });
+    return out;
   }
 
   async cancel(id: string): Promise<BenchJob> {

@@ -16,6 +16,7 @@ import type {
   Metrics,
   NotifyTarget,
   Run,
+  RunDeletion,
   RunEvent,
   RunSessions,
 } from "@zjunlp/orbit/contracts";
@@ -85,6 +86,8 @@ export const api = {
   runs: (limit = 1000) => req<{ runs: Run[] }>(`/runs?limit=${limit}`).then((r) => r.runs),
   run: (id: string) => req<Run>(`/runs/${enc(id)}`),
   cancel: (id: string) => req<Run>(`/runs/${enc(id)}/cancel`, { method: "POST" }),
+  deleteRuns: (ids: string[]) =>
+    req<RunDeletion>("/runs/delete", { method: "POST", body: JSON.stringify({ ids }) }),
   note: (id: string, note: string) =>
     req<Run>(`/runs/${enc(id)}/note`, { method: "PUT", body: JSON.stringify({ note }) }),
   events: (id: string) =>
@@ -112,6 +115,7 @@ export const api = {
   benchJobs: () => req<BenchJobList>("/bench/jobs").then((r) => r.jobs),
   benchJob: (id: string) => req<BenchJobDetail>(`/bench/jobs/${enc(id)}`),
   benchCancel: (id: string) => req<BenchJob>(`/bench/jobs/${enc(id)}/cancel`, { method: "POST" }),
+  benchDeleteJob: (id: string) => req<RunDeletion>(`/bench/jobs/${enc(id)}`, { method: "DELETE" }),
   benchCompare: (ids: string[]) =>
     req<BenchCompare>(`/bench/compare?jobs=${ids.map(enc).join(",")}`),
 };

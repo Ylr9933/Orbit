@@ -27,6 +27,7 @@ import {
   type NodeResources,
   type RemoteSubmit,
   type Run,
+  type RunDeletion,
   type RunEvent,
   RunSpec,
   type RunSpecInput,
@@ -111,7 +112,7 @@ const GENERIC_DIRS = new Set(["environment", "tests", "docker", "env", "verifier
  * The single owner of Run state on this node: submission, queueing, leases, container lifecycle,
  * evidence collection and cleanup. Emits "change" for every persisted update.
  */
-export class RunService extends EventEmitter<{ change: [RunChange] }> {
+export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [string[]] }> {
   private readonly store: Store;
   private readonly paths: OrbitPaths;
   private readonly probeFn: () => Promise<NodeResources>;
@@ -189,6 +190,63 @@ export class RunService extends EventEmitter<{ change: [RunChange] }> {
 
   get(id: string): Run | null {
     return this.store.getRun(id);
+  }
+
+  /**
+   * Why a run cannot be deleted, or null. Only finished runs whose cleanup is confirmed (and, for a
+   * mirror of a remote run, whose mirroring is over); runs of a bench trial go with their job.
+   */
+  deleteBlocker(run: Run, forJob = false): string | null {
+    if (!isTerminal(run.state))
+      return `${run.id} is ${run.state}; cancel it and wait for it to end`;
+    if (run.cleanup !== "done")
+      return `${run.id}: cleanup is ${run.cleanup}; its container or processes may still exist`;
+    if (this.active.has(run.id)) return `${run.id} is still being finalized`;
+    if (run.remote && this.store.getSync(run.id)?.done === false)
+      return `${run.id} is still being mirrored from ${run.node}`;
+    if (!forJob) {
+      const t = this.store.trialByRun(run.id);
+      if (t) return `${run.id} belongs to bench job ${t.jobId}; delete the job instead`;
+    }
+    return null;
+  }
+
+  /**
+   * Delete finished runs: their records, events and leases, and their directory (logs, outputs,
+   * code snapshot, Agent home). All are checked before anything is removed. Irreversible.
+   */
+  async delete(ids: string[], opts: { forJob?: boolean } = {}): Promise<RunDeletion> {
+    const unique = [...new Set(ids)];
+    const runs = unique.map((id) => {
+      const r = this.store.getRun(id);
+      if (!r) throw new NotFoundError(`run not found: ${id}`);
+      return r;
+    });
+    const blocked = runs.map((r) => this.deleteBlocker(r, opts.forJob)).filter(Boolean);
+    if (blocked.length) throw new UserError(blocked.join("; "));
+    this.store.deleteRuns(unique);
+    const leftovers: string[] = [];
+    for (const r of runs) if (!(await this.removeDir(r))) leftovers.push(this.dirs(r.id).root);
+    this.emit("deleted", unique);
+    return { deleted: unique, leftovers };
+  }
+
+  /** Remove a run directory; files a container wrote as root are removed from a container. */
+  private async removeDir(run: Run): Promise<boolean> {
+    const root = this.dirs(run.id).root;
+    const rm = () => {
+      try {
+        rmSync(root, { recursive: true, force: true });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    if (rm()) return true;
+    const image = run.image ?? run.spec.image;
+    if (image && (await docker.imageExists(image).catch(() => false)))
+      await docker.emptyDirAsRoot(root, image);
+    return rm();
   }
 
   storeList(filter: RunFilter): Run[] {

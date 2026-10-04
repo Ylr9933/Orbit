@@ -119,7 +119,7 @@ export function createApp(deps: AppDeps): Hono {
       const onChange = ({ run: r }: { run: Run }) => {
         if (r.id === id && isTerminal(r.state) && r.cleanup !== "pending") finish(r);
       };
-      const t = setTimeout(() => finish(must(runs.get(id))), timeoutMs);
+      const t = setTimeout(() => finish(runs.get(id) ?? run), timeoutMs);
       const finish = (r: Run) => {
         clearTimeout(t);
         runs.off("change", onChange);
@@ -163,6 +163,14 @@ export function createApp(deps: AppDeps): Hono {
       );
     c.header("content-length", String(st.size));
     return c.body(Readable.toWeb(createReadStream(file)) as ReadableStream);
+  });
+
+  // Irreversible: the CLI and the Web UI ask for a typed confirmation before calling it.
+  api.post("/runs/delete", async (c) => {
+    const { ids } = z
+      .object({ ids: z.array(z.string()).min(1).max(5000) })
+      .parse(await c.req.json());
+    return c.json(await runs.delete(ids));
   });
 
   api.get("/runs/:id/metrics", async (c) => {
@@ -323,6 +331,7 @@ export function createApp(deps: AppDeps): Hono {
   api.post("/bench/jobs", async (c) => c.json(await bench.submit(await c.req.json()), 201));
   api.get("/bench/jobs/:id", (c) => c.json(bench.job(c.req.param("id"))));
   api.post("/bench/jobs/:id/cancel", async (c) => c.json(await bench.cancel(c.req.param("id"))));
+  api.delete("/bench/jobs/:id", async (c) => c.json(await bench.deleteJob(c.req.param("id"))));
   api.get("/bench/usage", (c) =>
     c.json(bench.usage((c.req.query("jobs") ?? "").split(",").filter(Boolean))),
   );
@@ -336,11 +345,16 @@ export function createApp(deps: AppDeps): Hono {
       const onChange = ({ run }: { run: Run }) => {
         void stream.writeSSE({ event: "run", data: JSON.stringify(run) });
       };
+      const onDeleted = (ids: string[]) => {
+        void stream.writeSSE({ event: "deleted", data: JSON.stringify({ ids }) });
+      };
       runs.on("change", onChange);
+      runs.on("deleted", onDeleted);
       const ping = setInterval(() => void stream.writeSSE({ event: "ping", data: "" }), 15_000);
       await new Promise<void>((resolve) => stream.onAbort(resolve));
       clearInterval(ping);
       runs.off("change", onChange);
+      runs.off("deleted", onDeleted);
     }),
   );
 

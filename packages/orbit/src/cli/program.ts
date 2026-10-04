@@ -11,6 +11,7 @@ import { detectAgent } from "./agent.ts";
 import { kv, registerAuth, registerNotify } from "./auth.ts";
 import { registerBench } from "./bench.ts";
 import { parseDataset, registerCluster } from "./cluster.ts";
+import { confirmTyped } from "./confirm.ts";
 import { formatDoctor, formatLedger, formatRun, formatRuns } from "./format.ts";
 
 export interface ProgramDeps {
@@ -372,6 +373,41 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
         const r = await c.cancel(id);
         console.log(`${r.id}  ${r.state}`);
       }
+    });
+
+  program
+    .command("rm")
+    .description(
+      "permanently delete finished runs (records, logs, outputs); asks you to type the id or group",
+    )
+    .argument("[ids...]")
+    .option("-g, --group <group>", "every run of this group")
+    .option("-y, --yes", "skip the typed confirmation (required without a terminal)")
+    .option("--json", "print JSON")
+    .action(async (ids: string[], o: { group?: string; yes?: boolean; json?: boolean }) => {
+      const c = await client();
+      const targets = [...ids];
+      if (o.group)
+        targets.push(...(await c.list({ group: o.group, limit: 10_000 })).map((r) => r.id));
+      if (targets.length === 0) throw new Error("give run ids or --group");
+      const expected =
+        o.group && ids.length === 0
+          ? o.group
+          : targets.length === 1
+            ? (targets[0] as string)
+            : `delete ${targets.length} runs`;
+      await confirmTyped(
+        `delete ${targets.length} run(s)${o.group ? ` of group ${o.group}` : ""}`,
+        expected,
+        o.yes,
+      );
+      const r = await c.deleteRuns(targets);
+      print(o.json, r, () =>
+        [
+          `deleted ${r.deleted.length} run(s)`,
+          ...r.leftovers.map((d) => `could not remove all files of ${d}`),
+        ].join("\n"),
+      );
     });
 
   program

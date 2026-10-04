@@ -1,4 +1,11 @@
-import type { DoctorReport, Lease, Ledger, NodeResources, Run } from "../contracts/index.ts";
+import {
+  type DoctorReport,
+  type Lease,
+  type Ledger,
+  type NodeResources,
+  type Run,
+  runDisplayName,
+} from "../contracts/index.ts";
 
 export function duration(ms: number): string {
   if (ms < 0) ms = 0;
@@ -37,7 +44,7 @@ export function formatRuns(runs: Run[]): string {
       r.id,
       r.state,
       r.spec.group ?? "-",
-      r.spec.name ?? "-",
+      runDisplayName(r.spec),
       gpus,
       runDuration(r),
       code,
@@ -52,7 +59,7 @@ export function formatRuns(runs: Run[]): string {
 export function formatRun(r: Run, summary?: Record<string, number>): string {
   const lines = [
     `${r.id}  ${r.state}${r.reason ? ` (${r.reason})` : ""}`,
-    `  name     ${r.spec.name ?? "-"}   group ${r.spec.group ?? "-"}`,
+    `  name     ${r.spec.name ?? `${runDisplayName(r.spec)} (from the command)`}   group ${r.spec.group ?? "-"}`,
     `  command  ${r.spec.command.join(" ")}`,
     `  image    ${r.image ?? r.spec.dockerfile ?? "-"}`,
     `  request  ${r.spec.resources.gpus} GPU, ${r.spec.resources.cpus} CPU, ${r.spec.resources.memGB} GB`,

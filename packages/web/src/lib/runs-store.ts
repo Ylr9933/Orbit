@@ -55,6 +55,10 @@ function connect() {
     during?.set(run.id, run);
     upsertRun(run);
   });
+  es.addEventListener("deleted", (ev) => {
+    const { ids } = JSON.parse((ev as MessageEvent<string>).data) as { ids: string[] };
+    removeRuns(ids);
+  });
   es.addEventListener("error", () => {
     if (state.connected) emit({ connected: false });
     // The browser retries on its own unless the stream failed outright (e.g. 401): then probe the
@@ -76,6 +80,15 @@ export function startRunsStore() {
   started = true;
   void load();
   connect();
+}
+
+export function removeRuns(ids: string[]) {
+  const runs = new Map(state.runs);
+  for (const id of ids) {
+    runs.delete(id);
+    during?.delete(id);
+  }
+  emit({ runs });
 }
 
 export function upsertRun(run: Run) {

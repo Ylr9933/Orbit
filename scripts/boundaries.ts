@@ -81,7 +81,10 @@ export function checkFile(srcDir: string, file: string, text: string): Violation
 const PKG_IMPORT_RE =
   /(?:^|[\s;])(import|export)(\s+type)?\s[^;]*?from\s+["'](@zjunlp\/orbit[^"']*)["']/g;
 
-/** The Web bundle may use the daemon's contracts as types only (no zod, no Node code). */
+/**
+ * The Web bundle may use the daemon's contracts as types only (no zod, no Node code), plus the
+ * dependency-free run naming rule at runtime.
+ */
 export function checkWebFile(srcDir: string, file: string, text: string): Violation[] {
   const out: Violation[] = [];
   for (const m of text.matchAll(IMPORT_RE)) {
@@ -94,8 +97,13 @@ export function checkWebFile(srcDir: string, file: string, text: string): Violat
   }
   for (const m of text.matchAll(PKG_IMPORT_RE)) {
     const line = text.slice(0, m.index).split("\n").length;
+    if (m[3] === "@zjunlp/orbit/naming") continue;
     if (m[3] !== "@zjunlp/orbit/contracts")
-      out.push({ file, line, message: `web may only import @zjunlp/orbit/contracts: ${m[3]}` });
+      out.push({
+        file,
+        line,
+        message: `web may only import @zjunlp/orbit/contracts (types) or /naming: ${m[3]}`,
+      });
     else if (!m[2])
       out.push({ file, line, message: "web must import contracts with `import type`" });
   }

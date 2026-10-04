@@ -1,3 +1,4 @@
+import { runDisplayName } from "@zjunlp/orbit/naming";
 import type { Run, RunState } from "./api.ts";
 
 export const STATE_LABEL: Record<RunState, string> = {
@@ -91,8 +92,9 @@ export function num(v: number | null | undefined): string {
   return Number(v.toPrecision(4)).toString();
 }
 
+/** The run's name, else a short name derived from its command (same rule as the CLI). */
 export function runTitle(r: Run): string {
-  return r.spec.name || r.spec.command.join(" ");
+  return runDisplayName(r.spec);
 }
 
 export function shortId(id: string): string {
@@ -140,4 +142,10 @@ export function cliCommand(r: Run): string {
 
 export function harnessLabel(h: string): string {
   return h === "claude-code" ? "Claude Code" : h === "codex" ? "Codex" : h;
+}
+
+/** A score for display: at most two decimals, trailing zeros dropped. */
+export function fmtScore(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
+  return String(Math.round(v * 100) / 100);
 }

@@ -12,6 +12,7 @@ import type {
   MethodSummary,
 } from "../contracts/index.ts";
 import { kv, type Print } from "./auth.ts";
+import { confirmTyped } from "./confirm.ts";
 
 type Job = BenchJobList["jobs"][number];
 
@@ -350,6 +351,31 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
     .action(async (id: string) => {
       const j = await (await client()).benchCancel(id);
       console.log(`${j.id} ${j.state}`);
+    });
+
+  bench
+    .command("rm-job <job>")
+    .description(
+      "permanently delete a finished or cancelled job with all its trials and runs; asks you to type the job id",
+    )
+    .option("-y, --yes", "skip the typed confirmation (required without a terminal)")
+    .option("--json", "print JSON")
+    .action(async (id: string, o: { yes?: boolean; json?: boolean }) => {
+      const c = await client();
+      const d = await c.benchJob(id);
+      const runs = d.trials.flatMap((t) => [t.solveRunId, t.verifyRunId]).filter(Boolean).length;
+      await confirmTyped(
+        `delete bench job ${id}${d.job.spec.name ? ` (${d.job.spec.name})` : ""}: ${d.trials.length} trial(s), ${runs} run(s) and their outputs`,
+        id,
+        o.yes,
+      );
+      const r = await c.benchDeleteJob(id);
+      print(o.json, r, () =>
+        [
+          `deleted job ${id} and ${r.deleted.length} run(s)`,
+          ...r.leftovers.map((dir) => `could not remove all files of ${dir}`),
+        ].join("\n"),
+      );
     });
 
   bench

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export { autoRunName, runDisplayName } from "./naming.ts";
+
 export const API_PREFIX = "/api/v1";
 
 export const Gpu = z.object({
@@ -341,6 +343,13 @@ export const RunEvent = z.object({
 export type RunEvent = z.infer<typeof RunEvent>;
 
 export const RunList = z.object({ runs: z.array(Run) });
+/** Result of deleting runs (or a bench job's runs). */
+export const RunDeletion = z.object({
+  deleted: z.array(z.string()),
+  /** Run directories that could not be removed completely (e.g. root-owned files). */
+  leftovers: z.array(z.string()),
+});
+export type RunDeletion = z.infer<typeof RunDeletion>;
 export const RunEvents = z.object({ events: z.array(RunEvent) });
 
 /** A chunk of the combined stdout/stderr log. Offsets are byte offsets in the log file. */

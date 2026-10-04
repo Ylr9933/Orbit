@@ -33,6 +33,7 @@ import {
   NotifyTarget,
   type NotifyTargetInput,
   Run,
+  RunDeletion,
   RunEvents,
   RunList,
   RunSessions,
@@ -106,6 +107,8 @@ export class OrbitClient {
   metrics = (id: string) => this.call(Metrics, `/runs/${enc(id)}/metrics`);
   artifacts = (id: string) => this.call(Artifacts, `/runs/${enc(id)}/artifacts`);
   diff = (id: string) => this.call(CodeDiff, `/runs/${enc(id)}/diff`);
+  deleteRuns = (ids: string[]) =>
+    this.call(RunDeletion, "/runs/delete", { method: "POST", body: { ids }, timeoutMs: 600_000 });
   session = (id: string) => this.call(RunSessions, `/runs/${enc(id)}/session`);
 
   authList = () =>
@@ -158,6 +161,8 @@ export class OrbitClient {
     this.call(BenchJob, "/bench/jobs", { method: "POST", body: spec, timeoutMs: 600_000 });
   benchUsage = (ids: string[]) =>
     this.call(BenchUsage, `/bench/usage?jobs=${ids.map(enc).join(",")}`);
+  benchDeleteJob = (id: string) =>
+    this.call(RunDeletion, `/bench/jobs/${enc(id)}`, { method: "DELETE", timeoutMs: 600_000 });
   benchJobs = (limit = 200) =>
     this.call(BenchJobList, `/bench/jobs?limit=${limit}`).then((r) => r.jobs);
   benchJob = (id: string) => this.call(BenchJobDetail, `/bench/jobs/${enc(id)}`);

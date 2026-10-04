@@ -54,6 +54,10 @@ orbit sweep --image python:3.12-slim --gpus 1 -g lr-sweep \
 - Uncommitted changes and untracked files are included in the snapshot, so you do not need to commit first. Large data and weights are not copied: prefer a registered dataset, `-d <name>` (mounted read-only at `/data/<name>`; see `orbit data ls`), or mount a host path with `-m /host/path:/data` (read-only; add `:rw` only if needed).
 - `-e KEY=VALUE` for non-secret environment variables, `--pass-env VAR` for secrets; `--no-network` for offline runs; `-t key=value` for tags.
 - Use `-g <group>` for runs that belong together (sweeps, ablations) so they can be compared.
+- Name every run and job for the human who reviews them: `-n` short and specific (`baseline`,
+  `lr 3e-4 warmup`, `noskills xhigh random8`), groups as the question they answer (`lr-sweep`). No
+  timestamps, ids or full paths in names: Orbit shows times and ids itself. Without `-n`, Orbit derives
+  a name from the command (`train.py lr=3e-4`), which says what ran but not why.
 
 ## 3. Inside the container
 
@@ -127,6 +131,11 @@ orbit note <id> "lr=3e-4 converges ~2x faster than 1e-4; seed std 0.01. Next: tr
 ```
 
 Tell the user the run ids and `orbit web <id>` for review.
+
+Deleting runs (`orbit rm <id>... | -g <group>`) or a bench job (`orbit bench rm-job <job>`) removes
+their logs, outputs and sessions for good. Do it only when the user asks for those runs to be
+deleted; the command asks the user to type the id or group, and `--yes` skips that only when the
+user has explicitly confirmed this deletion.
 
 ## Rules
 
