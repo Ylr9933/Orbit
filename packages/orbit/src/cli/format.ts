@@ -1,5 +1,7 @@
 import {
   type DoctorReport,
+  type FolderStat,
+  inFolder,
   type Lease,
   type Ledger,
   type NodeResources,
@@ -59,7 +61,7 @@ export function formatRuns(runs: Run[]): string {
 export function formatRun(r: Run, summary?: Record<string, number>): string {
   const lines = [
     `${r.id}  ${r.state}${r.reason ? ` (${r.reason})` : ""}`,
-    `  name     ${r.spec.name ?? `${runDisplayName(r.spec)} (from the command)`}   group ${r.spec.group ?? "-"}`,
+    `  name     ${r.spec.name ?? `${runDisplayName(r.spec)} (from the command)`}   group ${r.spec.group ?? "-"}   folder ${r.folder || "-"}`,
     `  command  ${r.spec.command.join(" ")}`,
     `  image    ${r.image ?? r.spec.dockerfile ?? "-"}`,
     `  request  ${r.spec.resources.gpus} GPU, ${r.spec.resources.cpus} CPU, ${r.spec.resources.memGB} GB`,
@@ -67,6 +69,7 @@ export function formatRun(r: Run, summary?: Record<string, number>): string {
   ];
   if (r.lease) lines.push(`  lease    ${r.lease.state} ${r.lease.gpuIds.join(", ") || "no GPUs"}`);
   if (r.usage) lines.push(`  usage    ${formatUsage(r)}`);
+  if (r.sizeBytes !== null) lines.push(`  disk     ${fmtBytes(r.sizeBytes)}`);
   if (r.code) {
     const c = r.code;
     lines.push(
@@ -147,8 +150,44 @@ export function formatLedger(l: Ledger): string {
 
 export function formatDoctor(r: DoctorReport): string {
   return r.checks
-    .map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.name.padEnd(11)} ${c.detail}`)
+    .map((c) => `${c.ok ? (c.warn ? "warn" : "ok  ") : "FAIL"} ${c.name.padEnd(11)} ${c.detail}`)
     .join("\n");
+}
+
+/** 1.2 GB, 340 MB, 12 KB */
+export function fmtBytes(n: number): string {
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${i === 0 || v >= 10 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+}
+
+/** Folders with totals over their subfolders, as an indented tree. */
+export function formatFolders(fs: FolderStat[]): string {
+  if (fs.length === 0) return "no folders; file runs with `orbit mv <id...> <folder>` or --folder";
+  const paths = new Set<string>();
+  for (const f of fs) {
+    const parts = f.path.split("/");
+    for (let i = 1; i <= parts.length; i++) paths.add(parts.slice(0, i).join("/"));
+  }
+  const rows = [["FOLDER", "RUNS", "JOBS", "ACTIVE", "SIZE"]];
+  for (const p of [...paths].sort()) {
+    const sub = fs.filter((f) => inFolder(f.path, p));
+    const sum = (k: "runs" | "jobs" | "active" | "sizeBytes") => sub.reduce((a, f) => a + f[k], 0);
+    const depth = p.split("/").length - 1;
+    rows.push([
+      `${"  ".repeat(depth)}${p.split("/").at(-1)}/`,
+      String(sum("runs")),
+      String(sum("jobs")),
+      String(sum("active")),
+      fmtBytes(sum("sizeBytes")),
+    ]);
+  }
+  return table(rows);
 }
 
 /** Measured use against the request, e.g. `memory 11.2/16 GB peak, CPU 3.1 peak 1.2 mean/4`. */

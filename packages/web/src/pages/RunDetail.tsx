@@ -5,6 +5,7 @@ import {
   IconChip,
   IconClock,
   IconCopy,
+  IconFolder,
   IconGit,
   IconLayers,
 } from "../components/icons.tsx";
@@ -24,6 +25,7 @@ import {
 } from "../components/ui.tsx";
 import { api, HttpError, type Run } from "../lib/api.ts";
 import {
+  bytes,
   cliCommand,
   duration,
   harnessLabel,
@@ -278,6 +280,17 @@ function RunView({ run }: { run: Run }) {
               <IconBot size={12} />
               {harnessLabel(agent.harness)}
               {agent.sessionId && <span className="mono faint">{agent.sessionId.slice(0, 8)}</span>}
+            </span>
+          )}
+          {run.folder && (
+            <Link className="chip link mono" href={`/?folder=${encodeURIComponent(run.folder)}`}>
+              <IconFolder size={12} />
+              {run.folder}
+            </Link>
+          )}
+          {run.sizeBytes !== null && (
+            <span className="chip mono" title="Run directory on disk">
+              {bytes(run.sizeBytes)}
             </span>
           )}
           <Params params={run.spec.params} />

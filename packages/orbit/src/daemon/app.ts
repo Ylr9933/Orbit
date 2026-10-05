@@ -11,6 +11,7 @@ import type { BenchmarkRegistry } from "../bench/registry.ts";
 import { loadResources, resolveResources } from "../bench/resources.ts";
 import type { BenchService } from "../bench/service.ts";
 import type { ClusterService } from "../cluster/service.ts";
+import type { OrbitPaths } from "../config/paths.ts";
 import {
   API_PREFIX,
   type AuthProfile,
@@ -20,6 +21,9 @@ import {
   type Dataset,
   DatasetInput,
   type ExposeStatus,
+  FolderExport,
+  type FolderList,
+  FolderMove,
   type Health,
   isTerminal,
   type Ledger,
@@ -43,6 +47,7 @@ import {
 } from "../records/index.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { loadRunAgentTranscript, loadTranscript } from "../sessions/index.ts";
+import type { Store } from "../store/index.ts";
 import type { DatasetRegistry } from "../workspace/datasets.ts";
 import { runDoctor } from "./doctor.ts";
 
@@ -57,6 +62,8 @@ export interface AppDeps {
   benchmarks: BenchmarkRegistry;
   cluster: ClusterService;
   datasets: DatasetRegistry;
+  store: Store;
+  paths: OrbitPaths;
   /** Built Web UI directory, or null when not built. */
   webDir: string | null;
 }
@@ -83,7 +90,7 @@ export function createApp(deps: AppDeps): Hono {
     c.json<Health>({ ok: true, version: VERSION, pid: process.pid, startedAt: deps.startedAt }),
   );
   api.get("/resources", async (c) => c.json(await runs.resources(true)));
-  api.get("/doctor", async (c) => c.json(await runDoctor()));
+  api.get("/doctor", async (c) => c.json(await runDoctor(deps.paths)));
   api.get("/ledger", async (c) =>
     c.json<Ledger>({
       resources: await runs.resources(),
@@ -99,9 +106,22 @@ export function createApp(deps: AppDeps): Hono {
       .filter(Boolean)
       .map((s) => RunState.parse(s));
     const limit = num(c.req.query("limit"), 500);
-    return c.json({ runs: runs.storeList({ states, group: c.req.query("group"), limit }) });
+    const folder = c.req.query("folder") || undefined;
+    return c.json({ runs: runs.storeList({ states, group: c.req.query("group"), folder, limit }) });
   });
-  api.post("/runs", async (c) => c.json(await runs.submit(await c.req.json()), 201));
+  api.post("/runs", async (c) =>
+    c.json(await runs.submit(await c.req.json(), { folder: c.req.query("folder") }), 201),
+  );
+
+  api.get("/folders", (c) => c.json<FolderList>({ folders: deps.store.folders() }));
+  api.post("/folders/move", async (c) => {
+    const { folder, ids } = FolderMove.parse(await c.req.json());
+    return c.json(bench.move(ids, folder));
+  });
+  api.post("/folders/export", async (c) => {
+    const { folder, dest } = FolderExport.parse(await c.req.json());
+    return c.json(await bench.exportFolder(folder, dest));
+  });
   api.get("/runs/:id", (c) => c.json(must(runs.get(c.req.param("id")))));
   api.post("/runs/:id/cancel", async (c) => c.json(await runs.cancel(c.req.param("id"))));
   api.put("/runs/:id/note", async (c) => {
@@ -328,7 +348,9 @@ export function createApp(deps: AppDeps): Hono {
     c.json({ tasks: await bench.tasks(c.req.param("name")) }),
   );
   api.get("/bench/jobs", (c) => c.json(bench.jobs(num(c.req.query("limit"), 200))));
-  api.post("/bench/jobs", async (c) => c.json(await bench.submit(await c.req.json()), 201));
+  api.post("/bench/jobs", async (c) =>
+    c.json(await bench.submit(await c.req.json(), { folder: c.req.query("folder") }), 201),
+  );
   api.get("/bench/jobs/:id", (c) => c.json(bench.job(c.req.param("id"))));
   api.post("/bench/jobs/:id/cancel", async (c) => c.json(await bench.cancel(c.req.param("id"))));
   api.delete("/bench/jobs/:id", async (c) => c.json(await bench.deleteJob(c.req.param("id"))));

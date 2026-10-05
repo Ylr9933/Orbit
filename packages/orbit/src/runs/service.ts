@@ -22,6 +22,7 @@ import type { AuthStore } from "../auth/index.ts";
 import { type OrbitPaths, type RunDirs, runDirs } from "../config/paths.ts";
 import {
   type AuthTestResult,
+  Folder,
   isTerminal,
   type Lease,
   type NodeResources,
@@ -43,7 +44,7 @@ import {
 } from "../harness/index.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { Redactor } from "../lib/redact.ts";
-import { safeJoin } from "../records/index.ts";
+import { dirBytes, safeJoin } from "../records/index.ts";
 import { allocate, infeasible } from "../resources/allocate.ts";
 import { resolveAgentRef } from "../sessions/index.ts";
 import type { RunFilter, Store } from "../store/index.ts";
@@ -133,6 +134,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
   private timer: NodeJS.Timeout | null = null;
   private ticking: Promise<void> | null = null;
   private tickAgain = false;
+  private stopped = false;
   /** Runs with an active launch/watch task in this process. */
   private readonly active = new Map<string, Control>();
 
@@ -155,6 +157,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
 
   async start(): Promise<void> {
     await this.recover();
+    void this.measureMissing();
     this.timer = setInterval(() => void this.tick(), this.deps.tickMs ?? 3000);
     void this.tick();
   }
@@ -173,6 +176,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     await this.ticking;
@@ -257,8 +261,10 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     return this.store.events(id, afterSeq);
   }
 
-  async submit(input: RunSpecInput): Promise<Run> {
+  async submit(input: RunSpecInput, opts: { folder?: string } = {}): Promise<Run> {
     const spec = RunSpec.parse(input);
+    const folder = Folder.safeParse(opts.folder ?? "");
+    if (!folder.success) throw new UserError(folder.error.issues[0]?.message ?? "invalid folder");
     if (spec.project && !isAbsolute(spec.project))
       throw new UserError("project must be an absolute path");
     if (spec.backend === "process") {
@@ -334,7 +340,9 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       remote: false,
       origin: null,
       note: "",
+      folder: folder.data,
       usage: null,
+      sizeBytes: null,
       createdAt: nowIso(),
       startedAt: null,
       endedAt: null,
@@ -424,6 +432,17 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
         ? "agent replied ORBIT_AUTH_OK"
         : `${done.state}: ${done.reason ?? ""}\n${tail}`.trim(),
     };
+  }
+
+  /** File runs in a folder (`""` for none); returns the runs that changed. */
+  setFolder(ids: string[], folder: string): Run[] {
+    const runs = ids.map((id) => this.mustGet(id));
+    const changed = runs.filter((r) => r.folder !== folder);
+    for (const r of changed) {
+      r.folder = folder;
+      this.save(r, "folder", folder || "(none)");
+    }
+    return changed;
   }
 
   setNote(id: string, note: string): Run {
@@ -797,7 +816,9 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       remote: false,
       origin: input.origin,
       note: "",
+      folder: "",
       usage: null,
+      sizeBytes: null,
       createdAt: nowIso(),
       startedAt: null,
       endedAt: null,
@@ -1353,6 +1374,24 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
         run.spec.backend === "process" ? "process and child containers gone" : "container removed";
       this.save(fresh, "cleanup", lease ? `${what}, lease released` : "done");
     });
+    void this.measure(fresh.id);
+  }
+
+  /** Record the size of a finished run's directory (outputs no longer change once cleaned up). */
+  private async measure(id: string): Promise<void> {
+    const bytes = await dirBytes(this.dirs(id).root);
+    const run = this.store.getRun(id);
+    if (bytes === null || !run || run.sizeBytes === bytes) return;
+    run.sizeBytes = bytes;
+    this.save(run);
+  }
+
+  /** Measure finished runs recorded before sizes were (one at a time, in the background). */
+  private async measureMissing(): Promise<void> {
+    for (const r of this.store.unmeasuredRuns()) {
+      if (this.stopped) return;
+      await this.measure(r.id);
+    }
   }
 
   private async retryCleanup(): Promise<void> {

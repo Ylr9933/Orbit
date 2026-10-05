@@ -1,11 +1,21 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 export const DEFAULT_PORT = 7717;
 
 export interface OrbitPaths {
+  /** Small state: database, profiles, daemon endpoint, config (`ORBIT_HOME`, default `~/.orbit`). */
   home: string;
+  /**
+   * Large data: run directories, bench staging and code bundles (`ORBIT_DATA`, else `dataDir` in
+   * `<home>/config.json`, else `home`). Put it on a large disk.
+   */
+  data: string;
+  /** Where `data` came from. */
+  dataSource: "env" | "config" | "default";
+  /** `<home>/config.json`: `{ dataDir? }`. */
+  config: string;
   /** This node's name in a cluster (`ORBIT_NODE`, default: the hostname). */
   node: string;
   /** GPUs this daemon manages, by index or UUID (`ORBIT_GPUS`, comma-separated); null means all. */
@@ -38,35 +48,68 @@ export interface OrbitPaths {
   runs: string;
 }
 
+export interface OrbitConfig {
+  /** Absolute path of the data directory. */
+  dataDir?: string;
+}
+
+export function readConfig(file: string): OrbitConfig {
+  if (!existsSync(file)) return {};
+  let v: unknown;
+  try {
+    v = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    throw new Error(`${file} is not valid JSON`);
+  }
+  const dataDir = (v as OrbitConfig | null)?.dataDir;
+  if (dataDir !== undefined && (typeof dataDir !== "string" || !isAbsolute(dataDir)))
+    throw new Error(`${file}: dataDir must be an absolute path`);
+  return dataDir ? { dataDir } : {};
+}
+
+export function writeConfig(file: string, c: OrbitConfig): void {
+  writeFileSync(file, `${JSON.stringify(c, null, 2)}\n`, { mode: 0o600 });
+}
+
 export function orbitPaths(env: NodeJS.ProcessEnv = process.env): OrbitPaths {
   const home = env.ORBIT_HOME || join(homedir(), ".orbit");
+  const config = join(home, "config.json");
+  if (env.ORBIT_DATA && !isAbsolute(env.ORBIT_DATA))
+    throw new Error("ORBIT_DATA must be an absolute path");
+  const configured = readConfig(config).dataDir;
+  const data = env.ORBIT_DATA || configured || home;
+  const dataSource = env.ORBIT_DATA ? "env" : configured ? "config" : "default";
   const gpus = (env.ORBIT_GPUS ?? "")
     .split(",")
     .map((g) => g.trim())
     .filter(Boolean);
   return {
     home,
+    data,
+    dataSource,
+    config,
     node: env.ORBIT_NODE || hostname(),
     gpus: gpus.length > 0 ? gpus : null,
     port: Number(env.ORBIT_PORT) || DEFAULT_PORT,
     daemonFile: join(home, "daemon.json"),
     daemonLog: join(home, "daemon.log"),
     db: join(home, "orbit.db"),
-    runs: join(home, "runs"),
+    runs: join(data, "runs"),
     auth: join(home, "auth.json"),
     notify: join(home, "notify.json"),
     tmp: join(home, "tmp"),
     benchmarks: join(home, "benchmarks.json"),
-    bench: join(home, "bench"),
+    bench: join(data, "bench"),
     datasets: join(home, "datasets.json"),
     nodes: join(home, "nodes.json"),
     cluster: join(home, "cluster.json"),
-    bundles: join(home, "cache", "bundles"),
+    bundles: join(data, "cache", "bundles"),
   };
 }
 
 export function ensureHome(paths: OrbitPaths): void {
   mkdirSync(paths.home, { recursive: true, mode: 0o700 });
+  mkdirSync(paths.data, { recursive: true, mode: 0o700 });
   mkdirSync(paths.runs, { recursive: true });
   mkdirSync(paths.tmp, { recursive: true, mode: 0o700 });
   mkdirSync(paths.bench, { recursive: true, mode: 0o700 });
@@ -100,4 +143,13 @@ export function runDirs(paths: OrbitPaths, runId: string): RunDirs {
     diff: join(root, "code.diff"),
     agent: join(orbit, "agent"),
   };
+}
+
+/** Whether a directory is on the same filesystem as `/` (where a full disk takes the system down). */
+export function onSystemDisk(dir: string): boolean {
+  try {
+    return statSync(dir).dev === statSync("/").dev;
+  } catch {
+    return false;
+  }
 }

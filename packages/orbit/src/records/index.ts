@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { open, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, open, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import type { Artifacts, LogChunk, Metrics } from "../contracts/index.ts";
@@ -189,4 +189,21 @@ export async function readDiff(file: string): Promise<{ patch: string; truncated
   } finally {
     await fh.close();
   }
+}
+
+/** Bytes used by the files under a directory (symlinks not followed); null if it does not exist. */
+export async function dirBytes(dir: string): Promise<number | null> {
+  const top = await lstat(dir).catch(() => null);
+  if (!top) return null;
+  let total = 0;
+  const walk = async (d: string): Promise<void> => {
+    for (const e of await readdir(d, { withFileTypes: true }).catch(() => [])) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) await walk(p);
+      else total += (await lstat(p).catch(() => null))?.size ?? 0;
+    }
+  };
+  if (top.isDirectory()) await walk(dir);
+  else total = top.size;
+  return total;
 }

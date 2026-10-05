@@ -19,7 +19,8 @@ import { type StartedDaemon, startDaemon } from "../src/daemon/server.ts";
 import { probeNode } from "../src/resources/probe.ts";
 
 const home = mkdtempSync(join(tmpdir(), "orbit-bench-daemon-"));
-const paths = orbitPaths({ ORBIT_HOME: join(home, "orbit") });
+// Small state and run data in separate directories, as on a machine with a large data disk.
+const paths = orbitPaths({ ORBIT_HOME: join(home, "orbit"), ORBIT_DATA: join(home, "data") });
 const asi = join(home, "asi");
 let daemon: StartedDaemon;
 let client: OrbitClient;
@@ -101,7 +102,7 @@ beforeAll(async () => {
     self: [process.execPath, fileURLToPath(new URL("../src/bin.ts", import.meta.url))],
     // ASI solve runs lease 8 GB; small CI runners have less, and these runs are tiny fake runners.
     probe: async () => ({
-      ...(await probeNode(paths.home, { node: paths.node, gpus: paths.gpus })),
+      ...(await probeNode(paths.data, { node: paths.node, gpus: paths.gpus })),
       cpu: { count: 16, load1: 0, busy: 0 },
       memory: { totalGB: 64, availableGB: 64 },
     }),
@@ -232,6 +233,57 @@ describe("bench jobs", () => {
       "bench/score": 100,
       "bench/answer": 7,
     });
+  });
+
+  it("files jobs in folders with their runs, keeps data out of home and exports a folder", async () => {
+    expect(paths.runs).toBe(join(home, "data", "runs"));
+    await expect(
+      client.benchSubmit({ benchmark: "ext", methods: [{ name: "o", agent: "oracle" }] }, "../x"),
+    ).rejects.toThrow(/folder must be/);
+    const job = await client.benchSubmit(
+      { benchmark: "ext", methods: [{ name: "oracle", agent: "oracle" }] },
+      "rcb/noskills",
+    );
+    let d = await client.benchJob(job.id);
+    for (
+      let i = 0;
+      i < 300 &&
+      (d.job.state === "running" ||
+        d.trials.some((t) => !t.outcome || t.outcome.cleanup === "pending"));
+      i++
+    ) {
+      await new Promise((r) => setTimeout(r, 100));
+      d = await client.benchJob(job.id);
+    }
+    const ids = d.trials.flatMap((t) => [t.solveRunId, t.verifyRunId]).filter(Boolean) as string[];
+    expect(ids).toHaveLength(2);
+    expect(existsSync(join(home, "data", "runs", ids[0] as string))).toBe(true);
+    expect(existsSync(join(home, "orbit", "runs"))).toBe(false);
+    expect((await client.list({ folder: "rcb" })).map((r) => r.id).sort()).toEqual([...ids].sort());
+    // Moving one of its runs moves the whole job.
+    const r = await client.move([ids[0] as string], "rcb/archive");
+    expect(r.jobs).toEqual([job.id]);
+    expect((await client.benchJob(job.id)).job.folder).toBe("rcb/archive");
+    expect((await client.list({ folder: "rcb/noskills" })).length).toBe(0);
+    let fs = await client.folders();
+    for (let i = 0; i < 50 && !fs.find((f) => f.path === "rcb/archive" && f.sizeBytes > 0); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      fs = await client.folders();
+    }
+    expect(fs.find((f) => f.path === "rcb/archive")).toMatchObject({ runs: 2, jobs: 1, active: 0 });
+    expect(fs.find((f) => f.path === "rcb/archive")?.sizeBytes).toBeGreaterThan(0);
+
+    const dest = join(home, "export");
+    const x = await client.exportFolder("rcb", dest);
+    expect(x).toMatchObject({ runs: 2, jobs: 1, skipped: [] });
+    expect(existsSync(join(dest, "runs", ids[0] as string, "run.json"))).toBe(true);
+    expect(existsSync(join(dest, "jobs", `${job.id}.json`))).toBe(true);
+    await expect(client.exportFolder("rcb", dest)).rejects.toThrow(/not empty/);
+    await expect(client.exportFolder("none", join(home, "e2"))).rejects.toThrow(
+      /empty or does not exist/,
+    );
+    await client.move([job.id], "");
+    expect(await client.folders()).toEqual([]);
   });
 
   it("applies a resources file to solve runs, records usage and suggests from it", async () => {

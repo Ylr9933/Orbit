@@ -266,7 +266,8 @@ public internet. Details: [docs/guides/multi-node.md](docs/guides/multi-node.md)
 
 | Item | Default | Override |
 | --- | --- | --- |
-| State directory (runs, database, profiles) | `~/.orbit` | `ORBIT_HOME` |
+| State directory (database, profiles, config) | `~/.orbit` | `ORBIT_HOME` |
+| Data directory (run directories, bench staging, code bundles) | the state directory | `orbit config data <dir>`, or `ORBIT_DATA` |
 | Daemon port (on `127.0.0.1`) | 7717 | `ORBIT_PORT`, or `orbit daemon --port` |
 | Node name | host name | `ORBIT_NODE` |
 | GPUs Orbit may use | all | `ORBIT_GPUS=0,1` |
@@ -275,6 +276,12 @@ public internet. Details: [docs/guides/multi-node.md](docs/guides/multi-node.md)
 The daemon is the only writer of Orbit's state; the CLI, the Web UI and agents all go through its
 local HTTP API. `orbit daemon --stop` stops it; running containers continue and are picked up again
 when it restarts. `orbit daemon` runs it in the foreground.
+
+Run data can grow to hundreds of GB. On a machine with a small system disk, put it on a large disk
+once, before the first runs: `orbit config data /data/$USER/orbit && orbit daemon --stop`.
+`orbit doctor` warns when the data directory or Docker's data root is on the system disk or low on
+space. Folders organize runs and bench jobs without moving files: `orbit run --folder rcb/noskills`,
+`orbit mv <id...> rcb/archive`, `orbit folders`, and `orbit export rcb /path/to/copy` for a real copy.
 
 ## Troubleshooting
 

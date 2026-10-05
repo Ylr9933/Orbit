@@ -250,11 +250,16 @@ orbit run -d imagenet --gpus 1 --image pytorch/pytorch -- python train.py
 
 | 项 | 默认值 | 覆盖方式 |
 | --- | --- | --- |
-| 状态目录（Run、数据库、profile） | `~/.orbit` | `ORBIT_HOME` |
+| 状态目录（数据库、profile、配置） | `~/.orbit` | `ORBIT_HOME` |
+| 数据目录（Run 目录、bench staging、代码 bundle） | 同状态目录 | `orbit config data <dir>` 或 `ORBIT_DATA` |
 | daemon 端口（`127.0.0.1`） | 7717 | `ORBIT_PORT` 或 `orbit daemon --port` |
 | 节点名 | 主机名 | `ORBIT_NODE` |
 | Orbit 可用的 GPU | 全部 | `ORBIT_GPUS=0,1` |
 | daemon 地址与 token | `~/.orbit/daemon.json`（0600） | |
+
+Run 数据可能达到数百 GB。系统盘小的机器，在第一次运行前把它放到大盘：`orbit config data /data/$USER/orbit && orbit daemon --stop`。
+`orbit doctor` 会在数据目录或 Docker 数据目录位于系统盘或空间不足时提示。文件夹用于整理 Run 与 bench job，不移动文件：
+`orbit run --folder rcb/noskills`、`orbit mv <id...> rcb/archive`、`orbit folders`；需要实体副本时 `orbit export rcb /path/to/copy`。
 
 daemon 是 Orbit 状态的唯一写者；CLI、Web 和 Agent 都通过它的本地 HTTP API 访问。`orbit daemon --stop`
 停止 daemon，运行中的容器继续执行，daemon 重启后重新接管。`orbit daemon` 在前台运行。

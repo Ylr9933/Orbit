@@ -77,6 +77,8 @@ if the variable is set.
 ```bash
 orbit ps                    # active runs (queued with the reason, running)
 orbit ps -a -g lr-sweep     # everything in a group
+orbit ps -f rcb             # everything in folder rcb (and its subfolders)
+orbit mv <id...> rcb/noskills   # file runs or bench jobs in a folder (files stay where they are)
 orbit wait <id>... | -g lr-sweep   # blocks; exit code 1 if any run did not succeed
 orbit logs <id> --tail 4000 # end of the log; -f to follow
 orbit show <id>             # state, exit code, resources and measured usage, code snapshot, metrics

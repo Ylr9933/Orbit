@@ -1,9 +1,15 @@
 import { spawn } from "node:child_process";
-import { openSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, openSync, readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { Command, Option } from "commander";
 import { type OrbitClient, tryConnect } from "../client/index.ts";
-import { ensureHome, type OrbitPaths, orbitPaths } from "../config/paths.ts";
+import {
+  ensureHome,
+  type OrbitPaths,
+  orbitPaths,
+  readConfig,
+  writeConfig,
+} from "../config/paths.ts";
 import { isTerminal, type Run, type RunSpecInput } from "../contracts/index.ts";
 import { exec } from "../lib/exec.ts";
 import { VERSION } from "../lib/version.ts";
@@ -12,7 +18,14 @@ import { kv, registerAuth, registerNotify } from "./auth.ts";
 import { registerBench } from "./bench.ts";
 import { parseDataset, registerCluster } from "./cluster.ts";
 import { confirmTyped } from "./confirm.ts";
-import { formatDoctor, formatLedger, formatRun, formatRuns } from "./format.ts";
+import {
+  fmtBytes,
+  formatDoctor,
+  formatFolders,
+  formatLedger,
+  formatRun,
+  formatRuns,
+} from "./format.ts";
 
 export interface ProgramDeps {
   /** Run the daemon in the foreground; provided by the composition root (src/bin.ts). */
@@ -73,12 +86,17 @@ interface RunOpts {
   tag: string[];
   json?: boolean;
   wait?: boolean;
+  folder?: string;
 }
 
 function addRunOptions(cmd: Command): Command {
   return cmd
     .option("-n, --name <name>", "run name")
     .option("-g, --group <group>", "group runs (sweeps, ablations) for comparison")
+    .option(
+      "-f, --folder <path>",
+      "file the run in a folder, e.g. rcb/noskills (orbit mv to change)",
+    )
     .option("--project <dir>", "git repo to snapshot into /workspace (default: current repo)")
     .option("--no-project", "do not mount or snapshot any project")
     .option("--image <image>", "docker image")
@@ -252,7 +270,7 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
       .passThroughOptions(),
   ).action(async (command: string[], o: RunOpts) => {
     const c = await client();
-    const run = await c.submit(await buildSpec(o, command));
+    const run = await c.submit(await buildSpec(o, command), o.folder);
     if (o.wait) return waitAll(c, [run.id], Boolean(o.json), true);
     print(o.json, run, () => `${run.id}  ${run.state}${run.reason ? ` (${run.reason})` : ""}`);
   });
@@ -284,7 +302,7 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
         substitute(command, params),
         params,
       );
-      runs.push(await c.submit(spec));
+      runs.push(await c.submit(spec, o.folder));
     }
     if (o.wait)
       return waitAll(
@@ -300,16 +318,95 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
     .description("list runs (active by default)")
     .option("-a, --all", "include finished runs")
     .option("-g, --group <group>", "only this group")
+    .option("-f, --folder <path>", "only this folder and its subfolders")
     .option("-l, --limit <n>", "max runs", num, 50)
     .option("--json", "print JSON")
-    .action(async (o: { all?: boolean; group?: string; limit: number; json?: boolean }) => {
-      const states = o.all || o.group ? undefined : (["queued", "starting", "running"] as const);
-      const runs = await (await client()).list({
-        states: states ? [...states] : undefined,
-        group: o.group,
-        limit: o.limit,
-      });
-      print(o.json, runs, () => formatRuns(runs));
+    .action(
+      async (o: {
+        all?: boolean;
+        group?: string;
+        folder?: string;
+        limit: number;
+        json?: boolean;
+      }) => {
+        const states =
+          o.all || o.group || o.folder ? undefined : (["queued", "starting", "running"] as const);
+        const runs = await (await client()).list({
+          states: states ? [...states] : undefined,
+          group: o.group,
+          folder: o.folder,
+          limit: o.limit,
+        });
+        print(o.json, runs, () => formatRuns(runs));
+      },
+    );
+
+  program
+    .command("mv")
+    .description('file runs or bench jobs in a folder (a job takes its runs along); "" for none')
+    .argument("<ids...>", "run or bench job ids, then the folder")
+    .action(async (args: string[]) => {
+      const folder = args.at(-1) ?? "";
+      const ids = args.slice(0, -1);
+      if (ids.length === 0) throw new Error("usage: orbit mv <id...> <folder>");
+      const r = await (await client()).move(ids, folder.replace(/\/+$/, ""));
+      console.log(
+        `moved ${r.runs.length} run(s)${r.jobs.length ? ` and ${r.jobs.length} job(s)` : ""} to ${folder || "(no folder)"}`,
+      );
+    });
+
+  program
+    .command("folders")
+    .description("list folders with their runs, jobs and size (subfolders included)")
+    .option("--json", "print JSON")
+    .action(async (o: { json?: boolean }) => {
+      const fs = await (await client()).folders();
+      print(o.json, fs, () => formatFolders(fs));
+    });
+
+  program
+    .command("export")
+    .description("copy a folder's runs (files and records) and jobs into a new directory")
+    .argument("<folder>")
+    .argument("<dest>")
+    .option("--json", "print JSON")
+    .action(async (folder: string, dest: string, o: { json?: boolean }) => {
+      const r = await (await client()).exportFolder(folder.replace(/\/+$/, ""), resolve(dest));
+      print(o.json, r, () =>
+        [
+          `exported ${r.runs} run(s) and ${r.jobs} job(s), ${fmtBytes(r.bytes)}, to ${r.dest}`,
+          ...r.skipped.map((x) => `skipped ${x}`),
+        ].join("\n"),
+      );
+    });
+
+  program
+    .command("config")
+    .description(
+      "show or set where Orbit keeps run data (takes effect after `orbit daemon --stop`)",
+    )
+    .argument("[key]", "data")
+    .argument("[value]", "absolute directory on a large disk")
+    .action((key: string | undefined, value: string | undefined) => {
+      if (!key) {
+        console.log(`home  ${paths.home}  (database, profiles, config)`);
+        console.log(`data  ${paths.data}  (runs, staging; from ${paths.dataSource})`);
+        return;
+      }
+      if (key !== "data") throw new Error(`unknown config key ${key} (data)`);
+      if (!value) return console.log(paths.data);
+      const dir = resolve(value);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      writeConfig(paths.config, { ...readConfig(paths.config), dataDir: dir });
+      const moved = existsSync(paths.runs) && readdirSync(paths.runs).length > 0;
+      console.log(`data directory set to ${dir}`);
+      if (process.env.ORBIT_DATA) console.log("note: ORBIT_DATA is set and still takes precedence");
+      if (moved && resolve(paths.data) !== dir)
+        console.log(
+          `existing runs stay in ${paths.data}: stop the daemon (orbit daemon --stop), move\n` +
+            `  ${join(paths.data, "runs")}, ${join(paths.data, "bench")} and ${join(paths.data, "cache")} into ${dir}, then run any orbit command`,
+        );
+      else console.log("restart the daemon to use it: orbit daemon --stop");
     });
 
   program

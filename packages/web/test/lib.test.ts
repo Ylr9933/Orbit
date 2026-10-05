@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseDiff, splitRows } from "../src/lib/diff.ts";
 import { ema, stats } from "../src/lib/ema.ts";
+import { folderError, folderTree } from "../src/lib/folders.ts";
 import { collapseCR, stripAnsi, toLines } from "../src/lib/log.ts";
 
 const PATCH = `diff --git a/train.py b/train.py
@@ -126,5 +127,30 @@ describe("review kinds", () => {
     ]);
     expect(showValue({ x: 1 })).toBe('{"x":1}');
     expect(showValue(null)).toBe("null");
+  });
+});
+
+describe("folders", () => {
+  it("builds the tree with parents and totals over subfolders", () => {
+    const at = "2026-10-05T00:00:00Z";
+    const t = folderTree([
+      { path: "rcb/noskills", runs: 4, jobs: 1, active: 1, sizeBytes: 100, updatedAt: at },
+      { path: "rcb/skills", runs: 2, jobs: 1, active: 0, sizeBytes: 50, updatedAt: at },
+      { path: "tbs", runs: 1, jobs: 0, active: 0, sizeBytes: 5, updatedAt: at },
+    ]);
+    expect(t.map((n) => [n.path, n.depth, n.runs, n.sizeBytes])).toEqual([
+      ["rcb", 0, 6, 150],
+      ["rcb/noskills", 1, 4, 100],
+      ["rcb/skills", 1, 2, 50],
+      ["tbs", 0, 1, 5],
+    ]);
+    expect(t[0]?.active).toBe(1);
+  });
+
+  it("validates folder paths like the daemon", () => {
+    expect(folderError("")).toBeNull();
+    expect(folderError("rcb/noskills")).toBeNull();
+    expect(folderError("rcb/")).not.toBeNull();
+    expect(folderError("../x")).not.toBeNull();
   });
 });

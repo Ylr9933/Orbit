@@ -86,6 +86,11 @@ examples/      bench-adapters/<benchmark>/: external bench adapters (not part of
   daemon 只监听 `127.0.0.1`（默认端口 7717，`ORBIT_PORT` 可改），启动时生成随机 token，与地址一起写入
   `~/.orbit/daemon.json`（0600）；所有 `/api/v1` 请求需 `Authorization: Bearer <token>` 或 Web 登录后的
   HttpOnly cookie（token 比较为常数时间；凭 cookie 的写请求须同源，否则 403）。`ORBIT_HOME` 可覆盖 `~/.orbit`。
+- **小状态与大数据分开**：`ORBIT_HOME`（默认 `~/.orbit`）只放数据库、profile、配置与 daemon 端点；Run 目录、bench
+  staging、代码 bundle 放在**数据目录**（`ORBIT_DATA`，否则 `<home>/config.json` 的 `dataDir`，否则 `ORBIT_HOME`）。
+  `orbit config data <dir>` 写配置（比环境变量可靠：自动拉起的 daemon 总能读到），重启 daemon 生效，已有 Run 不自动搬。
+  `doctor` 报告数据目录与 Docker `DockerRootDir` 的剩余空间，在系统盘上或空间不足（少于磁盘的 10%，下限 50 GB、上限 500 GB）时给 `warn`。
+  资源探测的磁盘也是数据目录所在的盘。
 - `src/` 根目录下的文件（如 `bin.ts`）是组合根，可引用任意模块，但不能被模块引用。
 - 同类能力只有一份实现：一个 Run 状态机、一个资源账本、一个记录库。
 - Docker、sqlite 句柄不出现在 contracts 中。
@@ -168,7 +173,8 @@ oomKilled }`，运行中写库（不发变更事件），终态前再采一次�
 `POST runs/delete`、`stream`（SSE：`run` 变化推送，`deleted` 删除推送）、`GET/POST auth`、`DELETE auth/:name`、`POST auth/:name/test`、
 `GET/POST notify`、`DELETE notify/:name`、`POST notify/:name/test`，bench 路由（§7），
 `GET/POST cluster/nodes`、`DELETE cluster/nodes/:name`、`GET/POST cluster/expose`、`GET cluster/token`、
-`POST cluster/token/rotate`、`GET/POST datasets`、`DELETE datasets/:name`（§8）。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
+`POST cluster/token/rotate`、`GET/POST datasets`、`DELETE datasets/:name`（§8），`GET folders`、`POST folders/move`、
+`POST folders/export`（文件夹，见下）。`POST runs` 与 `POST bench/jobs` 可带 `?folder=`，`GET runs` 可按 `?folder=` 筛选（含子文件夹）。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
 `orbit web [id]` 打印带 token 的登录 URL（`--open` 时用浏览器打开）并定位到 Run。
 `files/*` 只读输出目录内的普通文件（解析符号链接后仍须在目录内），以 `Content-Security-Policy: sandbox`、
 `nosniff` 返回，避免产物中的 HTML 以 Web UI 的身份执行脚本。`wait` 在 Run 终态且清理结束后返回。
@@ -194,6 +200,13 @@ Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行�
   目录在结果中列出）。bench job 只能整体删（`DELETE bench/jobs/:id`，非 running）：trial、全部 solve/verify Run 与
   staging。CLI `orbit rm <id>... | -g <group>`、`orbit bench rm-job <job>`，Web 删除按钮都要求输入 Run id / 组名 /
   job id 才能确认（GitHub 式）；无终端时必须显式 `--yes`。
+- **文件夹**（逻辑的，不搬文件）：Run 与 bench job 各有可改的 `folder` 字段（`/` 分隔的名字，如 `rcb/noskills`；`""` 为无）。
+  提交时 `--folder`，之后 `orbit mv <id...> <folder>` / Web 多选 “Move to folder” 修改；bench job 与它的 Run 总在同一
+  文件夹：移动 job 或它的任一 Run 都移动整个 job，job 之后提交的 Run 跟随 job 当前的文件夹。父文件夹不需创建，有记录用到
+  就出现；`GET folders` 只给每个文件夹本身的计数与大小，树与子文件夹合计由 CLI / Web 推出。Run 清理完成后记录目录大小
+  （`sizeBytes`；旧 Run 在 daemon 启动后于后台补测）。Runs 页左侧是文件夹树（`?folder=`），`orbit folders` 列出同样的树。
+  需要实体目录时 `orbit export <folder> <dest>` 复制该文件夹（含子文件夹）的 Run 目录与记录（`runs/<id>/`、`run.json`）、
+  job 与 trial（`jobs/<id>.json`）和 `index.json`；`dest` 须为空且不在数据目录内，输出留在其他节点的 Run 列入 `skipped`。
 - **Run 显示名**：未给 `-n` 时由 `contracts/naming.ts` 的固定规则从命令得出（去掉 `python`、`torchrun`、`accelerate
   launch`、`uv run`、`sh -c` 等启动器，取脚本或模块名，加 `key=value` / `--flag value` 参数，去掉路径与长文本，最多 60 字符；
   认不出时用截断的命令）。只影响显示，记录中的 name 仍为空、command 完整保留。

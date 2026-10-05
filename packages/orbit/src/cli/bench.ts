@@ -334,6 +334,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
       [],
     )
     .option("-n, --name <name>", "job name")
+    .option("-f, --folder <path>", "file the job and its runs in a folder, e.g. rcb/noskills")
     .option("--json", "print JSON")
     .action(
       async (
@@ -346,6 +347,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
           timeout?: number;
           option: string[];
           name?: string;
+          folder?: string;
           json?: boolean;
         },
       ) => {
@@ -354,15 +356,18 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
           methods.push(...(JSON.parse(readFileSync(o.methodsFile, "utf8")) as unknown[]));
         if (methods.length === 0)
           throw new Error("give at least one --method (e.g. --method oracle)");
-        const job = await (await client()).benchSubmit({
-          name: o.name,
-          benchmark: name,
-          tasks: o.task,
-          methods: methods as never,
-          seeds: o.seeds,
-          options: kv(o.option, "--option"),
-          timeoutMin: o.timeout,
-        });
+        const job = await (await client()).benchSubmit(
+          {
+            name: o.name,
+            benchmark: name,
+            tasks: o.task,
+            methods: methods as never,
+            seeds: o.seeds,
+            options: kv(o.option, "--option"),
+            timeoutMin: o.timeout,
+          },
+          o.folder,
+        );
         print(
           o.json,
           job,

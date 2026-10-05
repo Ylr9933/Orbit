@@ -11,6 +11,8 @@ import type {
   Benchmark,
   BenchTask,
   DoctorReport,
+  FolderMoveResult,
+  FolderStat,
   Ledger,
   LogChunk,
   Metrics,
@@ -31,6 +33,7 @@ export type {
   Benchmark,
   BenchTask,
   CodeSnapshot,
+  FolderStat,
   Gpu,
   Lease,
   Ledger,
@@ -121,6 +124,12 @@ export const api = {
   benchDeleteJob: (id: string) => req<RunDeletion>(`/bench/jobs/${enc(id)}`, { method: "DELETE" }),
   benchCompare: (ids: string[]) =>
     req<BenchCompare>(`/bench/compare?jobs=${ids.map(enc).join(",")}`),
+  folders: () => req<{ folders: FolderStat[] }>("/folders").then((r) => r.folders),
+  move: (ids: string[], folder: string) =>
+    req<FolderMoveResult>("/folders/move", {
+      method: "POST",
+      body: JSON.stringify({ ids, folder }),
+    }),
 };
 
 export const fileUrl = (id: string, path: string, download = false) =>

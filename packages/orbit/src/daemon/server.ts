@@ -92,7 +92,7 @@ export async function startDaemon(
     paths,
     auth,
     datasets,
-    probe: opts.probe ?? (() => probeNode(paths.home, { node: paths.node, gpus: paths.gpus })),
+    probe: opts.probe ?? (() => probeNode(paths.data, { node: paths.node, gpus: paths.gpus })),
     tickMs: opts.tickMs,
     usageMs: opts.usageMs,
     shim: self,
@@ -158,6 +158,8 @@ export async function startDaemon(
     benchmarks,
     cluster,
     datasets,
+    store,
+    paths,
     webDir: findWebDir(),
   });
 

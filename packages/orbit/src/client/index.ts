@@ -23,6 +23,9 @@ import {
   DatasetList,
   DoctorReport,
   ExposeStatus,
+  FolderExportResult,
+  FolderList,
+  FolderMoveResult,
   Health,
   Ledger,
   LogChunk,
@@ -83,12 +86,17 @@ export class OrbitClient {
   doctor = () => this.call(DoctorReport, "/doctor");
   ledger = () => this.call(Ledger, "/ledger");
 
-  submit = (spec: RunSpecInput) =>
-    this.call(Run, "/runs", { method: "POST", body: spec, timeoutMs: 600_000 });
-  list = (q: { states?: RunState[]; group?: string; limit?: number } = {}) => {
+  submit = (spec: RunSpecInput, folder?: string) =>
+    this.call(Run, `/runs${folderQuery(folder)}`, {
+      method: "POST",
+      body: spec,
+      timeoutMs: 600_000,
+    });
+  list = (q: { states?: RunState[]; group?: string; folder?: string; limit?: number } = {}) => {
     const p = new URLSearchParams();
     if (q.states?.length) p.set("state", q.states.join(","));
     if (q.group) p.set("group", q.group);
+    if (q.folder) p.set("folder", q.folder);
     if (q.limit) p.set("limit", String(q.limit));
     return this.call(RunList, `/runs?${p}`).then((r) => r.runs);
   };
@@ -157,8 +165,12 @@ export class OrbitClient {
     this.call(BenchTaskList, `/benchmarks/${enc(name)}/tasks`, { timeoutMs: 180_000 }).then(
       (r) => r.tasks,
     );
-  benchSubmit = (spec: BenchJobSpecInput) =>
-    this.call(BenchJob, "/bench/jobs", { method: "POST", body: spec, timeoutMs: 600_000 });
+  benchSubmit = (spec: BenchJobSpecInput, folder?: string) =>
+    this.call(BenchJob, `/bench/jobs${folderQuery(folder)}`, {
+      method: "POST",
+      body: spec,
+      timeoutMs: 600_000,
+    });
   benchUsage = (ids: string[]) =>
     this.call(BenchUsage, `/bench/usage?jobs=${ids.map(enc).join(",")}`);
   benchDeleteJob = (id: string) =>
@@ -170,9 +182,20 @@ export class OrbitClient {
     this.call(BenchJob, `/bench/jobs/${enc(id)}/cancel`, { method: "POST" });
   benchCompare = (ids: string[]) =>
     this.call(BenchCompare, `/bench/compare?jobs=${ids.map(enc).join(",")}`);
+
+  folders = () => this.call(FolderList, "/folders").then((r) => r.folders);
+  move = (ids: string[], folder: string) =>
+    this.call(FolderMoveResult, "/folders/move", { method: "POST", body: { ids, folder } });
+  exportFolder = (folder: string, dest: string) =>
+    this.call(FolderExportResult, "/folders/export", {
+      method: "POST",
+      body: { folder, dest },
+      timeoutMs: 3_600_000,
+    });
 }
 
 const enc = encodeURIComponent;
+const folderQuery = (f?: string) => (f ? `?folder=${enc(f)}` : "");
 
 /** Return a client for a live daemon, or null when none is reachable. */
 export async function tryConnect(paths: OrbitPaths): Promise<OrbitClient | null> {

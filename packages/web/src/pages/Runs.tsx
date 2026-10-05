@@ -1,11 +1,13 @@
 import { fmtMetric, primaryMetric, resolveMetrics } from "@zjunlp/orbit/metrics";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FolderSidebar, MoveDialog } from "../components/Folders.tsx";
 import {
   IconBot,
   IconChevron,
   IconChevronDown,
   IconCompare,
   IconFlask,
+  IconFolder,
   IconGit,
   IconLayers,
   IconSearch,
@@ -25,6 +27,7 @@ import {
   useNow,
 } from "../components/ui.tsx";
 import { api, type BenchJobList, type Run, type RunState, type Trial } from "../lib/api.ts";
+import { inFolder } from "../lib/folders.ts";
 import {
   ago,
   dateTime,
@@ -89,6 +92,9 @@ export function Runs() {
     [stateParam],
   );
   const flat = loc.query.get("flat") === "1";
+  const folder = loc.query.get("folder") ?? "";
+  const folders = useAsync(() => api.folders(), [], { poll: true, pollMs: 10_000 });
+  const [moving, setMoving] = useState<string[] | null>(null);
   const kind = (
     KINDS.includes(loc.query.get("kind") as Kind) ? loc.query.get("kind") : "all"
   ) as Kind;
@@ -116,18 +122,20 @@ export function Runs() {
     () =>
       runs.filter(
         (r) =>
+          inFolder(r.folder, folder) &&
           (stateFilter.length ? stateFilter.includes(r.state) : true) &&
           (kind === "all" || (kind === "bench") === isBench(r)) &&
           (matches(r, terms) || matchesJob(jobByGroup.get(r.spec.group ?? ""), terms)),
       ),
-    [runs, stateFilter, terms, kind, isBench, jobByGroup],
+    [runs, folder, stateFilter, terms, kind, isBench, jobByGroup],
   );
 
   const counts = useMemo(() => {
     const c: Partial<Record<RunState, number>> = {};
-    for (const r of runs.filter((r) => matches(r, terms))) c[r.state] = (c[r.state] ?? 0) + 1;
+    for (const r of runs.filter((r) => inFolder(r.folder, folder) && matches(r, terms)))
+      c[r.state] = (c[r.state] ?? 0) + 1;
     return c;
-  }, [runs, terms]);
+  }, [runs, folder, terms]);
 
   const isExpanded = useCallback(
     (name: string, list: Run[]) =>
@@ -311,105 +319,130 @@ export function Runs() {
           </button>
         </div>
       </div>
-      <div className="page">
-        {!loaded ? (
-          <Loading what="Loading runs" />
-        ) : error ? (
-          <Empty title="Could not load runs">{error}</Empty>
-        ) : runs.length === 0 ? (
-          <Empty title="No runs yet" icon={<IconLayers size={32} />}>
-            <p>Ask your agent to launch an experiment, or run one yourself:</p>
-            <p>
-              <code>orbit run --gpus 1 --image python:3.12 -- python train.py</code>
-            </p>
-          </Empty>
-        ) : entries.length === 0 ? (
-          <Empty title="No runs match these filters" />
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 34 }} />
-                <th style={{ width: 120 }}>State</th>
-                <th>Run</th>
-                <th>Params</th>
-                <th>Resources</th>
-                <th>Agent</th>
-                <th>Code</th>
-                <th>Created</th>
-                <th className="r">Duration</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((e, i) =>
-                e.kind === "group" && jobByGroup.has(e.name) ? (
-                  <JobRow
-                    key={e.key}
-                    job={jobByGroup.get(e.name) as Job}
-                    runs={e.runs}
-                    expanded={isExpanded(e.name, e.runs)}
-                    cursor={i === cursor}
-                    selected={e.runs.every((r) => selected.has(r.id))}
-                    onToggle={() => toggleGroup(e.name, e.runs)}
-                    onSelect={() => toggleSel(e.runs.map((r) => r.id))}
-                    onHover={() => setCursor(i)}
-                    now={now}
-                  />
-                ) : e.kind === "group" ? (
-                  <GroupRow
-                    key={e.key}
-                    name={e.name}
-                    runs={e.runs}
-                    expanded={isExpanded(e.name, e.runs)}
-                    cursor={i === cursor}
-                    selected={e.runs.every((r) => selected.has(r.id))}
-                    onToggle={() => toggleGroup(e.name, e.runs)}
-                    onSelect={() => toggleSel(e.runs.map((r) => r.id))}
-                    onHover={() => setCursor(i)}
-                    now={now}
-                  />
-                ) : (
-                  <RunRow
-                    key={e.key}
-                    run={e.run}
-                    inGroup={e.inGroup}
-                    cursor={i === cursor}
-                    selected={selected.has(e.run.id)}
-                    onSelect={() => toggleSel([e.run.id])}
-                    onHover={() => setCursor(i)}
-                    now={now}
-                  />
-                ),
-              )}
-            </tbody>
-          </table>
-        )}
-        {selected.size > 0 && (
-          <div className="selbar">
-            <b>{selected.size}</b> selected
-            <Link className="btn primary sm" href={compareHref}>
-              <IconCompare size={13} /> Compare <Kbd>c</Kbd>
-            </Link>
-            <CancelSelected ids={[...selected]} runs={runs} />
-            <DeleteSelected
-              ids={[...selected]}
-              runs={runs}
-              isBench={isBench}
-              jobs={[...jobByGroup.values()]}
-              onDelete={(ids) => setDeleting(ids)}
-              onDeleteJob={(job) => setDeletingJob(job)}
+      <div className="runs-body">
+        <FolderSidebar
+          stats={folders.data ?? []}
+          total={runs.length}
+          value={folder}
+          onChange={(f) => setQuery({ folder: f || null })}
+        />
+        <div className="page">
+          {!loaded ? (
+            <Loading what="Loading runs" />
+          ) : error ? (
+            <Empty title="Could not load runs">{error}</Empty>
+          ) : runs.length === 0 ? (
+            <Empty title="No runs yet" icon={<IconLayers size={32} />}>
+              <p>Ask your agent to launch an experiment, or run one yourself:</p>
+              <p>
+                <code>orbit run --gpus 1 --image python:3.12 -- python train.py</code>
+              </p>
+            </Empty>
+          ) : entries.length === 0 ? (
+            <Empty
+              title={folder ? `Nothing in ${folder} matches` : "No runs match these filters"}
             />
-            <button
-              type="button"
-              className="btn ghost sm icon"
-              onClick={() => setSelected(new Set())}
-              title="Clear (Esc)"
-            >
-              <IconX size={13} />
-            </button>
-          </div>
-        )}
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th style={{ width: 34 }} />
+                  <th style={{ width: 120 }}>State</th>
+                  <th>Run</th>
+                  <th>Params</th>
+                  <th>Resources</th>
+                  <th>Agent</th>
+                  <th>Code</th>
+                  <th>Created</th>
+                  <th className="r">Duration</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((e, i) =>
+                  e.kind === "group" && jobByGroup.has(e.name) ? (
+                    <JobRow
+                      key={e.key}
+                      job={jobByGroup.get(e.name) as Job}
+                      runs={e.runs}
+                      expanded={isExpanded(e.name, e.runs)}
+                      cursor={i === cursor}
+                      selected={e.runs.every((r) => selected.has(r.id))}
+                      onToggle={() => toggleGroup(e.name, e.runs)}
+                      onSelect={() => toggleSel(e.runs.map((r) => r.id))}
+                      onHover={() => setCursor(i)}
+                      now={now}
+                    />
+                  ) : e.kind === "group" ? (
+                    <GroupRow
+                      key={e.key}
+                      name={e.name}
+                      runs={e.runs}
+                      expanded={isExpanded(e.name, e.runs)}
+                      cursor={i === cursor}
+                      selected={e.runs.every((r) => selected.has(r.id))}
+                      onToggle={() => toggleGroup(e.name, e.runs)}
+                      onSelect={() => toggleSel(e.runs.map((r) => r.id))}
+                      onHover={() => setCursor(i)}
+                      now={now}
+                    />
+                  ) : (
+                    <RunRow
+                      key={e.key}
+                      run={e.run}
+                      inGroup={e.inGroup}
+                      cursor={i === cursor}
+                      selected={selected.has(e.run.id)}
+                      onSelect={() => toggleSel([e.run.id])}
+                      onHover={() => setCursor(i)}
+                      now={now}
+                    />
+                  ),
+                )}
+              </tbody>
+            </table>
+          )}
+          {selected.size > 0 && (
+            <div className="selbar">
+              <b>{selected.size}</b> selected
+              <Link className="btn primary sm" href={compareHref}>
+                <IconCompare size={13} /> Compare <Kbd>c</Kbd>
+              </Link>
+              <button type="button" className="btn sm" onClick={() => setMoving([...selected])}>
+                <IconFolder size={13} /> Move to folder
+              </button>
+              <CancelSelected ids={[...selected]} runs={runs} />
+              <DeleteSelected
+                ids={[...selected]}
+                runs={runs}
+                isBench={isBench}
+                jobs={[...jobByGroup.values()]}
+                onDelete={(ids) => setDeleting(ids)}
+                onDeleteJob={(job) => setDeletingJob(job)}
+              />
+              <button
+                type="button"
+                className="btn ghost sm icon"
+                onClick={() => setSelected(new Set())}
+                title="Clear (Esc)"
+              >
+                <IconX size={13} />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+      {moving && (
+        <MoveDialog
+          ids={moving}
+          folders={folders.data ?? []}
+          initial={folder}
+          onClose={() => setMoving(null)}
+          onMoved={() => {
+            setSelected(new Set());
+            folders.reload();
+          }}
+        />
+      )}
       {deletingJob && (
         <ConfirmDialog
           title={`Delete bench job ${deletingJob.spec.name ?? deletingJob.id}`}
@@ -647,6 +680,11 @@ function RunRow(props: {
             {run.id}
           </span>
           {run.cleanup === "failed" && <span className="chip bad">cleanup failed</span>}
+          {run.folder && (
+            <span className="chip mono faint" title={`folder ${run.folder}`}>
+              <IconFolder size={11} /> {run.folder}
+            </span>
+          )}
           {run.note && (
             <span className="chip" title={run.note}>
               note

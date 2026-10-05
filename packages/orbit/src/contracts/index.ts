@@ -44,6 +44,8 @@ export const DoctorCheck = z.object({
   name: z.string(),
   ok: z.boolean(),
   detail: z.string(),
+  /** Works, but worth changing (e.g. data on the system disk). */
+  warn: z.boolean().default(false),
 });
 export type DoctorCheck = z.infer<typeof DoctorCheck>;
 
@@ -171,6 +173,25 @@ export type NotifyTargetInput = z.input<typeof NotifyTargetInput>;
 /** Public view: the URL usually embeds a token, so only its origin is shown. */
 export const NotifyTarget = NotifyTargetInput.omit({ url: true }).extend({ urlHint: z.string() });
 export type NotifyTarget = z.infer<typeof NotifyTarget>;
+
+/**
+ * A folder for organizing runs and bench jobs: `/`-separated names (letters, digits, `_ . -`), e.g.
+ * `rcb/noskills`; `""` is no folder. Logical only: run directories never move.
+ */
+export const Folder = z
+  .string()
+  .max(200)
+  .refine(
+    (f) =>
+      f === "" ||
+      f.split("/").every((p) => /^[\p{L}\p{N}_.-]+$/u.test(p) && p !== "." && p !== ".."),
+    "folder must be names of letters, digits, _ . - separated by /, e.g. rcb/noskills",
+  );
+export type Folder = z.infer<typeof Folder>;
+
+/** Whether `f` is `folder` or inside it (`""` contains everything). */
+export const inFolder = (f: string, folder: string) =>
+  folder === "" || f === folder || f.startsWith(`${folder}/`);
 
 export const RunSpec = z
   .object({
@@ -326,7 +347,11 @@ export const Run = z.object({
   /** On a worker: the primary node that submitted the run. */
   origin: z.string().nullable().default(null),
   note: z.string(),
+  /** Folder for organizing (movable; a bench run follows its job). */
+  folder: Folder.default(""),
   usage: RunUsage.nullable().default(null),
+  /** Size of the run directory on disk, measured once the run is cleaned up. */
+  sizeBytes: z.number().nullable().default(null),
   createdAt: z.string(),
   startedAt: z.string().nullable(),
   endedAt: z.string().nullable(),
@@ -343,6 +368,42 @@ export const RunEvent = z.object({
 export type RunEvent = z.infer<typeof RunEvent>;
 
 export const RunList = z.object({ runs: z.array(Run) });
+
+/** One folder in use: what is directly in it (the Web sums subfolders). */
+export const FolderStat = z.object({
+  path: z.string(),
+  runs: z.number().int(),
+  jobs: z.number().int(),
+  /** Runs queued, starting or running. */
+  active: z.number().int(),
+  /** Measured run directories; runs not measured yet count as 0. */
+  sizeBytes: z.number(),
+  updatedAt: z.string(),
+});
+export type FolderStat = z.infer<typeof FolderStat>;
+export const FolderList = z.object({ folders: z.array(FolderStat) });
+export type FolderList = z.infer<typeof FolderList>;
+
+/** Move runs and bench jobs (with their runs), given by id, into `folder` (`""` takes them out). */
+export const FolderMove = z.object({ folder: Folder, ids: z.array(z.string()).min(1) });
+export type FolderMoveInput = z.input<typeof FolderMove>;
+export const FolderMoveResult = z.object({ runs: z.array(z.string()), jobs: z.array(z.string()) });
+export type FolderMoveResult = z.infer<typeof FolderMoveResult>;
+
+/** Copy a folder's runs (with their files) and jobs into a new directory. */
+export const FolderExport = z.object({
+  folder: Folder,
+  dest: z.string().refine((p) => p.startsWith("/"), "dest must be an absolute path"),
+});
+export const FolderExportResult = z.object({
+  dest: z.string(),
+  runs: z.number().int(),
+  jobs: z.number().int(),
+  bytes: z.number(),
+  /** Runs left out (outputs on another node) and files that could not be copied. */
+  skipped: z.array(z.string()),
+});
+export type FolderExportResult = z.infer<typeof FolderExportResult>;
 /** Result of deleting runs (or a bench job's runs). */
 export const RunDeletion = z.object({
   deleted: z.array(z.string()),
@@ -757,6 +818,8 @@ export const BenchJob = z.object({
   spec: BenchJobSpec,
   /** Per-task overrides read from the benchmark's resources file at submit (null without one). */
   resources: z.record(z.string(), ResourceOverride).nullable().default(null),
+  /** Folder for organizing; the job's runs follow it. */
+  folder: Folder.default(""),
   /** Metrics declared by the adapter at submit, `score` first (only `score` for older jobs). */
   metrics: z.array(MetricSpec).default([]),
   state: z.enum(["running", "done", "cancelled"]),

@@ -215,6 +215,7 @@ function JobTable({
                   {jobLabel(j)}
                 </Link>
                 {j.spec.name && <div className="mono faint">{j.id}</div>}
+                {j.folder && <div className="mono faint">{j.folder}/</div>}
               </td>
               <td>{j.spec.benchmark}</td>
               <td>
@@ -346,6 +347,11 @@ export function BenchJobDetail({ id }: { id: string }) {
           <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
             <JobState state={job.state} />
             <span className="chip mono">{job.spec.benchmark}</span>
+            {job.folder && (
+              <Link className="chip link mono" href={`/?folder=${encodeURIComponent(job.folder)}`}>
+                {job.folder}/
+              </Link>
+            )}
             <span className="faint">
               {tasks.length} tasks × {methods.length} methods × {job.spec.seeds} seed
               {job.spec.seeds > 1 ? "s" : ""} · started {dateTime(job.createdAt)} ·{" "}

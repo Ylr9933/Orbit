@@ -24,6 +24,9 @@ export function Settings() {
   const profiles = useAsync(() => api.authProfiles(), []);
   const targets = useAsync(() => api.notifyTargets(), []);
   const agents = doctor.data?.checks.filter((c) => c.name === "codex" || c.name === "claude-code");
+  const storage = doctor.data?.checks.filter(
+    (c) => c.name === "orbit data" || c.name === "docker data",
+  );
 
   return (
     <>
@@ -54,6 +57,29 @@ export function Settings() {
               )}
             </div>
           </section>
+
+          {storage && storage.length > 0 && (
+            <section className="card">
+              <div className="card-h">
+                Storage{" "}
+                <span className="sub">
+                  run data and Docker images; keep them off the system disk
+                </span>
+              </div>
+              <div className="card-b">
+                <dl className="kv">
+                  {storage.map((c) => (
+                    <div key={c.name} style={{ display: "contents" }}>
+                      <dt>{c.name}</dt>
+                      <dd className="mono" style={{ fontSize: 12 }}>
+                        {c.warn && <span className="chip warn">check</span>} {c.detail}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            </section>
+          )}
 
           <section className="card">
             <div className="card-h">

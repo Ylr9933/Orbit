@@ -1,5 +1,13 @@
 import { DatabaseSync } from "node:sqlite";
-import { BenchJob, Lease, Run, RunEvent, type RunState, Trial } from "../contracts/index.ts";
+import {
+  BenchJob,
+  type FolderStat,
+  Lease,
+  Run,
+  RunEvent,
+  type RunState,
+  Trial,
+} from "../contracts/index.ts";
 import { nowIso } from "../lib/ids.ts";
 
 const MIGRATIONS = [
@@ -72,8 +80,14 @@ export interface RemoteSync {
 export interface RunFilter {
   states?: RunState[];
   group?: string;
+  /** This folder and its subfolders. */
+  folder?: string;
   limit?: number;
 }
+
+const FOLDER = "COALESCE(json_extract(doc, '$.folder'), '')";
+/** `folder` or inside it, as SQL on `FOLDER` with two parameters. */
+const IN_FOLDER = `(${FOLDER} = ? OR substr(${FOLDER}, 1, length(?) + 1) = ? || '/')`;
 
 /** Typed access to the local sqlite database. Only the daemon opens it. */
 export class Store {
@@ -136,7 +150,7 @@ export class Store {
 
   listRuns(filter: RunFilter = {}): Run[] {
     const where: string[] = [];
-    const args: string[] = [];
+    const args: (string | number)[] = [];
     if (filter.states?.length) {
       where.push(`state IN (${filter.states.map(() => "?").join(",")})`);
       args.push(...filter.states);
@@ -145,10 +159,64 @@ export class Store {
       where.push("grp = ?");
       args.push(filter.group);
     }
+    if (filter.folder) {
+      where.push(IN_FOLDER);
+      args.push(filter.folder, filter.folder, filter.folder);
+    }
     const sql = `SELECT doc FROM runs ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
                  ORDER BY created_at DESC, id DESC LIMIT ${Math.max(1, filter.limit ?? 500)}`;
     const rows = this.db.prepare(sql).all(...args) as { doc: string }[];
     return rows.map((r) => Run.parse(JSON.parse(r.doc)));
+  }
+
+  /** Cleaned-up local runs whose directory size has not been measured. */
+  unmeasuredRuns(): Run[] {
+    const rows = this.db
+      .prepare(
+        `SELECT doc FROM runs WHERE json_extract(doc, '$.cleanup') = 'done'
+         AND json_extract(doc, '$.sizeBytes') IS NULL
+         AND COALESCE(json_extract(doc, '$.remote'), 0) = 0
+         ORDER BY created_at DESC`,
+      )
+      .all() as { doc: string }[];
+    return rows.map((r) => Run.parse(JSON.parse(r.doc)));
+  }
+
+  /** Folders in use, with what is directly in each (not their subfolders). */
+  folders(): FolderStat[] {
+    const runs = this.db
+      .prepare(
+        `SELECT ${FOLDER} AS f, COUNT(*) AS n,
+           SUM(state IN ('queued','starting','running')) AS active,
+           COALESCE(SUM(json_extract(doc, '$.sizeBytes')), 0) AS bytes, MAX(created_at) AS at
+         FROM runs WHERE ${FOLDER} != '' GROUP BY f`,
+      )
+      .all() as { f: string; n: number; active: number; bytes: number; at: string }[];
+    const jobs = this.db
+      .prepare(
+        `SELECT ${FOLDER} AS f, COUNT(*) AS n, MAX(created_at) AS at
+         FROM bench_jobs WHERE ${FOLDER} != '' GROUP BY f`,
+      )
+      .all() as { f: string; n: number; at: string }[];
+    const out = new Map<string, FolderStat>();
+    const get = (f: string, at: string) => {
+      const s = out.get(f) ?? { path: f, runs: 0, jobs: 0, active: 0, sizeBytes: 0, updatedAt: at };
+      if (at > s.updatedAt) s.updatedAt = at;
+      out.set(f, s);
+      return s;
+    };
+    for (const r of runs)
+      Object.assign(get(r.f, r.at), { runs: r.n, active: r.active, sizeBytes: r.bytes });
+    for (const j of jobs) get(j.f, j.at).jobs = j.n;
+    return [...out.values()].sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  /** Bench jobs in a folder or its subfolders. */
+  jobsIn(folder: string): BenchJob[] {
+    const rows = this.db
+      .prepare(`SELECT doc FROM bench_jobs WHERE ${IN_FOLDER} ORDER BY created_at`)
+      .all(folder, folder, folder) as { doc: string }[];
+    return rows.map((r) => BenchJob.parse(JSON.parse(r.doc)));
   }
 
   /** Queued runs, higher priority first, then in submission order. */

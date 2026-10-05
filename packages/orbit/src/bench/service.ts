@@ -1,8 +1,9 @@
 // Benchmark jobs: each Trial (task × method × seed) is a solve Run and a separate verify Run on the
 // same lease model as every other run. BenchService advances trials when their runs change, and
 // recovers open trials from the store after a daemon restart.
-import { appendFileSync, existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cp } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import type { AuthStore } from "../auth/index.ts";
 import type { OrbitPaths } from "../config/paths.ts";
 import {
@@ -16,6 +17,9 @@ import {
   type Benchmark,
   type BenchTask,
   type BenchUsage,
+  Folder,
+  type FolderExportResult,
+  type FolderMoveResult,
   isTerminal,
   type Method,
   type MethodSummary,
@@ -35,6 +39,7 @@ import {
   taskMeans,
 } from "../contracts/metrics.ts";
 import { newId, nowIso } from "../lib/ids.ts";
+import { dirBytes } from "../records/index.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { runAgentFailure } from "../sessions/index.ts";
 import type { Store } from "../store/index.ts";
@@ -224,9 +229,11 @@ export class BenchService {
 
   // ---- jobs ----
 
-  async submit(input: BenchJobSpecInput): Promise<BenchJob> {
+  async submit(input: BenchJobSpecInput, opts: { folder?: string } = {}): Promise<BenchJob> {
     const parsed = BenchJobSpec.safeParse(input);
     if (!parsed.success) throw new UserError(parsed.error.issues.map((i) => i.message).join("; "));
+    const folder = Folder.safeParse(opts.folder ?? "");
+    if (!folder.success) throw new UserError(folder.error.issues[0]?.message ?? "invalid folder");
     const spec = parsed.data;
     const b = this.benchmark(spec.benchmark);
     const info = await this.infoOf(b);
@@ -260,6 +267,7 @@ export class BenchService {
       id: newId(),
       spec,
       resources,
+      folder: folder.data,
       metrics: resolveMetrics(info.metrics),
       state: "running",
       createdAt: nowIso(),
@@ -338,6 +346,105 @@ export class BenchService {
     if (ids.length === 0) throw new UserError("no jobs to compare");
     if (new Set(ids).size !== ids.length) throw new UserError("a job is listed more than once");
     return compareJobs(ids.map((id) => this.job(id)));
+  }
+
+  /**
+   * File runs and bench jobs in a folder. A job takes its runs along, and a run of a bench trial
+   * moves with its whole job, so a job and its runs are always in one folder.
+   */
+  move(ids: string[], folder: string): FolderMoveResult {
+    const jobs = new Map<string, BenchJob>();
+    const runs: string[] = [];
+    for (const id of new Set(ids)) {
+      const job = this.deps.store.getJob(id);
+      const owner = job ?? this.ownerJob(id);
+      if (owner) jobs.set(owner.id, owner);
+      else if (this.deps.runs.get(id)) runs.push(id);
+      else throw new NotFoundError(`no run or bench job ${id}`);
+    }
+    for (const job of jobs.values()) {
+      job.folder = folder;
+      this.deps.store.putJob(job);
+      runs.push(
+        ...this.deps.store
+          .trials(job.id)
+          .flatMap((t) => [t.solveRunId, t.verifyRunId])
+          .filter((r): r is string => Boolean(r)),
+      );
+    }
+    this.deps.runs.setFolder(runs, folder);
+    return { runs, jobs: [...jobs.keys()] };
+  }
+
+  private ownerJob(runId: string): BenchJob | null {
+    const t = this.deps.store.trialByRun(runId);
+    return t ? this.deps.store.getJob(t.jobId) : null;
+  }
+
+  /**
+   * Copy a folder (with subfolders) into `dest`: `runs/<id>/` with each run's files and record,
+   * `jobs/<id>.json` with each job and its trials, and `index.json`. Runs whose outputs stay on
+   * another node are listed in `skipped`. `dest` must not exist yet or be empty.
+   */
+  async exportFolder(folder: string, dest: string): Promise<FolderExportResult> {
+    if (existsSync(dest) && readdirSync(dest).length > 0)
+      throw new UserError(`${dest} is not empty`);
+    const data = resolve(this.deps.paths.data);
+    if (resolve(dest) === data || resolve(dest).startsWith(`${data}/`))
+      throw new UserError("export to a directory outside Orbit's data directory");
+    const runs = this.deps.runs.storeList({ folder, limit: 1_000_000 });
+    const jobs = this.deps.store.jobsIn(folder);
+    if (folder && runs.length === 0 && jobs.length === 0)
+      throw new UserError(`folder ${folder} is empty or does not exist`);
+    mkdirSync(join(dest, "runs"), { recursive: true });
+    mkdirSync(join(dest, "jobs"), { recursive: true });
+    const skipped: string[] = [];
+    let bytes = 0;
+    let copied = 0;
+    for (const r of runs) {
+      if (r.remote) {
+        skipped.push(`${r.id}: outputs stay on ${r.node}`);
+        continue;
+      }
+      const to = join(dest, "runs", r.id);
+      try {
+        await cp(this.deps.runs.dirs(r.id).root, to, {
+          recursive: true,
+          verbatimSymlinks: true,
+          errorOnExist: true,
+        });
+      } catch (e) {
+        skipped.push(`${r.id}: ${(e as Error).message}`);
+      }
+      writeFileSync(join(to, "run.json"), `${JSON.stringify(r, null, 2)}\n`);
+      bytes += (await dirBytes(to)) ?? 0;
+      copied++;
+    }
+    for (const j of jobs)
+      writeFileSync(
+        join(dest, "jobs", `${j.id}.json`),
+        `${JSON.stringify({ job: j, trials: this.deps.store.trials(j.id) }, null, 2)}\n`,
+      );
+    writeFileSync(
+      join(dest, "index.json"),
+      `${JSON.stringify(
+        {
+          folder,
+          exportedAt: nowIso(),
+          runs: runs.map((r) => ({
+            id: r.id,
+            name: r.spec.name ?? null,
+            folder: r.folder,
+            state: r.state,
+          })),
+          jobs: jobs.map((j) => ({ id: j.id, name: j.spec.name ?? null, folder: j.folder })),
+          skipped,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return { dest, runs: copied, jobs: jobs.length, bytes, skipped };
   }
 
   /** Measured solve use per task over the given jobs, with suggested resources (never applied). */
@@ -461,21 +568,26 @@ export class BenchService {
   }
 
   private async submitRun(job: BenchJob, t: Trial, phase: "solve" | "verify", spec: RunSpecInput) {
-    return this.deps.runs.submit({
-      ...spec,
-      // Scoring reads run outputs from this node's disk, so benchmark runs stay here.
-      resources: { ...spec.resources, node: this.deps.runs.nodeName },
-      name: `${t.task} · ${t.method}${job.spec.seeds > 1 ? ` #${t.seed}` : ""} · ${phase}`,
-      group: benchGroup(job.id),
-      tags: {
-        ...spec.tags,
-        bench: job.spec.benchmark,
-        job: job.id,
-        trial: t.id,
-        phase,
+    // Read again: the job may have been moved to another folder meanwhile.
+    const folder = this.deps.store.getJob(job.id)?.folder ?? job.folder;
+    return this.deps.runs.submit(
+      {
+        ...spec,
+        // Scoring reads run outputs from this node's disk, so benchmark runs stay here.
+        resources: { ...spec.resources, node: this.deps.runs.nodeName },
+        name: `${t.task} · ${t.method}${job.spec.seeds > 1 ? ` #${t.seed}` : ""} · ${phase}`,
+        group: benchGroup(job.id),
+        tags: {
+          ...spec.tags,
+          bench: job.spec.benchmark,
+          job: job.id,
+          trial: t.id,
+          phase,
+        },
+        params: { task: t.task, method: t.method, seed: String(t.seed), phase },
       },
-      params: { task: t.task, method: t.method, seed: String(t.seed), phase },
-    });
+      { folder },
+    );
   }
 
   private finish(t: Trial, outcome: Outcome): void {
