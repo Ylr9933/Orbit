@@ -23,7 +23,9 @@ orbit bench run rcb -t Astronomy_000 -m gpt=codex,auth=<profile>,model=<model>,b
 - **Verify**: a host process in `<path>/.venv` running `judge.py`, which links the collected files into a
   workspace in its own output and calls `score_run` (`_score.json` is kept there).
 - **Score**: `total_score` (0–100; about 50 matches the paper), the mean over `attempts`. No report is a
-  valid 0; a failed judge call or a judge error makes the trial invalid. There is no reference
+  valid 0; a failed judge call or a judge error makes the trial invalid. Metrics: `score` (the total, in
+  pts, with the paper level 50 as reference line), `matched` (trials scoring at least 50) and, with
+  `attempts` > 1, `judgeSpread` (sample std of the judge totals). There is no reference
   solution, so `oracle` is refused.
 
 Settings (`-c KEY=VALUE`) are listed at the top of `adapter.py`. Per-task solve resources come from

@@ -305,7 +305,7 @@ export function createApp(deps: AppDeps): Hono {
       }
     }
     // Listing the tasks once checks that the adapter answers (and the resources file fits) first.
-    const tasks = await bench.tasksOf({
+    const { tasks } = await bench.infoOf({
       ...BenchmarkInput.parse(input),
       createdAt: "",
       updatedAt: "",

@@ -1,3 +1,4 @@
+import { fmtMetric, primaryMetric, resolveMetrics } from "@zjunlp/orbit/metrics";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   IconBot,
@@ -804,8 +805,6 @@ function GroupRow(props: {
   );
 }
 
-const pct = (v: number | null | undefined) => (v == null ? "—" : `${v.toFixed(1)}%`);
-
 /** A bench job in the run list: progress and method means; expands to its trials. */
 function JobRow(props: {
   job: Job;
@@ -819,6 +818,7 @@ function JobRow(props: {
   now: number;
 }) {
   const { job, runs } = props;
+  const metric = primaryMetric(resolveMetrics(job.metrics));
   const trials = job.summary.reduce((a, s) => a + s.trials, 0);
   const pending = job.summary.reduce((a, s) => a + s.pending, 0);
   const done = trials - pending;
@@ -891,9 +891,9 @@ function JobRow(props: {
               <span
                 key={s.method}
                 className="param"
-                title={`${s.valid} valid · ${s.invalid} invalid · ${s.unknown} unknown`}
+                title={`${metric.label} · ${s.valid} valid · ${s.invalid} invalid · ${s.unknown} unknown`}
               >
-                <i>{s.method}</i> {pct(s.meanPct)}
+                <i>{s.method}</i> {fmtMetric(s.metrics[metric.name]?.mean, metric)}
                 {s.invalid + s.unknown > 0 && (
                   <span className="faint"> ({s.invalid + s.unknown} not valid)</span>
                 )}

@@ -44,10 +44,10 @@ stdin 是一个 JSON 请求，stdout 必须是一个 JSON 回复；出错时写 
 
 | op | 请求中有 | 回复 |
 | --- | --- | --- |
-| `tasks` | `benchmark: {name, path, config}` | `{"tasks": [{"id", "title", "supported", "reason", "tags"}]}`；不能跑的任务 `supported: false` 并写原因 |
+| `tasks` | `benchmark: {name, path, config}` | `{"tasks": [{"id", "title", "supported", "reason", "tags"}], "metrics"?: [...]}`；不能跑的任务 `supported: false` 并写原因；`metrics` 见下文 |
 | `solve` | + `trial: {id, task, method, seed, options, timeoutMin?, staging, hostNetwork}` | `{"spec": <Run 描述>, "issues"?: []}` |
 | `verify` | + `solve: {run, output}`（`output` 是 solve 的 `$ORBIT_OUTPUT` 宿主路径） | `{"spec": <Run 描述>, "issues"?: []}` |
-| `score` | + `verify: {run, output}` | `{"score": 数或 null, "maxScore": 1, "invalid": false, "issues": []}` |
+| `score` | + `verify: {run, output}` | `{"score": 数或 null, "maxScore": 1, "invalid": false, "issues": [], "metrics"?: {"name": 数}}` |
 
 Run 描述就是 `orbit run` 的 RunSpec 字段（`image` 或 `dockerfile`、`resources`、`mounts`、`env`、`network`、`workdir`、
 `collect`、`timeoutMin`、`backend: "process"`、`cwd`……），另有两条规则：
@@ -100,6 +100,29 @@ orbit logs <solve 或 verify run>
   将来新增的 kind，旧版 Orbit 会用 `fallback`（上述五种之一）、再按扩展名、再按纯文本显示，并标注“未知类型”。
 - 其他字段不会丢：Details 标签按键值列出。文本过长会截断，条目数有上限（文件 20、items 500、details 50）。
 - 不给 `review` 时，trial 页退回通用猜测（solve 中的 Markdown 报告、verify 中的 JSON），Outputs 标签始终可看全部文件。
+
+### 指标（`metrics`，可选）
+
+不声明时只有内置指标 `score`（`100 · score / maxScore`，%），这也是默认主指标。需要更多指标（通过率、成本、与论文的差距……）
+时在 `tasks` 回复里声明，在 `score` 回复里给每个 trial 的值：
+
+```json
+"metrics": [
+  { "name": "score", "label": "Score", "unit": "pts", "reference": 50, "description": "judge total (0-100)" },
+  { "name": "matched", "label": "Matched paper", "unit": "%", "range": [0, 100], "primary": true },
+  { "name": "judgeSpread", "label": "Judge spread", "unit": "pts", "higherIsBetter": false }
+]
+```
+
+- `name` 是标识符（`[a-z][a-zA-Z0-9_]*`），唯一；至多 20 个、至多一个 `primary`（主指标：job 列表、CLI、排名默认显示它）。
+- `unit` 只用于显示（`%`、`pts`、`$`、`s`……）；`range` 决定格子的热力颜色，`higherIsBetter` 决定颜色方向和“更好 / 更差”；
+  `reference`（论文结果、人类基线）在统计卡片和排名条上画参考线。
+- 同名声明 `score` 只能改它的标签、单位、说明、参考值和是否 primary，取值和范围固定。
+- 所有指标都是均值：每个任务内先对 seed 取均值，再对任务取均值，± 是按任务聚类的 95% CI。比率指标（通过率）
+  让每个 trial 报 0 或 100。只有 valid trial 进入均值；trial 没报某个指标时不计入该指标。
+- trial 的指标值同时写进 verify Run 的 metrics（`bench/<name>`），Run 详情和 Run 对比可以看到。
+
+内置适配器：harbor 主指标为 `resolved`（reward 为 1 的 trial 比例）并显示平均 Reward；asi 主指标为 `score`，另有 `fullMarks`。
 
 ## 4. 任务资源文件
 

@@ -327,9 +327,10 @@ process.stdin.on("end", () => {
 
   it("runs each op with the request on stdin and validates the reply", async () => {
     const c = new AdapterClient(bench(), undefined);
-    expect(await c.tasks()).toEqual([
-      { id: "a", title: tmp, supported: true, reason: null, tags: {} },
-    ]);
+    expect(await c.tasks()).toEqual({
+      tasks: [{ id: "a", title: tmp, supported: true, reason: null, tags: {} }],
+      metrics: [],
+    });
     expect((await c.solve(trial)).spec).toMatchObject({ agentTask: { instruction: "a" } });
     const ref = { run: run({ exitCode: 0 }), output: tmp };
     expect((await c.verify(trial, ref)).issues).toEqual(["w"]);
@@ -353,7 +354,7 @@ process.stdin.on("end", () => {
     process.env.SECRET_KEY = "s3cret";
     try {
       const ts = await new AdapterClient(bench({ mode: "secret" }), undefined).tasks();
-      expect(ts[0]?.id).toBe("undefined");
+      expect(ts.tasks[0]?.id).toBe("undefined");
     } finally {
       delete process.env.SECRET_KEY;
     }
@@ -490,6 +491,7 @@ output:
       maxScore: 50,
       issues: ["no declared output files produced"],
       invalid: false,
+      metrics: { fullMarks: 0 },
     });
     mkdirSync(join(solve, "native", "math.sigma", `${inst}__b1.outputs`), { recursive: true });
     report([
@@ -501,6 +503,7 @@ output:
       maxScore: 50,
       issues: [],
       invalid: false,
+      metrics: { fullMarks: 0 },
     });
     report([{ ...item, final_score: 0, scorer_internal_error: true }]);
     expect(asiScore(ctx, solve, verify)).toMatchObject({
@@ -725,18 +728,26 @@ describe("aggregation", () => {
 
   it("averages only valid trials", () => {
     const [x, y] = summarize(["x", "y"], trials);
-    expect(x).toMatchObject({ trials: 2, valid: 2, meanPct: 75 });
-    expect(y).toMatchObject({ trials: 3, valid: 1, invalid: 1, pending: 1, meanPct: 0 });
+    expect(x).toMatchObject({ trials: 2, valid: 2 });
+    expect(x?.metrics.score).toMatchObject({ mean: 75, tasks: 2, trials: 2 });
+    expect(y).toMatchObject({ trials: 3, valid: 1, invalid: 1, pending: 1 });
+    expect(y?.metrics.score).toMatchObject({ mean: 0, tasks: 1, se: null, ci: null });
   });
 
   it("compares methods on all valid tasks and on paired tasks", () => {
-    const job = { id: "j", spec: { methods: [{ name: "x" }, { name: "y" }] } } as BenchJob;
+    const job = {
+      id: "j",
+      spec: { methods: [{ name: "x" }, { name: "y" }] },
+      metrics: [],
+    } as unknown as BenchJob;
     const c = compareJobs([{ job, trials }]);
     expect(c.columns.map((x) => x.key)).toEqual(["x", "y"]);
     expect(c.rows.find((r) => r.task === "b")?.counts).toEqual({ x: "1/1", y: "0/1" });
-    expect(c.pairedTasks).toBe(1);
-    expect(c.means.x).toEqual({ all: 75, paired: 100 });
-    expect(c.means.y).toEqual({ all: 0, paired: 0 });
+    const st = c.stats.score;
+    expect(st?.pairedTasks).toBe(1);
+    expect([st?.columns.x?.all?.mean, st?.columns.x?.paired?.mean]).toEqual([75, 100]);
+    expect([st?.columns.y?.all?.mean, st?.columns.y?.paired?.mean]).toEqual([0, 0]);
+    expect(st?.columns.y?.diff).toMatchObject({ mean: -100, tasks: 1, se: null });
     const two = compareJobs([
       { job, trials },
       { job: { ...job, id: "k", spec: { ...job.spec, name: "rerun" } } as BenchJob, trials },

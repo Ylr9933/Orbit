@@ -13,7 +13,6 @@ import {
   AdapterSpecResponse,
   AdapterTasksResponse,
   type Benchmark,
-  type BenchTask,
   BUILTIN_ADAPTERS,
   type Method,
   RunSpec,
@@ -126,8 +125,8 @@ export class AdapterClient {
     );
   }
 
-  async tasks(): Promise<BenchTask[]> {
-    return parse(AdapterTasksResponse, "tasks", await this.call("tasks")).tasks;
+  async tasks(): Promise<AdapterTasksResponse> {
+    return parse(AdapterTasksResponse, "tasks", await this.call("tasks"));
   }
 
   async solve(trial: TrialInput) {

@@ -80,7 +80,7 @@ examples/      bench-adapters/<benchmark>/: external bench adapters (not part of
 | daemon | 除 cli/mcp/client 外全部 |
 | client | contracts, lib, config |
 | cli, mcp | client, contracts, lib, config |
-| web (`packages/web/src`) | 自身文件；`@zjunlp/orbit` 只能 `import type` 自 `@zjunlp/orbit/contracts`，另可在运行时使用无依赖的 `@zjunlp/orbit/naming`（Run 显示名规则） |
+| web (`packages/web/src`) | 自身文件；`@zjunlp/orbit` 只能 `import type` 自 `@zjunlp/orbit/contracts`，另可在运行时使用无依赖的 `@zjunlp/orbit/naming`（Run 显示名规则）与 `@zjunlp/orbit/metrics`（bench 指标的取值、聚合与格式化） |
 
 - **daemon 是本机状态的唯一写者**。CLI/MCP/Web 只通过 HTTP API 访问；CLI 需要时自动拉起 daemon。
   daemon 只监听 `127.0.0.1`（默认端口 7717，`ORBIT_PORT` 可改），启动时生成随机 token，与地址一起写入
@@ -245,7 +245,7 @@ Agent 的 home 放在 `/orbit/agent/{codex,claude}`（`CODEX_HOME`、`CLAUDE_CON
 AgentProfile = harness + version + model + auth + method bundle (directory)   → contracts.Method
 Benchmark    = tasks + per-task environment + instruction + verifier + aggregation
 Trial        = task × AgentProfile × seed → solve Run (Agent inside) + verify Run (separate)
-Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore, issues[], cleanup }
+Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore, metrics?, issues[], cleanup }
 ```
 
 - **Method**（`contracts.Method`）：`{ name, agent: codex | claude-code | oracle | empty, auth?, model?, effort?, bundle? }`。
@@ -273,8 +273,18 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 | 其余 | valid |
 
   只有 `valid` 的分数进入均分；无效或未知单独列出，不静默计入。清理状态汇总两个 Run 的 `cleanup`。
-- **聚合**：每个方法的均分 = valid trial 的 `score / maxScore` 百分比均值。跨 job 对比时列为 `<job>/<method>`，
-  给出全部 valid 任务的均值和**配对均值**（只取每一列都 valid 的任务），避免方法在不同任务子集上比较。
+- **指标**（`contracts.MetricSpec`，规则只在 `contracts/metrics.ts`，daemon、CLI、Web 共用）：适配器在 `tasks` 回复里声明
+  `metrics[{ name, label, description?, unit?, range?, higherIsBetter, primary, reference? }]`（至多 20 个，至多一个 primary），
+  `score` 回复的 `metrics{ name: number }` 给出每个 trial 的值。内置指标 `score` = `100 · score / maxScore`（%，0–100）始终存在，
+  声明同名项只改标签、单位、说明、参考值和是否 primary；没有声明 primary 时 `score` 是主指标，旧适配器不用改。提交时
+  解析后的声明存入 `BenchJob.metrics`（旧 job 只有 `score`）。
+- **聚合**：所有指标都是均值，每个指标只用 valid trial：先在每个任务内对 seed 取均值，再对任务取均值；标准误按任务聚类
+  （同一任务的 seed 不是独立样本），给出正态近似的 95% CI（少于两个任务时没有 CI）。比率型指标（通过率等）让适配器
+  每个 trial 报 0 / 100。跨 job 对比时列为 `<job>/<method>`，只比较所有 job 都有的指标；每个指标给出全部任务均值、
+  **配对均值**（只取每一列都有值的任务）和相对第一列的**配对差**（逐任务差的均值与 95% CI，CI 不含 0 才判为更好 / 更差），
+  避免方法在不同任务子集上比较。参照 Anthropic《A statistical approach to model evaluations》、Inspect 的 `stderr(cluster=)`、
+  Terminal-Bench 排行榜（resolution rate ± 95% CI）。
+- **Run 指标**：trial 结束时把各指标值写成 verify Run `metrics.jsonl` 的一行（`bench/<name>`），Run 详情与 Run 对比照常显示。
 
 **适配器协议**（`bench/protocol.ts` 调用方，`bench/adapter.ts` 内置适配器一侧；契约 `contracts.Adapter*`）。
 内置与外部适配器只有这一种机制，用户的 Agent 写一个可执行文件即可接入新 benchmark，不需要重新构建 Orbit：
@@ -285,8 +295,8 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 - 请求：`{ protocol: 1, op, benchmark: { name, path, config }, trial?, solve?, verify? }`；`trial` =
   `{ id, task, method, seed, options, timeoutMin?, staging, hostNetwork }`（`staging` 是 trial 私有的宿主目录，用于要挂进
   Run 的副本，trial 结束时删除）；`solve` / `verify` = `{ run, output }`（Run 记录与其 `$ORBIT_OUTPUT` 的宿主路径）。
-- 回复：`tasks` → `{ tasks: BenchTask[] }`；`solve` / `verify` → `{ spec, issues? }`；`score` →
-  `{ score, maxScore?, invalid?, issues?, review? }`。`review`（可选）告诉 trial 页展示什么：
+- 回复：`tasks` → `{ tasks: BenchTask[], metrics?: MetricSpec[] }`；`solve` / `verify` → `{ spec, issues? }`；`score` →
+  `{ score, maxScore?, invalid?, issues?, review?, metrics? }`。`review`（可选）告诉 trial 页展示什么：
   `files[{ label, phase: solve|verify, path(相对该 Run 输出目录), kind?, fallback? }]`、`items[{ criterion, score?,
   maxScore?, weight?, type?, reasoning? }]`、`details{ key: 短值 }`。`kind` 是封闭集合 `markdown | image | text | json |
   table`，样式全由 Web 决定，adapter 不能传 HTML / CSS；不认识的 `kind` 依次退回 `fallback`、文件扩展名、纯文本，并在页面
@@ -319,11 +329,13 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
    写入 `output/collected/<abs path>`），verify Run 从 `tests/Dockerfile` 构建，把采集到的产物复制挂载到目标路径，
    运行 `bash /tests/test.sh`，采集 `/logs/verifier`，读取 `reward.json`（`reward` 键或唯一键）或 `reward.txt`。
    只支持 `environment_mode = "separate"`；docker-compose 环境、其他 service 的 artifacts 标为不支持。
+   指标：主指标 `resolved`（reward ≥ 1 的 trial，%，即 Terminal-Bench 的 resolution rate），`score` 标为 Reward（平均 reward）。
 2. **原生包装**（`bench/asi.ts`，ASI-Bench seed31415）：solve Run 以 **process 后端**运行
    `config.python -m ai4sci_bench.cli run`（单实例、单 prompt level，`--output-dir $ORBIT_OUTPUT/native`）；Agent 方法走
    ASI 自己的 `codex_cli` / `claude_code_cli` 适配器，oracle 用 `--agent-cmd` 复制 `reference/` 中的声明输出，empty 为
    `true`。verify Run 把 solve 结果复制到自己的输出目录，给没有产出任何声明文件的结果补一个空 `.outputs/`
    （原生 scorer 否则直接报错），再运行 `ai4sci_bench.cli score`；分数取该实例最新 attempt 的 `final_score / max_score`。
+   指标：主指标 `score`（`final_score / max_score` 的 %），另有 `fullMarks`（满分 trial 的 %）。
    ASI checkout 只读：进程 cwd 是 Run 目录，`PYTHONPATH` 指向 checkout，`PYTHONDONTWRITEBYTECODE=1`。
 
 **process 后端**（`RunSpec.backend = "process"`，`runs/process.ts`）：命令直接在宿主以独立进程组运行，
@@ -336,10 +348,10 @@ daemon 重启后按 pid + 启动时间重新接管进程。运行中的 process 
 
 **接口**：API `GET/POST /benchmarks`、`DELETE /benchmarks/:name`、`GET /benchmarks/:name/tasks`、
 `GET/POST /bench/jobs`、`GET /bench/jobs/:id`、`POST /bench/jobs/:id/cancel`、`GET /bench/compare?jobs=a,b`；
-CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|compare|usage`（`add --adapter <name|path> -c KEY=VALUE
+CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|compare [--metric]|usage`（`add --adapter <name|path> -c KEY=VALUE
 --resources <file>`）；Web `/bench`（job 列表与登记的 benchmark）、
 `/bench/<job>`（方法均分、有效性分布、任务 × 方法分数矩阵、问题列表与 solve/verify Run 链接）、
-`/bench/compare?jobs=`（逐任务对比、全部与配对均值、相对第一列的差值）。接入新 benchmark 见
+`/bench/compare?jobs=`（逐任务对比、全部与配对均值 ± 95% CI、相对第一列的配对差、带参考线的排名条；`?metric=` 切换指标）。接入新 benchmark 见
 [guides/bench-adapter.md](guides/bench-adapter.md)。
 
 - **外部适配器示例**：ResearchClawBench（`examples/bench-adapters/researchclawbench/`）。solve 为 Ubuntu 22.04 容器，

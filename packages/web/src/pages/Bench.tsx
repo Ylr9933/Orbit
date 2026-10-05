@@ -1,6 +1,23 @@
 // Benchmark jobs: job list, one job's task × method matrix, and method comparison across jobs.
 // Only `valid` trials enter means; invalid / unknown trials are shown with their issues.
+import {
+  fmtCi,
+  fmtMetric,
+  type MetricDef,
+  metricValue,
+  primaryMetric,
+  resolveMetrics,
+  verdict,
+} from "@zjunlp/orbit/metrics";
 import { useEffect, useMemo, useState } from "react";
+import {
+  CiBars,
+  ciTitle,
+  MetricSwitch,
+  ScoreCell,
+  StatValue,
+  useMetric,
+} from "../components/BenchMetrics.tsx";
 import { IconAlert, IconCompare, IconFlask } from "../components/icons.tsx";
 import { TopBar } from "../components/TopBar.tsx";
 import { ConfirmDialog, Empty, Link, Loading, toast } from "../components/ui.tsx";
@@ -9,16 +26,12 @@ import {
   type BenchJob,
   type BenchJobList,
   type MethodSummary,
-  type Outcome,
   type Trial,
 } from "../lib/api.ts";
 import { ago, dateTime, duration, fmtScore, jobPath, runPath, trialPath } from "../lib/format.ts";
 import { navigate, onLinkClick, setQuery, useLocation } from "../lib/router.ts";
 import { useAsync } from "../lib/use.ts";
 
-const pctOf = (o: Outcome | null) =>
-  o && o.score !== null && o.maxScore > 0 ? (100 * o.score) / o.maxScore : null;
-const fmtPct = (v: number | null | undefined) => (v == null ? "—" : `${v.toFixed(1)}%`);
 const jobLabel = (j: BenchJob) => j.spec.name ?? j.id;
 
 function JobState({ state }: { state: BenchJob["state"] }) {
@@ -39,46 +52,6 @@ function EvalBar({ s }: { s: MethodSummary }) {
       {part(s.unknown, "var(--st-cancelled)", "unknown")}
       {part(s.pending, "var(--st-queued)", "pending")}
     </div>
-  );
-}
-
-function ScoreCell({
-  pct,
-  evaluation,
-  href,
-  title,
-  note,
-}: {
-  pct: number | null;
-  evaluation: Outcome["evaluation"] | "pending";
-  href?: string;
-  title?: string;
-  note?: string;
-}) {
-  const cls = evaluation === "valid" ? "" : evaluation;
-  const text =
-    evaluation === "pending"
-      ? "…"
-      : evaluation === "valid"
-        ? fmtPct(pct)
-        : evaluation === "invalid"
-          ? "invalid"
-          : "unknown";
-  const style = { "--p": (pct ?? 0) / 100 } as React.CSSProperties;
-  const body = (
-    <>
-      {text}
-      {note && <span className="n">{note}</span>}
-    </>
-  );
-  return href ? (
-    <Link href={href} className={`score ${cls}`} style={style} title={title}>
-      {body}
-    </Link>
-  ) : (
-    <span className={`score ${cls}`} style={style} title={title}>
-      {body}
-    </span>
   );
 }
 
@@ -209,57 +182,64 @@ function JobTable({
           <th>Job</th>
           <th>Benchmark</th>
           <th>State</th>
-          <th>Methods (mean over valid · valid/total)</th>
+          <th>Methods (primary metric ± 95% CI · valid/total)</th>
           <th className="r">Created</th>
         </tr>
       </thead>
       <tbody>
-        {jobs.map((j) => (
-          <tr
-            key={j.id}
-            className={`click${selected.includes(j.id) ? " sel" : ""}`}
-            onClick={() => navigate(jobPath(j.id))}
-          >
-            <td onClick={(e) => e.stopPropagation()}>
-              <input
-                type="checkbox"
-                aria-label="Select for compare"
-                checked={selected.includes(j.id)}
-                onChange={() => toggle(j.id)}
-              />
-            </td>
-            <td>
-              <Link
-                href={jobPath(j.id)}
-                style={{ color: "var(--text)", fontWeight: 600 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onLinkClick(e);
-                }}
-              >
-                {jobLabel(j)}
-              </Link>
-              {j.spec.name && <div className="mono faint">{j.id}</div>}
-            </td>
-            <td>{j.spec.benchmark}</td>
-            <td>
-              <JobState state={j.state} />
-            </td>
-            <td>
-              <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-                {j.summary.map((s) => (
-                  <span key={s.method} className="chip" title={summaryTitle(s)}>
-                    {s.method} <b>{fmtPct(s.meanPct)}</b>
-                    <span className="faint">
-                      {s.valid}/{s.trials}
+        {jobs.map((j) => {
+          const m = primaryMetric(resolveMetrics(j.metrics));
+          return (
+            <tr
+              key={j.id}
+              className={`click${selected.includes(j.id) ? " sel" : ""}`}
+              onClick={() => navigate(jobPath(j.id))}
+            >
+              <td onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  aria-label="Select for compare"
+                  checked={selected.includes(j.id)}
+                  onChange={() => toggle(j.id)}
+                />
+              </td>
+              <td>
+                <Link
+                  href={jobPath(j.id)}
+                  style={{ color: "var(--text)", fontWeight: 600 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onLinkClick(e);
+                  }}
+                >
+                  {jobLabel(j)}
+                </Link>
+                {j.spec.name && <div className="mono faint">{j.id}</div>}
+              </td>
+              <td>{j.spec.benchmark}</td>
+              <td>
+                <JobState state={j.state} />
+              </td>
+              <td>
+                <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                  <span className="faint">{m.label}</span>
+                  {j.summary.map((s) => (
+                    <span key={s.method} className="chip" title={summaryTitle(s)}>
+                      {s.method} <b>{fmtMetric(s.metrics[m.name]?.mean, m)}</b>
+                      {fmtCi(s.metrics[m.name], m) && (
+                        <span className="faint">{fmtCi(s.metrics[m.name], m)}</span>
+                      )}
+                      <span className="faint">
+                        {s.valid}/{s.trials}
+                      </span>
                     </span>
-                  </span>
-                ))}
-              </div>
-            </td>
-            <td className="r faint">{ago(j.createdAt)}</td>
-          </tr>
-        ))}
+                  ))}
+                </div>
+              </td>
+              <td className="r faint">{ago(j.createdAt)}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -290,6 +270,8 @@ export function BenchJobDetail({ id }: { id: string }) {
     }
     return m;
   }, [trials]);
+  const metrics = useMemo(() => resolveMetrics(job?.metrics ?? []), [job]);
+  const [metric, setMetric] = useMetric(metrics);
   const problems = trials.filter(
     (t) => (t.outcome && t.outcome.evaluation !== "valid") || (t.outcome?.issues.length ?? 0) > 0,
   );
@@ -377,35 +359,26 @@ export function BenchJobDetail({ id }: { id: string }) {
           </div>
 
           <div className="stats">
-            {d.data.summary.map((s) => {
-              const m = job.spec.methods.find((x) => x.name === s.method);
-              return (
-                <div key={s.method} className="card card-b stat" title={summaryTitle(s)}>
-                  <span className="l">
-                    <b style={{ color: "var(--text)" }}>{s.method}</b>
-                    {m && (
-                      <span className="mono">
-                        {" "}
-                        · {m.agent}
-                        {m.model ? ` · ${m.model}` : ""}
-                        {m.effort ? ` · ${m.effort}` : ""}
-                      </span>
-                    )}
-                  </span>
-                  <span className="v">{fmtPct(s.meanPct)}</span>
-                  <EvalBar s={s} />
-                  <span className="l">
-                    {s.valid} valid · {s.invalid} invalid · {s.unknown} unknown
-                    {s.pending ? ` · ${s.pending} pending` : ""}
-                  </span>
-                </div>
-              );
-            })}
+            {d.data.summary.map((s) => (
+              <MethodCard
+                key={s.method}
+                s={s}
+                method={job.spec.methods.find((x) => x.name === s.method)}
+                metric={metric}
+                others={metrics.filter((x) => x.name !== metric.name)}
+              />
+            ))}
           </div>
 
           <section className="card">
             <div className="card-h">
-              Scores <span className="sub">percent of max · click a cell for its solve run</span>
+              {metric.label}{" "}
+              <span className="sub">
+                per trial{metric.description ? ` · ${metric.description}` : ""} · click a cell for
+                the trial
+              </span>
+              <div className="spacer" />
+              <MetricSwitch metrics={metrics} value={metric} onChange={setMetric} />
             </div>
             <div style={{ overflowX: "auto" }}>
               <table className="table matrix">
@@ -427,7 +400,7 @@ export function BenchJobDetail({ id }: { id: string }) {
                         <td key={m}>
                           <div className="row" style={{ gap: 4, justifyContent: "center" }}>
                             {(cells.get(`${task}\u0000${m}`) ?? []).map((t) => (
-                              <TrialCell key={t.id} t={t} seeds={job.spec.seeds} />
+                              <TrialCell key={t.id} t={t} seeds={job.spec.seeds} metric={metric} />
                             ))}
                           </div>
                         </td>
@@ -435,21 +408,44 @@ export function BenchJobDetail({ id }: { id: string }) {
                     </tr>
                   ))}
                   <tr className="mean">
-                    <td>Mean (valid)</td>
-                    {d.data.summary.map((s) => (
-                      <td key={s.method}>
-                        <ScoreCell
-                          pct={s.meanPct}
-                          evaluation={s.meanPct === null ? "unknown" : "valid"}
-                          note={`${s.valid}/${s.trials}`}
-                        />
-                      </td>
-                    ))}
+                    <td>Mean over tasks</td>
+                    {d.data.summary.map((s) => {
+                      const st = s.metrics[metric.name] ?? null;
+                      return (
+                        <td key={s.method}>
+                          <ScoreCell
+                            value={st?.mean ?? null}
+                            metric={metric}
+                            evaluation={st ? "valid" : "unknown"}
+                            note={fmtCi(st, metric) || undefined}
+                            title={ciTitle(st, metric)}
+                          />
+                        </td>
+                      );
+                    })}
                   </tr>
                 </tbody>
               </table>
             </div>
           </section>
+
+          {methods.length > 1 && (
+            <section className="card">
+              <div className="card-h">
+                Ranking <span className="sub">{metric.label} · mean over tasks</span>
+              </div>
+              <div className="card-b">
+                <CiBars
+                  metric={metric}
+                  rows={d.data.summary.map((s) => ({
+                    key: s.method,
+                    label: s.method,
+                    s: s.metrics[metric.name] ?? null,
+                  }))}
+                />
+              </div>
+            </section>
+          )}
 
           {problems.length > 0 && (
             <section className="card">
@@ -503,6 +499,60 @@ export function BenchJobDetail({ id }: { id: string }) {
   );
 }
 
+/** A method's headline: the selected metric ± CI, its gap to the reference, the other metrics. */
+function MethodCard({
+  s,
+  method,
+  metric,
+  others,
+}: {
+  s: MethodSummary;
+  method: BenchJob["spec"]["methods"][number] | undefined;
+  metric: MetricDef;
+  others: MetricDef[];
+}) {
+  const st = s.metrics[metric.name] ?? null;
+  const gap = st && metric.reference !== undefined ? st.mean - metric.reference : null;
+  const good = gap !== null && gap !== 0 && gap > 0 === metric.higherIsBetter;
+  return (
+    <div className="card card-b stat" title={summaryTitle(s)}>
+      <span className="l">
+        <b style={{ color: "var(--text)" }}>{s.method}</b>
+        {method && (
+          <span className="mono">
+            {" "}
+            · {method.agent}
+            {method.model ? ` · ${method.model}` : ""}
+            {method.effort ? ` · ${method.effort}` : ""}
+          </span>
+        )}
+      </span>
+      <span className="v">
+        <StatValue s={st} metric={metric} />
+      </span>
+      {gap !== null && (
+        <span className={`l delta ${gap === 0 ? "" : good ? "up" : "down"}`}>
+          {fmtMetric(gap, metric, true)} vs reference {fmtMetric(metric.reference, metric)}
+        </span>
+      )}
+      <EvalBar s={s} />
+      <span className="l">
+        {s.valid} valid · {s.invalid} invalid · {s.unknown} unknown
+        {s.pending ? ` · ${s.pending} pending` : ""}
+      </span>
+      {others.length > 0 && (
+        <div className="stat-more">
+          {others.map((m) => (
+            <span key={m.name} title={ciTitle(s.metrics[m.name], m)}>
+              {m.label} <b>{fmtMetric(s.metrics[m.name]?.mean, m)}</b>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RunLinks({ t }: { t: Trial }) {
   return (
     <span className="row" style={{ gap: 6 }}>
@@ -520,13 +570,14 @@ function RunLinks({ t }: { t: Trial }) {
   );
 }
 
-function TrialCell({ t, seeds }: { t: Trial; seeds: number }) {
+function TrialCell({ t, seeds, metric }: { t: Trial; seeds: number; metric: MetricDef }) {
   const o = t.outcome;
   const phase = t.state === "done" ? null : t.state;
   const title = [
     `${t.task} · ${t.method}${seeds > 1 ? ` #${t.seed}` : ""}`,
     phase ? `state: ${phase}` : `evaluation: ${o?.evaluation} · execution: ${o?.execution}`,
     o && o.score !== null ? `score: ${fmtScore(o.score)} / ${fmtScore(o.maxScore)}` : null,
+    ...Object.entries(o?.metrics ?? {}).map(([k, v]) => `${k}: ${fmtScore(v)}`),
     ...(o?.issues ?? t.issues),
     o?.cleanup === "failed" ? "cleanup failed" : null,
   ]
@@ -534,7 +585,8 @@ function TrialCell({ t, seeds }: { t: Trial; seeds: number }) {
     .join("\n");
   return (
     <ScoreCell
-      pct={pctOf(o)}
+      value={metricValue(o, metric.name)}
+      metric={metric}
       evaluation={o ? o.evaluation : "pending"}
       href={trialPath(t.jobId, t.id)}
       title={title}
@@ -563,7 +615,6 @@ export function BenchComparePage() {
     setQuery({ jobs: next.join(",") || null });
   };
   const c = cmp.data;
-  const base = c?.columns[0]?.key;
 
   return (
     <>
@@ -596,99 +647,7 @@ export function BenchComparePage() {
             <Loading />
           ) : (
             <>
-              <div className="callout" style={{ "--c": "var(--accent)" } as React.CSSProperties}>
-                Cells are mean percent over valid trials (valid/total below). <b>Paired</b> means
-                use only the {c.pairedTasks} task{c.pairedTasks === 1 ? "" : "s"} valid in every
-                column; Δ is relative to <b>{base}</b>.
-              </div>
-              <section className="card">
-                <div style={{ overflowX: "auto" }}>
-                  <table className="table matrix">
-                    <thead>
-                      <tr>
-                        <th>Task</th>
-                        {c.columns.map((col) => (
-                          <th key={col.key}>
-                            <Link href={jobPath(col.jobId)}>{col.key}</Link>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {c.rows.map((r) => {
-                        const vals = c.columns
-                          .map((col) => r.cells[col.key])
-                          .filter((x): x is number => x != null);
-                        const best = vals.length > 1 ? Math.max(...vals) : null;
-                        return (
-                          <tr key={r.task}>
-                            <td className="mono">{r.task}</td>
-                            {c.columns.map((col) => {
-                              const v = r.cells[col.key] ?? null;
-                              const n = r.counts[col.key] ?? "";
-                              return (
-                                <td key={col.key}>
-                                  {n === "" ? (
-                                    <span className="faint">—</span>
-                                  ) : (
-                                    <ScoreCell
-                                      pct={v}
-                                      evaluation={v === null ? "unknown" : "valid"}
-                                      note={n}
-                                      title={
-                                        v === null
-                                          ? "no valid trial (pending, invalid or unknown)"
-                                          : v === best
-                                            ? "best in row"
-                                            : undefined
-                                      }
-                                    />
-                                  )}
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        );
-                      })}
-                      {(["all", "paired"] as const).map((kind) => (
-                        <tr key={kind} className="mean">
-                          <td>
-                            {kind === "all"
-                              ? "Mean (all valid)"
-                              : `Mean (paired, ${c.pairedTasks})`}
-                          </td>
-                          {c.columns.map((col) => {
-                            const v = c.means[col.key]?.[kind] ?? null;
-                            const b = base ? (c.means[base]?.[kind] ?? null) : null;
-                            const delta =
-                              col.key !== base && v !== null && b !== null ? v - b : null;
-                            return (
-                              <td key={col.key}>
-                                <div className="col" style={{ alignItems: "center", gap: 2 }}>
-                                  <ScoreCell
-                                    pct={v}
-                                    evaluation={v === null ? "unknown" : "valid"}
-                                  />
-                                  {delta !== null && (
-                                    <span
-                                      className={`mono delta ${delta > 0 ? "up" : delta < 0 ? "down" : ""}`}
-                                      style={{ fontSize: 11 }}
-                                    >
-                                      {delta > 0 ? "+" : ""}
-                                      {delta.toFixed(1)} pt
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-              <MeanBars c={c} />
+              <CompareView c={c} />
             </>
           )}
         </div>
@@ -697,38 +656,141 @@ export function BenchComparePage() {
   );
 }
 
-/** Horizontal bars of the paired (or, without paired tasks, all-valid) means. */
-function MeanBars({ c }: { c: NonNullable<Awaited<ReturnType<typeof api.benchCompare>>> }) {
-  const kind = c.pairedTasks > 0 ? "paired" : "all";
-  const vals = c.columns.map((col) => ({ key: col.key, v: c.means[col.key]?.[kind] ?? null }));
+type Compare = NonNullable<Awaited<ReturnType<typeof api.benchCompare>>>;
+
+/** One metric of a comparison: task matrix, means, paired Δ to the first column, ranking bars. */
+function CompareView({ c }: { c: Compare }) {
+  const [metric, setMetric] = useMetric(c.metrics);
+  const st = c.stats[metric.name];
+  const paired = st?.pairedTasks ?? 0;
+  const base = c.columns[0]?.key;
+  const col = (k: string) => st?.columns[k];
+  const better = (a: number, b: number) => (metric.higherIsBetter ? a > b : a < b);
   return (
-    <section className="card">
-      <div className="card-h">
-        Mean score{" "}
-        <span className="sub">{kind === "paired" ? "paired tasks" : "all valid tasks"}</span>
+    <>
+      <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+        <MetricSwitch metrics={c.metrics} value={metric} onChange={setMetric} />
+        <span className="faint">
+          {metric.description ?? metric.label} · cells: mean over valid trials (valid/total) ·{" "}
+          <b>paired</b>: the {paired} task{paired === 1 ? "" : "s"} every column has · Δ: mean
+          per-task difference to <b>{base}</b> with 95% CI
+        </span>
       </div>
-      <div className="card-b col" style={{ gap: 8 }}>
-        {vals.map(({ key, v }) => (
-          <div key={key} className="row" style={{ gap: 10 }}>
-            <span className="mono ellipsis" style={{ width: 220 }}>
-              {key}
-            </span>
-            <div style={{ flex: 1, background: "var(--surface-3)", borderRadius: 4, height: 14 }}>
-              <div
-                style={{
-                  width: `${Math.max(0, Math.min(100, v ?? 0))}%`,
-                  height: "100%",
-                  borderRadius: 4,
-                  background: "var(--accent)",
-                }}
-              />
-            </div>
-            <span className="mono" style={{ width: 64, textAlign: "right" }}>
-              {fmtPct(v)}
-            </span>
-          </div>
-        ))}
-      </div>
-    </section>
+      <section className="card">
+        <div style={{ overflowX: "auto" }}>
+          <table className="table matrix">
+            <thead>
+              <tr>
+                <th>Task</th>
+                {c.columns.map((x) => (
+                  <th key={x.key}>
+                    <Link href={jobPath(x.jobId)}>{x.key}</Link>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {c.rows.map((r) => {
+                const vals = r.values[metric.name] ?? {};
+                const present = Object.values(vals).filter((v): v is number => v !== null);
+                const best =
+                  present.length > 1 ? present.reduce((a, b) => (better(a, b) ? a : b)) : null;
+                return (
+                  <tr key={r.task}>
+                    <td className="mono">{r.task}</td>
+                    {c.columns.map((x) => {
+                      const v = vals[x.key] ?? null;
+                      const n = r.counts[x.key] ?? "";
+                      return (
+                        <td key={x.key}>
+                          {n === "" ? (
+                            <span className="faint">—</span>
+                          ) : (
+                            <ScoreCell
+                              value={v}
+                              metric={metric}
+                              evaluation={v === null ? "unknown" : "valid"}
+                              note={n}
+                              title={
+                                v === null
+                                  ? "no valid trial with this metric"
+                                  : v === best
+                                    ? "best in row"
+                                    : undefined
+                              }
+                            />
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+              {(["all", "paired"] as const).map((kind) => (
+                <tr key={kind} className="mean">
+                  <td>{kind === "all" ? "Mean (all tasks)" : `Mean (paired, ${paired})`}</td>
+                  {c.columns.map((x) => {
+                    const s = col(x.key)?.[kind] ?? null;
+                    return (
+                      <td key={x.key}>
+                        <ScoreCell
+                          value={s?.mean ?? null}
+                          metric={metric}
+                          evaluation={s ? "valid" : "unknown"}
+                          note={fmtCi(s, metric) || undefined}
+                          title={ciTitle(s, metric)}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+              <tr className="mean">
+                <td>Δ vs {base} (paired)</td>
+                {c.columns.map((x, i) => {
+                  const d = col(x.key)?.diff ?? null;
+                  if (i === 0 || !d)
+                    return (
+                      <td key={x.key} className="faint">
+                        {i === 0 ? "baseline" : "—"}
+                      </td>
+                    );
+                  const v = verdict(d, metric);
+                  return (
+                    <td key={x.key} title={ciTitle(d, metric)}>
+                      <span className={`mono delta ${v > 0 ? "up" : v < 0 ? "down" : ""}`}>
+                        {fmtMetric(d.mean, metric, true)} <small>{fmtCi(d, metric)}</small>
+                      </span>
+                      <div className="faint" style={{ fontSize: 11 }}>
+                        {v === 0 ? "not significant" : v > 0 ? "better" : "worse"}
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="card">
+        <div className="card-h">
+          Ranking{" "}
+          <span className="sub">
+            {metric.label} · {paired > 0 ? `paired tasks (${paired})` : "all tasks"}
+          </span>
+        </div>
+        <div className="card-b">
+          <CiBars
+            metric={metric}
+            rows={c.columns.map((x) => ({
+              key: x.key,
+              label: x.key,
+              href: jobPath(x.jobId),
+              s: (paired > 0 ? col(x.key)?.paired : col(x.key)?.all) ?? null,
+            }))}
+          />
+        </div>
+      </section>
+    </>
   );
 }

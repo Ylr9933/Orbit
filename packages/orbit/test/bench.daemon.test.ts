@@ -57,7 +57,11 @@ process.stdin.on("end", () => {
   const req = JSON.parse(input);
   const say = (v) => console.log(JSON.stringify(v));
   if (req.benchmark.config.broken) { console.error("checkout has no tasks/"); process.exit(1); }
-  if (req.op === "tasks") return say({ tasks: [{ id: "t1", title: "one", supported: true, reason: null }] });
+  if (req.op === "tasks")
+    return say({
+      tasks: [{ id: "t1", title: "one", supported: true, reason: null }],
+      metrics: [{ name: "answer", label: "Answer", unit: "pts", primary: true }],
+    });
   const node = ${JSON.stringify(process.execPath)};
   if (req.op === "solve") {
     const v = req.trial.method.agent === "oracle" ? "7" : "0";
@@ -66,7 +70,8 @@ process.stdin.on("end", () => {
   if (req.op === "verify")
     return say({ spec: { backend: "process", command: ["sh", "-c", "cp " + req.solve.output + "/answer $ORBIT_OUTPUT/score"] } });
   const fs = require("node:fs");
-  say({ score: Number(fs.readFileSync(req.verify.output + "/score", "utf8")), maxScore: 7 });
+  const n = Number(fs.readFileSync(req.verify.output + "/score", "utf8"));
+  say({ score: n, maxScore: 7, metrics: { answer: n } });
 });
 `;
 
@@ -164,7 +169,7 @@ describe("bench jobs", () => {
       expect(t.outcome?.evaluation, JSON.stringify(t.outcome)).toBe("valid");
       expect(t.solveRunId).not.toBe(t.verifyRunId);
     }
-    expect(d.summary.map((s) => [s.method, s.meanPct, s.valid])).toEqual([
+    expect(d.summary.map((s) => [s.method, s.metrics.score?.mean, s.valid])).toEqual([
       ["oracle", 100, 2],
       ["empty", 0, 2],
     ]);
@@ -177,7 +182,10 @@ describe("bench jobs", () => {
     ).toEqual([]);
 
     const c = await client.benchCompare([job.id]);
-    expect(c.means).toEqual({ oracle: { all: 100, paired: 100 }, empty: { all: 0, paired: 0 } });
+    expect(c.metrics.map((m) => m.name)).toEqual(["score", "fullMarks"]);
+    const cols = c.stats.score?.columns;
+    expect([cols?.oracle?.paired?.mean, cols?.empty?.paired?.mean]).toEqual([100, 0]);
+    expect(cols?.empty?.diff).toMatchObject({ mean: -100, tasks: 2 });
     expect((await client.benchJobs()).map((j) => j.id)).toContain(job.id);
   });
 
@@ -208,10 +216,22 @@ describe("bench jobs", () => {
       ["oracle", "valid", 7],
       ["empty", "valid", 0],
     ]);
-    expect(d.summary.map((s) => [s.method, s.meanPct])).toEqual([
-      ["oracle", 100],
-      ["empty", 0],
+    expect(d.job.metrics.map((m) => [m.name, m.primary])).toEqual([
+      ["score", false],
+      ["answer", true],
     ]);
+    expect(d.summary.map((s) => [s.method, s.metrics.score?.mean, s.metrics.answer?.mean])).toEqual(
+      [
+        ["oracle", 100, 7],
+        ["empty", 0, 0],
+      ],
+    );
+    // The trial's metrics are also a line of its verify run's metrics.
+    const oracle = d.trials.find((t) => t.method === "oracle");
+    expect((await client.metrics(oracle?.verifyRunId ?? "")).summary).toEqual({
+      "bench/score": 100,
+      "bench/answer": 7,
+    });
   });
 
   it("applies a resources file to solve runs, records usage and suggests from it", async () => {

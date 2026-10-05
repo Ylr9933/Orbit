@@ -1597,6 +1597,99 @@ a.score:hover {
 .delta.down {
   color: var(--st-failed);
 }
+.stat-value small {
+  margin-left: 6px;
+  font-size: 0.55em;
+  font-weight: 500;
+  color: var(--text-3);
+  letter-spacing: 0;
+}
+.stat-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-3);
+}
+.stat-more b {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+.cibars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cibar {
+  display: grid;
+  grid-template-columns: 22px minmax(120px, 240px) 1fr 120px;
+  align-items: center;
+  gap: 10px;
+}
+.cibar .rank {
+  color: var(--text-3);
+  font: 500 12px var(--font-mono);
+  text-align: right;
+}
+.cibar .track {
+  position: relative;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--surface-3);
+}
+.cibar .fill {
+  height: 100%;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.cibar .whisker {
+  position: absolute;
+  top: 50%;
+  height: 0;
+  border-top: 2px solid var(--text);
+  opacity: 0.55;
+}
+.cibar .whisker::before,
+.cibar .whisker::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  height: 10px;
+  border-left: 2px solid var(--text);
+}
+.cibar .whisker::before {
+  left: 0;
+}
+.cibar .whisker::after {
+  right: 0;
+}
+.cibar .ref,
+.cibar-legend .ref-key {
+  border-left: 2px dashed var(--st-cancelled);
+}
+.cibar .ref {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+}
+.cibar .stat-value {
+  font: 500 12.5px var(--font-mono);
+  text-align: right;
+}
+.cibar-legend {
+  font-size: 11.5px;
+  padding-left: 32px;
+}
+.cibar-legend .ref-key {
+  display: inline-block;
+  height: 10px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
 
 /* ---- confirm dialog ---- */
 .dialog {
@@ -1659,6 +1752,20 @@ a.score:hover {
 .trial-score {
   font-size: 22px;
   font-weight: 600;
+}
+.trial-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 6px;
+  font-size: 12.5px;
+}
+.trial-metrics b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+.trial-metrics .primary b {
+  color: var(--accent);
 }
 .trial-issues {
   display: flex;

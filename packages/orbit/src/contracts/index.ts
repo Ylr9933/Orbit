@@ -548,6 +548,44 @@ export const BenchTask = z.object({
 export type BenchTask = z.infer<typeof BenchTask>;
 
 /**
+ * A metric an adapter declares (`tasks` reply) and reports per trial (`score` reply `metrics`).
+ * Valid trials average per task, then over tasks (see `contracts/metrics.ts`). `score`, the score
+ * as a percent of its maximum, always exists; declaring it changes only how it is labelled.
+ */
+export const MetricSpec = z.object({
+  name: z
+    .string()
+    .regex(/^[a-z][a-zA-Z0-9_]{0,39}$/, "metric names are camelCase or snake_case identifiers"),
+  label: z.string().min(1).max(40),
+  description: z.string().max(200).optional(),
+  unit: z.string().max(8).optional(),
+  range: z
+    .tuple([z.number(), z.number()])
+    .refine(([lo, hi]) => hi > lo, "range must be [low, high]")
+    .optional(),
+  higherIsBetter: z.boolean().default(true),
+  primary: z.boolean().default(false),
+  reference: z.number().optional(),
+});
+export type MetricSpec = z.infer<typeof MetricSpec>;
+export type MetricSpecInput = z.input<typeof MetricSpec>;
+
+const MetricSpecs = z
+  .array(MetricSpec)
+  .max(20)
+  .refine((ms) => new Set(ms.map((m) => m.name)).size === ms.length, "metric names must be unique")
+  .refine((ms) => ms.filter((m) => m.primary).length <= 1, "at most one primary metric");
+
+/** Per-trial metric values; non-finite values are dropped. */
+const MetricValues = z
+  .record(z.string(), z.number().nullable())
+  .transform((r) =>
+    Object.fromEntries(
+      Object.entries(r).filter((e): e is [string, number] => Number.isFinite(e[1])),
+    ),
+  );
+
+/**
  * An AgentProfile: harness (with the host CLI version recorded per run) + model + auth + method
  * bundle. `oracle` runs the reference solution and `empty` submits nothing; both check an adapter.
  */
@@ -656,6 +694,8 @@ export const Outcome = z.object({
   cleanup: z.enum(["pending", "done", "failed"]),
   /** What the adapter asked the trial page to show (null for older trials and adapters). */
   review: Review.nullable().default(null),
+  /** Adapter metrics of the trial (besides `score`); kept also when the score is not trusted. */
+  metrics: z.record(z.string(), z.number()).optional(),
 });
 export type Outcome = z.infer<typeof Outcome>;
 
@@ -717,11 +757,23 @@ export const BenchJob = z.object({
   spec: BenchJobSpec,
   /** Per-task overrides read from the benchmark's resources file at submit (null without one). */
   resources: z.record(z.string(), ResourceOverride).nullable().default(null),
+  /** Metrics declared by the adapter at submit, `score` first (only `score` for older jobs). */
+  metrics: z.array(MetricSpec).default([]),
   state: z.enum(["running", "done", "cancelled"]),
   createdAt: z.string(),
   endedAt: z.string().nullable(),
 });
 export type BenchJob = z.infer<typeof BenchJob>;
+
+/** A metric over tasks (see `contracts/metrics.ts`): SE clustered by task, 95% CI. */
+export const MetricStat = z.object({
+  mean: z.number(),
+  se: z.number().nullable(),
+  ci: z.tuple([z.number(), z.number()]).nullable(),
+  tasks: z.number().int(),
+  trials: z.number().int(),
+});
+export type MetricStat = z.infer<typeof MetricStat>;
 
 export const MethodSummary = z.object({
   method: z.string(),
@@ -730,8 +782,8 @@ export const MethodSummary = z.object({
   invalid: z.number().int(),
   unknown: z.number().int(),
   pending: z.number().int(),
-  /** Mean score over valid trials, in percent of the maximum; null without valid trials. */
-  meanPct: z.number().nullable(),
+  /** Per metric name: mean over tasks of the per-task mean of valid trials; null without any. */
+  metrics: z.record(z.string(), MetricStat.nullable()),
 });
 export type MethodSummary = z.infer<typeof MethodSummary>;
 
@@ -753,21 +805,35 @@ export const BenchTaskList = z.object({ tasks: z.array(BenchTask) });
 /** Methods from several jobs side by side; columns are `<job>/<method>`. */
 export const BenchCompare = z.object({
   columns: z.array(z.object({ key: z.string(), jobId: z.string(), method: z.string() })),
+  /** Metrics every compared job has (always `score`); the first job's primary one if shared. */
+  metrics: z.array(MetricSpec),
   rows: z.array(
     z.object({
       task: z.string(),
-      /** Mean percent over valid trials per column; null when none are valid. */
-      cells: z.record(z.string(), z.number().nullable()),
-      /** Evaluation counts per column: `valid/total`. */
+      /** Evaluation counts per column: `valid/total` (empty when the column has no such trial). */
       counts: z.record(z.string(), z.string()),
+      /** Per metric, per column: mean over the task's valid trials; null when none has a value. */
+      values: z.record(z.string(), z.record(z.string(), z.number().nullable())),
     }),
   ),
-  /** Per column: mean over all its valid tasks, and over the tasks valid in every column. */
-  means: z.record(
+  /**
+   * Per metric: tasks with a value in every column (`paired`), and per column the mean over all its
+   * tasks, over the paired tasks, and the paired difference to the first column.
+   */
+  stats: z.record(
     z.string(),
-    z.object({ all: z.number().nullable(), paired: z.number().nullable() }),
+    z.object({
+      pairedTasks: z.number().int(),
+      columns: z.record(
+        z.string(),
+        z.object({
+          all: MetricStat.nullable(),
+          paired: MetricStat.nullable(),
+          diff: MetricStat.nullable(),
+        }),
+      ),
+    }),
   ),
-  pairedTasks: z.number().int(),
 });
 export type BenchCompare = z.infer<typeof BenchCompare>;
 
@@ -846,7 +912,11 @@ export const AdapterRequest = z.object({
 });
 export type AdapterRequest = z.infer<typeof AdapterRequest>;
 
-export const AdapterTasksResponse = z.object({ tasks: z.array(BenchTask) });
+export const AdapterTasksResponse = z.object({
+  tasks: z.array(BenchTask),
+  metrics: MetricSpecs.default([]),
+});
+export type AdapterTasksResponse = z.infer<typeof AdapterTasksResponse>;
 export const AdapterSpecResponse = z.object({
   spec: AdapterRunSpec,
   /** Recorded on the trial (e.g. artifacts the solve run did not produce). */
@@ -861,6 +931,8 @@ export const ScoreResult = z.object({
   invalid: z.boolean().default(false),
   issues: z.array(z.string()).default([]),
   review: Review.optional(),
+  /** Values of declared metrics (other than `score`); undeclared names are kept but not shown. */
+  metrics: MetricValues.optional(),
 });
 export type ScoreResult = z.infer<typeof ScoreResult>;
 

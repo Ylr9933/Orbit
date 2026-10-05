@@ -3,6 +3,7 @@
 // declared file, rendered by kind; Grader from its items; Details for its facts and any fields this
 // UI does not know). Without a review (older trials and adapters) the page guesses: the solve's
 // Markdown report and the verifier's JSON. The Agent session and all outputs are always there.
+import { fmtMetric, type MetricDef, metricValue, resolveMetrics } from "@zjunlp/orbit/metrics";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { IconAlert, IconFile, IconFlask } from "../components/icons.tsx";
 import { joinPath, Markdown } from "../components/Markdown.tsx";
@@ -11,6 +12,7 @@ import { Empty, Link, Loading, StateBadge, useNow } from "../components/ui.tsx";
 import {
   api,
   fileUrl,
+  type Outcome,
   type Review,
   type ReviewFile,
   type ReviewItem,
@@ -55,6 +57,22 @@ function useRunOnce(id: string | null): Run | undefined {
     );
   }, [id, live]);
   return id ? (live ?? fetched) : undefined;
+}
+
+/** The trial's value of every metric of its job (the primary first), e.g. `Resolved 100% · Reward 100%`. */
+function TrialMetrics({ o, metrics }: { o: Outcome | null; metrics: MetricDef[] }) {
+  const all = resolveMetrics(metrics);
+  if (!o || all.length < 2) return null;
+  const ordered = [...all.filter((m) => m.primary), ...all.filter((m) => !m.primary)];
+  return (
+    <div className="trial-metrics">
+      {ordered.map((m) => (
+        <span key={m.name} className={m.primary ? "primary" : ""} title={m.description}>
+          <span className="faint">{m.label}</span> <b>{fmtMetric(metricValue(o, m.name), m)}</b>
+        </span>
+      ))}
+    </div>
+  );
 }
 
 export function TrialPage({ jobId, trialId }: { jobId: string; trialId: string }) {
@@ -123,6 +141,7 @@ export function TrialPage({ jobId, trialId }: { jobId: string; trialId: string }
             </span>
           )}
         </div>
+        <TrialMetrics o={o} metrics={job.metrics} />
         <div className="meta">
           <span className="chip mono">{job.spec.benchmark}</span>
           {method && (

@@ -83,7 +83,7 @@ const PKG_IMPORT_RE =
 
 /**
  * The Web bundle may use the daemon's contracts as types only (no zod, no Node code), plus the
- * dependency-free run naming rule at runtime.
+ * dependency-free run naming and bench metric rules at runtime.
  */
 export function checkWebFile(srcDir: string, file: string, text: string): Violation[] {
   const out: Violation[] = [];
@@ -97,12 +97,12 @@ export function checkWebFile(srcDir: string, file: string, text: string): Violat
   }
   for (const m of text.matchAll(PKG_IMPORT_RE)) {
     const line = text.slice(0, m.index).split("\n").length;
-    if (m[3] === "@zjunlp/orbit/naming") continue;
+    if (m[3] === "@zjunlp/orbit/naming" || m[3] === "@zjunlp/orbit/metrics") continue;
     if (m[3] !== "@zjunlp/orbit/contracts")
       out.push({
         file,
         line,
-        message: `web may only import @zjunlp/orbit/contracts (types) or /naming: ${m[3]}`,
+        message: `web may only import @zjunlp/orbit/contracts (types), /naming or /metrics: ${m[3]}`,
       });
     else if (!m[2])
       out.push({ file, line, message: "web must import contracts with `import type`" });

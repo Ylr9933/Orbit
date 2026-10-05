@@ -332,7 +332,24 @@ export function harborReview(verifyOutput: string): ScoreReply["review"] {
   return { files, items: [], details: {} };
 }
 
+/**
+ * Terminal-Bench style: the headline is the resolution rate (reward 1, every test passing); the mean
+ * reward also credits partial rewards of tasks that give them.
+ */
+const HARBOR_METRICS: AdapterHandlers["metrics"] = [
+  {
+    name: "resolved",
+    label: "Resolved",
+    description: "trials with the full reward (1)",
+    unit: "%",
+    range: [0, 100],
+    primary: true,
+  },
+  { name: "score", label: "Reward", description: "mean reward, in percent of 1" },
+];
+
 export const harborAdapter: AdapterHandlers = {
+  metrics: HARBOR_METRICS,
   tasks: (req) => findHarborTasks(req.benchmark.path).map(toBenchTask),
   solve: ({ benchmark, trial }) => ({
     spec: harborSolveSpec(
@@ -347,8 +364,12 @@ export const harborAdapter: AdapterHandlers = {
     const { spec, missing } = harborVerifySpec(t, solve.output, trial.staging);
     return { spec, issues: missing.map((m) => `artifact not produced: ${m}`) };
   },
-  score: ({ verify }) => ({
-    ...harborReward(join(verify.output, "collected", "logs", "verifier")),
-    review: harborReview(verify.output),
-  }),
+  score: ({ verify }) => {
+    const r = harborReward(join(verify.output, "collected", "logs", "verifier"));
+    return {
+      ...r,
+      ...(r.score === null ? {} : { metrics: { resolved: r.score >= 1 ? 100 : 0 } }),
+      review: harborReview(verify.output),
+    };
+  },
 };

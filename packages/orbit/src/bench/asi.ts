@@ -392,7 +392,13 @@ export function asiScore(ctx: Trial, solveOutput: string, verifyOutput: string):
     Boolean(item.scorer_internal_error) ||
     hidden.judgeUnavailable.length > 0 ||
     (err !== null && item.final_score === 0);
-  return { score: item.final_score, maxScore, issues, invalid };
+  return {
+    score: item.final_score,
+    maxScore,
+    issues,
+    invalid,
+    metrics: { fullMarks: item.final_score >= maxScore ? 100 : 0 },
+  };
 }
 
 /** The native result of the instance and the scorer report, for the trial page. */
@@ -417,6 +423,16 @@ export function asiReview(
 }
 
 export const asiAdapter: AdapterHandlers = {
+  // `score` (final score in percent of the instance's maximum) is the headline.
+  metrics: [
+    {
+      name: "fullMarks",
+      label: "Full marks",
+      description: "trials scoring the instance's maximum",
+      unit: "%",
+      range: [0, 100],
+    },
+  ],
   tasks: (req) => listTasks(req.benchmark),
   solve: ({ benchmark, trial }) => ({ spec: asiSolveSpec(benchmark, trial) }),
   verify: ({ benchmark, solve }) => ({ spec: asiVerifySpec(benchmark, solve.output) }),

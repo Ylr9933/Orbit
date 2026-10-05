@@ -23,11 +23,23 @@ Config (`orbit bench add -c KEY=VALUE`), all optional:
 import glob
 import json
 import os
+import statistics
 import sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 WORKSPACE = "/task"
 NO_REPORT = "No report found in workspace"
+PAPER = 50  # a total of about 50 matches the target paper
+
+# Orbit's `score` is the total in percent of 100; the rest are reported per trial by `score`.
+METRICS = [
+    {"name": "score", "label": "Score", "unit": "pts",
+     "description": "judge total (0-100); about 50 matches the paper", "reference": PAPER},
+    {"name": "matched", "label": "Matched paper", "unit": "%", "range": [0, 100],
+     "description": f"trials scoring at least {PAPER}"},
+    {"name": "judgeSpread", "label": "Judge spread", "unit": "pts", "higherIsBetter": False,
+     "description": "sample std of the judge attempts' totals (attempts > 1)"},
+]
 
 
 def config(req, key, default):
@@ -62,7 +74,7 @@ def tasks(req):
             "reason": "; ".join(problems) or None,
             "tags": {"domain": tid.rsplit("_", 1)[0]},
         })
-    return {"tasks": out}
+    return {"tasks": out, "metrics": METRICS}
 
 
 def instruction(req, task):
@@ -222,7 +234,7 @@ def score(req):
     if error == NO_REPORT:
         # The method produced no report: its result, scored zero.
         return {"score": 0, "maxScore": 100, "issues": ["no report in report/"],
-                "review": review(req, attempts)}
+                "metrics": {"matched": 0}, "review": review(req, attempts)}
     if error:
         return bad(f"judge: {error}")
     issues = []
@@ -232,10 +244,13 @@ def score(req):
                           f" (attempt {i})")
     invalid = bool(issues)
     totals = [a["total"] for a in attempts]
+    total = sum(totals) / len(totals)
+    metrics = {"matched": 100 if total >= PAPER else 0}
     if len(totals) > 1:
         issues.append("judge attempts: " + ", ".join(f"{t:.2f}" for t in totals))
-    return {"score": sum(totals) / len(totals), "maxScore": 100, "invalid": invalid,
-            "issues": issues, "review": review(req, attempts)}
+        metrics["judgeSpread"] = statistics.stdev(totals)
+    return {"score": total, "maxScore": 100, "invalid": invalid, "issues": issues,
+            "metrics": metrics, "review": review(req, attempts)}
 
 
 def main():

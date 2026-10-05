@@ -5,6 +5,7 @@ import {
   AdapterOp,
   AdapterRequest,
   type BenchTask,
+  type MetricSpecInput,
   type ORBIT_OWNED_SPEC_FIELDS,
   type RunSpecInput,
   type ScoreResult,
@@ -26,6 +27,8 @@ export type ScoreRequest = VerifyRequest & { verify: NonNullable<AdapterRequest[
 export type ScoreReply = Pick<ScoreResult, "score"> & Partial<ScoreResult>;
 
 export interface AdapterHandlers {
+  /** Metrics besides `score` (or a relabelled `score`), declared with the tasks. */
+  metrics?: MetricSpecInput[];
   tasks(req: AdapterRequest): BenchTask[];
   solve(req: TrialRequest): SpecReply;
   verify(req: VerifyRequest): SpecReply;
@@ -37,7 +40,7 @@ export function handle(h: AdapterHandlers, req: AdapterRequest): unknown {
   const need = (k: "trial" | "solve" | "verify") => {
     if (!req[k]) throw new Error(`${req.op} request without ${k}`);
   };
-  if (req.op === "tasks") return { tasks: h.tasks(req) };
+  if (req.op === "tasks") return { tasks: h.tasks(req), metrics: h.metrics ?? [] };
   need("trial");
   if (req.op === "solve") return h.solve(req as TrialRequest);
   need("solve");

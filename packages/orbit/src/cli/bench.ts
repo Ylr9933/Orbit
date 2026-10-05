@@ -10,7 +10,9 @@ import type {
   BenchTask,
   BenchUsage,
   MethodSummary,
+  MetricSpec,
 } from "../contracts/index.ts";
+import { fmtCi, fmtMetric, primaryMetric, resolveMetrics } from "../contracts/metrics.ts";
 import { kv, type Print } from "./auth.ts";
 import { confirmTyped } from "./confirm.ts";
 
@@ -28,7 +30,9 @@ function table(rows: string[][]): string {
     .join("\n");
 }
 
-const pct = (v: number | null | undefined) => (v == null ? "-" : `${v.toFixed(1)}%`);
+/** `72.5% ±3.2`: a metric's mean with the half width of its 95% CI. */
+const statText = (s: MethodSummary["metrics"][string] | undefined, m: MetricSpec) =>
+  s ? `${fmtMetric(s.mean, m)}${fmtCi(s, m) ? ` ${fmtCi(s, m)}` : ""}` : "-";
 
 /**
  * `name=agent[,auth=P][,model=M][,effort=E][,bundle=DIR]`; a bare `oracle` / `empty` names itself.
@@ -47,7 +51,7 @@ export function parseMethod(text: string): Record<string, string> {
   return m;
 }
 
-function summaryLine(s: MethodSummary): string {
+function summaryLine(s: MethodSummary, m: MetricSpec): string {
   const bad = [
     s.invalid ? `${s.invalid} invalid` : "",
     s.unknown ? `${s.unknown} unknown` : "",
@@ -55,7 +59,7 @@ function summaryLine(s: MethodSummary): string {
   ]
     .filter(Boolean)
     .join(", ");
-  return `${s.method} ${pct(s.meanPct)} (${s.valid}/${s.trials} valid${bad ? `; ${bad}` : ""})`;
+  return `${s.method} ${statText(s.metrics[m.name], m)} (${s.valid}/${s.trials} valid${bad ? `; ${bad}` : ""})`;
 }
 
 function formatBenchmarks(bs: Benchmark[]): string {
@@ -77,23 +81,36 @@ function formatTasks(ts: BenchTask[]): string {
 
 function formatJobs(jobs: Job[]): string {
   if (jobs.length === 0) return "no bench jobs";
-  const rows = [["ID", "STATE", "BENCHMARK", "NAME", "METHODS"]];
-  for (const j of jobs)
+  const rows = [["ID", "STATE", "BENCHMARK", "NAME", "METRIC", "METHODS"]];
+  for (const j of jobs) {
+    const m = primaryMetric(resolveMetrics(j.metrics));
     rows.push([
       j.id,
       j.state,
       j.spec.benchmark,
       j.spec.name ?? "-",
-      j.summary.map(summaryLine).join(" | "),
+      m.label,
+      j.summary.map((s) => summaryLine(s, m)).join(" | "),
     ]);
+  }
   return table(rows);
 }
 
 function formatJob(d: BenchJobDetail): string {
   const { job } = d;
+  const metrics = resolveMetrics(job.metrics);
   const lines = [
     `${job.id}  ${job.state}  ${job.spec.benchmark}${job.spec.name ? `  (${job.spec.name})` : ""}`,
-    ...d.summary.map((s) => `  ${summaryLine(s)}`),
+    "",
+    table([
+      ["METHOD", "VALID", ...metrics.map((m) => m.label.toUpperCase())],
+      ...d.summary.map((s) => [
+        s.method,
+        `${s.valid}/${s.trials}`,
+        ...metrics.map((m) => statText(s.metrics[m.name], m)),
+      ]),
+    ]),
+    "Means over tasks of the per-task mean of valid trials; ± is the 95% CI clustered by task.",
     "",
   ];
   const rows = [["TASK", "METHOD", "SEED", "STATE", "EVAL", "SCORE", "SOLVE", "VERIFY", "ISSUES"]];
@@ -164,17 +181,45 @@ export function suggestFragment(u: BenchUsage): { tasks: Record<string, object> 
   return { tasks };
 }
 
-function formatCompare(c: BenchCompare): string {
+/** One metric of a comparison: per-task cells, means over all and paired tasks, Δ to the first column. */
+export function formatCompare(c: BenchCompare, metric?: string): string {
+  const m = metric ? c.metrics.find((x) => x.name === metric) : primaryMetric(c.metrics);
+  if (!m)
+    throw new Error(
+      `metric ${metric} is not shared by these jobs (${c.metrics.map((x) => x.name).join(", ")})`,
+    );
+  const st = c.stats[m.name];
   const keys = c.columns.map((x) => x.key);
-  const rows = [["TASK", ...keys]];
+  const col = (k: string) => st?.columns[k];
+  const rows = [[`TASK · ${m.label}`, ...keys]];
   for (const r of c.rows)
     rows.push([
       r.task,
-      ...keys.map((k) => `${pct(r.cells[k])} ${r.counts[k] ? `(${r.counts[k]})` : ""}`.trim()),
+      ...keys.map((k) => {
+        const n = r.counts[k];
+        return n ? `${fmtMetric(r.values[m.name]?.[k], m)} (${n})` : "";
+      }),
     ]);
-  rows.push(["mean (all valid)", ...keys.map((k) => pct(c.means[k]?.all))]);
-  rows.push([`mean (paired, ${c.pairedTasks} tasks)`, ...keys.map((k) => pct(c.means[k]?.paired))]);
-  return table(rows);
+  rows.push(["mean (all tasks)", ...keys.map((k) => statText(col(k)?.all ?? undefined, m))]);
+  rows.push([
+    `mean (paired, ${st?.pairedTasks ?? 0} tasks)`,
+    ...keys.map((k) => statText(col(k)?.paired ?? undefined, m)),
+  ]);
+  rows.push([
+    `Δ vs ${keys[0] ?? "-"} (paired)`,
+    ...keys.map((k, i) => {
+      const d = col(k)?.diff;
+      if (i === 0 || !d) return i === 0 ? "" : "-";
+      const ci = fmtCi(d, m);
+      return `${fmtMetric(d.mean, m, true)}${ci ? ` ${ci}` : ""}`;
+    }),
+  ]);
+  const others = c.metrics.filter((x) => x.name !== m.name).map((x) => x.name);
+  return [
+    table(rows),
+    "± is the 95% CI clustered by task; Δ is the mean per-task difference on tasks both columns have.",
+    ...(others.length ? [`other metrics: ${others.join(", ")} (--metric <name>)`] : []),
+  ].join("\n");
 }
 
 export function registerBench(program: Command, client: () => Promise<OrbitClient>, print: Print) {
@@ -394,9 +439,10 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
   bench
     .command("compare <jobs...>")
     .description("per-task method comparison; paired means use tasks valid for every method")
+    .option("--metric <name>", "metric to compare (default: the primary one)")
     .option("--json", "print JSON")
-    .action(async (ids: string[], o: { json?: boolean }) => {
+    .action(async (ids: string[], o: { json?: boolean; metric?: string }) => {
       const c = await (await client()).benchCompare(ids);
-      print(o.json, c, () => formatCompare(c));
+      print(o.json, c, () => formatCompare(c, o.metric));
     });
 }

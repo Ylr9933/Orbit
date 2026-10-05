@@ -1,11 +1,12 @@
 // Benchmark jobs: each Trial (task × method × seed) is a solve Run and a separate verify Run on the
 // same lease model as every other run. BenchService advances trials when their runs change, and
 // recovers open trials from the store after a daemon restart.
-import { existsSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { AuthStore } from "../auth/index.ts";
 import type { OrbitPaths } from "../config/paths.ts";
 import {
+  type AdapterTasksResponse,
   type BenchCompare,
   type BenchJob,
   type BenchJobDetail,
@@ -18,6 +19,7 @@ import {
   isTerminal,
   type Method,
   type MethodSummary,
+  type MetricSpec,
   type Outcome,
   type Run,
   type RunDeletion,
@@ -25,6 +27,13 @@ import {
   type ScoreResult,
   type Trial,
 } from "../contracts/index.ts";
+import {
+  aggregate,
+  metricValue,
+  pairedDiff,
+  resolveMetrics,
+  taskMeans,
+} from "../contracts/metrics.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { runAgentFailure } from "../sessions/index.ts";
@@ -48,72 +57,107 @@ export interface BenchServiceDeps {
 /** Group of a job's runs, so the run list and notifications see a job as one group. */
 export const benchGroup = (jobId: string) => `bench-${jobId}`;
 
-const pct = (o: Outcome) =>
-  o.score === null || o.maxScore <= 0 ? null : (100 * o.score) / o.maxScore;
-const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+const isValid = (t: Trial) => t.outcome?.evaluation === "valid";
 
-export function summarize(methods: string[], trials: Trial[]): MethodSummary[] {
+/** Per method: trial counts and every metric over its valid trials (per task first, then tasks). */
+export function summarize(
+  methods: string[],
+  trials: Trial[],
+  metrics: MetricSpec[] = [],
+): MethodSummary[] {
+  const specs = resolveMetrics(metrics);
   return methods.map((method) => {
     const ts = trials.filter((t) => t.method === method);
     const done = ts.filter((t) => t.outcome);
     const count = (e: Outcome["evaluation"]) =>
       done.filter((t) => t.outcome?.evaluation === e).length;
-    const scores = done
-      .filter((t) => t.outcome?.evaluation === "valid")
-      .map((t) => pct(t.outcome as Outcome))
-      .filter((x): x is number => x !== null);
+    const valid = done.filter(isValid);
     return {
       method,
       trials: ts.length,
-      valid: count("valid"),
+      valid: valid.length,
       invalid: count("invalid"),
       unknown: count("unknown"),
       pending: ts.length - done.length,
-      meanPct: mean(scores),
+      metrics: Object.fromEntries(specs.map((m) => [m.name, aggregate(taskMeans(valid, m.name))])),
     };
   });
 }
 
+/** Metrics shared by all jobs, as the first job declares them; its primary stays primary. */
+function sharedMetrics(jobs: BenchJob[]): MetricSpec[] {
+  const [first, ...rest] = jobs.map((j) => resolveMetrics(j.metrics));
+  const shared = (first ?? []).filter((m) => rest.every((ms) => ms.some((x) => x.name === m.name)));
+  return resolveMetrics(shared);
+}
+
 /**
- * Columns `<job>/<method>`, one row per task; a cell is the mean percent over the valid trials.
- * `paired` means use only tasks valid in every column, so methods are compared on the same tasks.
+ * Columns `<job>/<method>`, one row per task. Per metric, a cell is the mean over the task's valid
+ * trials; column means are over all its tasks and over the tasks every column has (`paired`), and
+ * `diff` is the paired difference to the first column, so methods are compared on the same tasks.
  */
 export function compareJobs(jobs: { job: BenchJob; trials: Trial[] }[]): BenchCompare {
   // Jobs may share a name: fall back to the job id so every column key is unique.
   const keys = new Set<string>();
-  const columns = jobs.flatMap(({ job }) =>
+  const columns = jobs.flatMap(({ job, trials }) =>
     job.spec.methods.map((m) => {
       let key = jobs.length > 1 ? `${job.spec.name ?? job.id}/${m.name}` : m.name;
       if (keys.has(key)) key = `${job.id}/${m.name}`;
       keys.add(key);
-      return { key, jobId: job.id, method: m.name };
+      const own = trials.filter((t) => t.method === m.name);
+      return { key, jobId: job.id, method: m.name, trials: own, valid: own.filter(isValid) };
     }),
   );
+  const metrics = sharedMetrics(jobs.map((j) => j.job));
   const tasks = [...new Set(jobs.flatMap(({ trials }) => trials.map((t) => t.task)))].sort();
-  const rows = tasks.map((task) => {
-    const cells: Record<string, number | null> = {};
-    const counts: Record<string, string> = {};
-    for (const c of columns) {
-      const ts = (jobs.find((j) => j.job.id === c.jobId)?.trials ?? []).filter(
-        (t) => t.task === task && t.method === c.method,
-      );
-      const valid = ts
-        .filter((t) => t.outcome?.evaluation === "valid")
-        .map((t) => pct(t.outcome as Outcome))
-        .filter((x): x is number => x !== null);
-      cells[c.key] = mean(valid);
-      counts[c.key] = ts.length ? `${valid.length}/${ts.length}` : "";
-    }
-    return { task, cells, counts };
-  });
-  const paired = rows.filter((r) => columns.every((c) => r.cells[c.key] != null));
-  const means: BenchCompare["means"] = {};
-  for (const c of columns) {
-    const col = (rs: typeof rows) =>
-      mean(rs.map((r) => r.cells[c.key]).filter((x): x is number => x != null));
-    means[c.key] = { all: col(rows), paired: col(paired) };
+  const means = Object.fromEntries(
+    metrics.map((m) => [m.name, columns.map((c) => taskMeans(c.valid, m.name))]),
+  );
+  const rows = tasks.map((task) => ({
+    task,
+    counts: Object.fromEntries(
+      columns.map((c) => {
+        const ts = c.trials.filter((t) => t.task === task);
+        return [c.key, ts.length ? `${ts.filter(isValid).length}/${ts.length}` : ""];
+      }),
+    ),
+    values: Object.fromEntries(
+      metrics.map((m) => [
+        m.name,
+        Object.fromEntries(
+          columns.map((c, i) => [c.key, means[m.name]?.[i]?.get(task)?.mean ?? null]),
+        ),
+      ]),
+    ),
+  }));
+  const stats: BenchCompare["stats"] = {};
+  for (const m of metrics) {
+    const ms = means[m.name] ?? [];
+    const paired = new Set(tasks.filter((task) => ms.every((x) => x.has(task))));
+    const base = ms[0];
+    stats[m.name] = {
+      pairedTasks: paired.size,
+      columns: Object.fromEntries(
+        columns.map((c, i) => {
+          const x = ms[i] ?? new Map();
+          return [
+            c.key,
+            {
+              all: aggregate(x),
+              paired: aggregate(x, paired),
+              diff: i > 0 && base ? pairedDiff(base, x) : null,
+            },
+          ];
+        }),
+      ),
+    };
   }
-  return { columns, rows, means, pairedTasks: paired.length };
+  return {
+    columns: columns.map(({ key, jobId, method }) => ({ key, jobId, method })),
+    metrics,
+    rows,
+    stats,
+  };
 }
 
 /** Verification could not be set up: keep the solve's issues and add why. */
@@ -164,8 +208,8 @@ export class BenchService {
     return new AdapterClient(b, this.deps.self);
   }
 
-  /** Tasks as the adapter lists them; adapter failures are the user's to fix. */
-  async tasksOf(b: Benchmark): Promise<BenchTask[]> {
+  /** Tasks and metrics as the adapter lists them; adapter failures are the user's to fix. */
+  async infoOf(b: Benchmark): Promise<AdapterTasksResponse> {
     if (!existsSync(b.path)) throw new UserError(`benchmark path not found: ${b.path}`);
     try {
       return await this.adapter(b).tasks();
@@ -174,8 +218,8 @@ export class BenchService {
     }
   }
 
-  tasks(name: string): Promise<BenchTask[]> {
-    return this.tasksOf(this.benchmark(name));
+  async tasks(name: string): Promise<BenchTask[]> {
+    return (await this.infoOf(this.benchmark(name))).tasks;
   }
 
   // ---- jobs ----
@@ -185,7 +229,8 @@ export class BenchService {
     if (!parsed.success) throw new UserError(parsed.error.issues.map((i) => i.message).join("; "));
     const spec = parsed.data;
     const b = this.benchmark(spec.benchmark);
-    const all = await this.tasks(b.name);
+    const info = await this.infoOf(b);
+    const all = info.tasks;
     const names = new Set<string>();
     for (const m of spec.methods) {
       if (names.has(m.name)) throw new UserError(`duplicate method name: ${m.name}`);
@@ -215,6 +260,7 @@ export class BenchService {
       id: newId(),
       spec,
       resources,
+      metrics: resolveMetrics(info.metrics),
       state: "running",
       createdAt: nowIso(),
       endedAt: null,
@@ -270,6 +316,7 @@ export class BenchService {
       summary: summarize(
         job.spec.methods.map((m) => m.name),
         trials,
+        job.metrics,
       ),
     };
   }
@@ -281,6 +328,7 @@ export class BenchService {
         summary: summarize(
           job.spec.methods.map((m) => m.name),
           this.deps.store.trials(job.id),
+          job.metrics,
         ),
       })),
     };
@@ -571,6 +619,26 @@ export class BenchService {
       }
     }
     const agent = await runAgentFailure(runs.dirs(solve.id).agent).catch(() => null);
-    this.finish(t, classify(solve, verify, score, t.issues, agent));
+    const outcome = classify(solve, verify, score, t.issues, agent);
+    this.recordMetrics(job, verify, outcome);
+    this.finish(t, outcome);
+  }
+
+  /**
+   * The trial's metric values as one line of the verify run's metrics (`bench/<name>`), so the run
+   * page and run comparison show them like any other run's metrics.
+   */
+  private recordMetrics(job: BenchJob, verify: Run, o: Outcome): void {
+    const line: Record<string, number> = {};
+    for (const m of resolveMetrics(job.metrics)) {
+      const v = metricValue(o, m.name);
+      if (v !== null) line[`bench/${m.name}`] = v;
+    }
+    if (Object.keys(line).length === 0) return;
+    try {
+      appendFileSync(this.deps.runs.dirs(verify.id).metrics, `${JSON.stringify(line)}\n`);
+    } catch (e) {
+      this.deps.log?.(`bench trial metrics of ${verify.id}: ${(e as Error).message}`);
+    }
   }
 }

@@ -1,9 +1,8 @@
 # Orbit status
 
-- **Updated at:** 2026-10-04T21:40:00+08:00
+- **Updated at:** 2026-10-05T17:45:00+08:00
 - **Basis:** branch `refactor/ts-rewrite` (proposed state if merged into `main`)
-- **Stage:** R0–R2 validated on this machine; R3 bench smoke-tested with oracle/empty only; R4 multi-node
-  validated only as two daemons on one machine. Review fixes applied. Not merged; CI runs `pnpm verify`.
+- **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none.
 
 ## Available
@@ -14,18 +13,19 @@
 - Resource leases with a queue (with reasons); use outside Orbit is respected (busy GPUs, measured CPU
   use, `MemAvailable`). Docker executor: code snapshot, CDI GPU mapping checked against the lease,
   timeouts; logs, metrics and outputs collected before cleanup. Process backend for native runners, with a labelling, GPU-limiting docker shim.
-- Session linking; Web UI: runs (with bench job / trial rows), run detail, trial page (report, grader,
-  session), compare, resources, settings, bench. Typed-confirmation deletion of runs and jobs.
+- Session linking; Web UI: runs (with bench rows), run detail, trial page, compare, resources, settings, bench; typed-confirmation deletion.
 - Auth profiles (login / api-key / relay) for Codex and Claude Code; notifications (Feishu, DingTalk,
   WeCom, Slack, webhook).
 - Bench: solve + verify run per trial, valid-only means (OOM solves invalid); one JSON adapter protocol
   for built-ins and external executables (e.g. ResearchClawBench); per-task resources file; `bench usage`
-  suggestions; `orbit-bench` skill. Measured peak memory / CPU / GPU memory on every run.
+  suggestions; `orbit-bench` skill. Measured peak memory / CPU / GPU memory on every run. Adapter-declared
+  metrics (`score` built in): per-task then over-task means, task-clustered 95% CI, paired Δ in compare.
 - Multi-node: workers join by token; placement across nodes, code bundles by hash, named datasets,
   mirrored logs/metrics, proxied artifacts. Guide: [guides/multi-node.md](guides/multi-node.md).
 
 ## Main gaps
 - ASI / TB-Science not checked against originals. R4 not run on two real machines; no bundle cache eviction.
+- Bench metrics: tests and fake adapters only, no real multi-metric job seen in the Web yet.
 - Group notifications may fire between solve and verify. Agent-error invalidation not seen on a real failing run yet.
   Untried: some auth kinds, real IM webhooks. No MCP server. Resource requests = limits (no overcommit).
 
@@ -37,4 +37,4 @@
 
 [design.md](design.md) · [R0](tasks/20260929-ts-rewrite-r0.md) · [R1](tasks/20260930-r1-research-loop.md) · [R2](tasks/20260930-r2-auth-notify.md) ·
 [R3](tasks/20260930-r3-bench.md) · [R4](tasks/20260930-r4-multinode.md) · [review](tasks/20261001-code-review.md) · [cpu](tasks/20261002-cpu-external-load.md) ·
-[adapters](tasks/20261003-bench-adapter-protocol.md) · [resources](tasks/20261003-bench-resources-usage.md) · [validity](tasks/20261004-bench-validity-checks.md) · [web](tasks/20261004-web-jobs-trials-delete.md)
+[adapters](tasks/20261003-bench-adapter-protocol.md) · [resources](tasks/20261003-bench-resources-usage.md) · [validity](tasks/20261004-bench-validity-checks.md) · [web](tasks/20261004-web-jobs-trials-delete.md) · [metrics](tasks/20261005-bench-metrics.md)
