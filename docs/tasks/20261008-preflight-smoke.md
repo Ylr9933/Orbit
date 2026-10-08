@@ -26,7 +26,7 @@ one only if that succeeds.
 
 | Check | Revision | Result | Notes |
 | --- | --- | --- | --- |
-| Daemon test (check list, pinned/missing dataset, bad project, nothing created) | working tree | passed | `test/cluster.daemon.test.ts` (fake docker) |
+| Daemon test (check list, pinned/missing dataset, bad project, nothing created) | working tree | passed | `test/cluster.daemon.test.ts` (fake docker); the two daemons pin their probe, so the checks no longer depend on the runner's cores and memory |
 | `pnpm verify` | working tree | passed | |
 | Real CLI `--check` | this machine | passed | real Docker image lookup, real disk, 1 GPU placement; missing dataset → exit 1 |
 | Real `--smoke` (fail / pass / sweep) | this machine | passed | `python:3.12-slim`; failing smoke submitted nothing; passing one linked by `parentId` |

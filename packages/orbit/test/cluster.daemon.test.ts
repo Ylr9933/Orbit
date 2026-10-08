@@ -12,6 +12,7 @@ import { type OrbitClient, tryConnect } from "../src/client/index.ts";
 import { orbitPaths } from "../src/config/paths.ts";
 import { isTerminal, type Run } from "../src/contracts/index.ts";
 import { type StartedDaemon, startDaemon } from "../src/daemon/server.ts";
+import { probeNode } from "../src/resources/probe.ts";
 
 const home = mkdtempSync(join(tmpdir(), "orbit-cluster-daemon-"));
 const bin = join(home, "bin");
@@ -64,7 +65,19 @@ beforeAll(async () => {
   git("add", ".");
   git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init");
 
-  const opts = { port: 0, tickMs: 100, heartbeatMs: 200, syncMs: 200 };
+  // Resources are pinned so checks do not depend on the runner: a GitHub runner has 16 GB, less
+  // than the default request of a test run.
+  const opts = {
+    port: 0,
+    tickMs: 100,
+    heartbeatMs: 200,
+    syncMs: 200,
+    probe: async () => ({
+      ...(await probeNode(pPaths.data, { node: pPaths.node, gpus: pPaths.gpus })),
+      cpu: { count: 8, load1: 0, busy: 0 },
+      memory: { totalGB: 64, availableGB: 64 },
+    }),
+  };
   worker = await startDaemon(wPaths, opts);
   primary = await startDaemon(pPaths, opts);
   const c = await tryConnect(pPaths);
