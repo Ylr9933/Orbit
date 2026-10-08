@@ -399,7 +399,7 @@ Tailscale / 内网 / SSH 隧道；cluster token 等同于在该节点运行容�
 
 **代码**：工作区快照、仓库外的 Dockerfile 目录、agent bundle 按目录树内容哈希（路径、类型、可执行位、
 链接目标、文件 sha256）打包传输，worker 校验哈希后缓存在 `cache/bundles/<hash>`，已有则跳过上传。
-Dockerfile 在仓库内时用快照中的文件（gitignored 文件不在快照中）。
+Dockerfile 在仓库内时用快照中的文件（gitignored 文件不在快照中）；本机运行同样如此（以快照为构建上下文，镜像与提交时的代码一致；快照中没有该 Dockerfile 时才用原文件）。Run 记录镜像名（`image`）与启动时的镜像内容 ID（`imageId`，`sha256:…`）。
 
 **数据**：`orbit data add <name> <path>` 在每个节点各自登记同名数据集；mount `{dataset, target}` 在执行
 节点解析为本地路径。调度只选登记了全部数据集的节点，从不复制数据。

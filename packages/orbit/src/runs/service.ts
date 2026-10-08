@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -16,7 +17,7 @@ import {
 } from "node:fs";
 import { cp } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { AuthStore } from "../auth/index.ts";
 import { type OrbitPaths, type RunDirs, runDirs } from "../config/paths.ts";
@@ -339,6 +340,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       cleanup: "pending",
       remote: false,
       origin: null,
+      imageId: null,
       note: "",
       folder: folder.data,
       usage: null,
@@ -722,6 +724,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     run.reason = queuedThere ? `queued on ${run.node}: ${remote.reason ?? ""}` : remote.reason;
     run.exitCode = remote.exitCode;
     run.image = remote.image ?? run.image;
+    run.imageId = remote.imageId ?? run.imageId;
     run.containerId = remote.containerId;
     run.startedAt = remote.startedAt;
     run.endedAt = remote.endedAt;
@@ -815,6 +818,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       cleanup: "pending",
       remote: false,
       origin: input.origin,
+      imageId: null,
       note: "",
       folder: "",
       usage: null,
@@ -837,8 +841,8 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     if (run.spec.backend === "process") return this.launchProcess(run, dirs, ctl);
     try {
       const image = await this.ensureImage(run, dirs);
+      const imageId = await docker.imageId(image);
       run = this.mustGet(id);
-      run.image = image;
       if (ctl.cancel)
         return void (await this.finalize(run, "cancelled", null, "cancelled before start"));
 
@@ -862,6 +866,8 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
         .startContainer(spec)
         .finally(() => rmSync(envFile, { force: true }));
       run = this.mustGet(id);
+      run.image = image;
+      run.imageId = imageId;
       run.containerId = containerId;
       run.state = "running";
       run.startedAt = nowIso();
@@ -1149,7 +1155,13 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       if (code !== 0) throw new Error(`docker pull ${image} failed with exit code ${code}`);
       return image;
     }
-    const df = run.spec.dockerfile as string;
+    const df = this.buildFile(run, dirs);
+    if (df !== run.spec.dockerfile)
+      this.store.addEvent(
+        run.id,
+        "image",
+        `building from the code snapshot (${relative(dirs.workspace, df)})`,
+      );
     const dir = basename(dirname(df));
     const name = run.spec.project
       ? basename(run.spec.project)
@@ -1169,6 +1181,21 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     if (code !== 0) throw new Error(`docker build failed with exit code ${code}`);
     appendFileSync(dirs.log, "[orbit] build done\n");
     return tag;
+  }
+
+  /**
+   * The Dockerfile to build: a Dockerfile inside the snapshotted repository is taken from the snapshot,
+   * with the snapshot as its context, so the image matches the code the run was submitted with (as
+   * on a worker). Outside the repository, or not in the snapshot (gitignored), the original is used.
+   */
+  private buildFile(run: Run, dirs: RunDirs): string {
+    const df = run.spec.dockerfile as string;
+    if (!run.code) return df;
+    // The repository root is a real path; the Dockerfile may have been given through a symlink.
+    const rel = relative(run.code.repo, realOr(df));
+    if (rel.startsWith("..") || isAbsolute(rel)) return df;
+    const inSnapshot = join(dirs.workspace, rel);
+    return existsSync(inSnapshot) ? inSnapshot : df;
   }
 
   /** A Dockerfile inside a received bundle: the bundle hash already names its whole context. */
@@ -1524,6 +1551,14 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
 }
 
 const containerName = (runId: string) => `orbit-${runId}`;
+
+const realOr = (p: string) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+};
 
 function which(cmd: string): string | null {
   for (const d of (process.env.PATH ?? "").split(delimiter)) {

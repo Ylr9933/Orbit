@@ -255,7 +255,12 @@ function RunView({ run }: { run: Run }) {
             <IconChip size={12} />
             {res.gpus ? <b>{res.gpus}× GPU</b> : "no GPU"} · {res.cpus} CPU · {res.memGB} GB
           </span>
-          <span className="chip mono" title={run.image ?? run.spec.image ?? run.spec.dockerfile}>
+          <span
+            className="chip mono"
+            title={[run.image ?? run.spec.image ?? run.spec.dockerfile, run.imageId]
+              .filter(Boolean)
+              .join("\n")}
+          >
             <IconBox size={12} />
             {(run.image ?? run.spec.image ?? run.spec.dockerfile ?? "").replace(
               /^orbit-local\//,

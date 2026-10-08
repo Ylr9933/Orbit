@@ -63,7 +63,7 @@ export function formatRun(r: Run, summary?: Record<string, number>): string {
     `${r.id}  ${r.state}${r.reason ? ` (${r.reason})` : ""}`,
     `  name     ${r.spec.name ?? `${runDisplayName(r.spec)} (from the command)`}   group ${r.spec.group ?? "-"}   folder ${r.folder || "-"}`,
     `  command  ${r.spec.command.join(" ")}`,
-    `  image    ${r.image ?? r.spec.dockerfile ?? "-"}`,
+    `  image    ${r.image ?? r.spec.dockerfile ?? "-"}${r.imageId ? `  (${r.imageId.slice(0, 19)})` : ""}`,
     `  request  ${r.spec.resources.gpus} GPU, ${r.spec.resources.cpus} CPU, ${r.spec.resources.memGB} GB`,
     `  node     ${r.node}${r.remote ? " (remote; outputs stay there)" : ""}${r.origin ? ` (from ${r.origin})` : ""}`,
   ];

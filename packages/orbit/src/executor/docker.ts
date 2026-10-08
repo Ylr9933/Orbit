@@ -160,7 +160,13 @@ function contextListing(root: string, limit = 50_000): string[] {
 }
 
 export async function imageExists(image: string): Promise<boolean> {
-  return (await docker(["image", "inspect", "--format", "{{.Id}}", image])).code === 0;
+  return (await imageId(image)) !== null;
+}
+
+/** Content id (`sha256:…`) of a local image, or null when it is not present. */
+export async function imageId(image: string): Promise<string | null> {
+  const r = await docker(["image", "inspect", "--format", "{{.Id}}", image]);
+  return r.code === 0 ? r.stdout.trim() || null : null;
 }
 
 /** The image's configured `PATH`, or null when it sets none. */

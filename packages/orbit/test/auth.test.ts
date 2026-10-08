@@ -212,6 +212,7 @@ function run(id: string, state: Run["state"], group?: string): Run {
     cleanup: "done",
     remote: false,
     origin: null,
+    imageId: null,
     note: "",
     folder: "",
     usage: null,

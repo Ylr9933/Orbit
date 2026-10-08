@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { OrbitClient } from "../src/client/index.ts";
 import { orbitPaths } from "../src/config/paths.ts";
 import { type StartedDaemon, startDaemon } from "../src/daemon/server.ts";
+import { probeNode } from "../src/resources/probe.ts";
 
 const enabled = process.env.ORBIT_E2E === "1";
 const gpus = process.env.ORBIT_E2E_GPUS === "1" ? 1 : 0;
@@ -31,11 +32,21 @@ describe.runIf(enabled)("docker end-to-end", () => {
       ].join("\n"),
     );
     const git = (...a: string[]) => execFileSync("git", ["-C", proj, ...a], { stdio: "pipe" });
+    writeFileSync(join(proj, "Dockerfile"), "FROM python:3.12-slim\nRUN echo v1 > /built\n");
     git("init", "-q");
     git("add", ".");
     git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init");
     writeFileSync(join(proj, "untracked.txt"), "x");
-    daemon = await startDaemon(orbitPaths({ ORBIT_HOME: home }), { port: 0, tickMs: 200 });
+    const paths = orbitPaths({ ORBIT_HOME: home });
+    // Four CPUs to lease, so a run can be held in the queue by another one.
+    daemon = await startDaemon(paths, {
+      port: 0,
+      tickMs: 200,
+      probe: async () => ({
+        ...(await probeNode(paths.data, { node: paths.node })),
+        cpu: { count: 4, load1: 0, busy: 0 },
+      }),
+    });
     client = new OrbitClient({ url: daemon.url, token: daemon.token, pid: process.pid });
   });
   afterAll(async () => {
@@ -74,6 +85,33 @@ describe.runIf(enabled)("docker end-to-end", () => {
     expect(r).toMatchObject({ state: "failed", exitCode: 3, cleanup: "done" });
     expect((await client.metrics(r.id)).series).toHaveLength(1);
   }, 120_000);
+
+  it("builds from the snapshot's Dockerfile and records the image id", async () => {
+    const blocker = await client.submit({
+      ...spec(0),
+      command: ["sleep", "300"],
+      resources: { cpus: 4, memGB: 1 },
+    });
+    const run = await client.submit({
+      ...spec(0),
+      image: undefined,
+      dockerfile: "Dockerfile",
+      command: ["cat", "/built"],
+    });
+    expect(run.state).toBe("queued");
+    // Edited after submission: the run must still build what was snapshotted.
+    writeFileSync(join(proj, "Dockerfile"), "FROM python:3.12-slim\nRUN echo v2 > /built\n");
+    await client.cancel(blocker.id);
+    const r = await finish(run.id);
+    writeFileSync(join(proj, "Dockerfile"), "FROM python:3.12-slim\nRUN echo v1 > /built\n");
+    expect(r.state, r.reason ?? "").toBe("succeeded");
+    expect(readFileSync(join(home, "runs", r.id, "log.txt"), "utf8")).toMatch(/^v1$/m);
+    expect(r.image).toMatch(/^orbit-local\/proj:/);
+    expect(r.imageId).toMatch(/^sha256:[0-9a-f]{64}$/);
+    const events = (await client.events(r.id)).map((e) => e.message);
+    expect(events.some((m) => m.includes("building from the code snapshot"))).toBe(true);
+    await finish(blocker.id);
+  }, 300_000);
 
   it("cancels a running container", async () => {
     const run = await client.submit({ ...spec(0), command: ["sleep", "300"] });

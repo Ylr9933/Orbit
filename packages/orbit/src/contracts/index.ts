@@ -335,7 +335,10 @@ export const Run = z.object({
   reason: z.string().nullable(),
   exitCode: z.number().int().nullable(),
   node: z.string(),
+  /** Image name or tag the run used (`spec.image`, or the tag built from its Dockerfile). */
   image: z.string().nullable(),
+  /** Content id (`sha256:…`) of that image when the run started, for reproducing it. */
+  imageId: z.string().nullable().default(null),
   containerId: z.string().nullable(),
   lease: Lease.nullable(),
   code: CodeSnapshot.nullable(),
