@@ -12,6 +12,9 @@ local Web UI.
 > (R3) and multi-node placement (R4) are implemented and still being tested.
 > See [docs/status.md](docs/status.md) and the design in [docs/design.md](docs/design.md).
 
+For a visual introduction, see the [HTML presentation (Chinese)](docs/ppt/README.md).
+Open `docs/ppt/index.html` in a browser to present offline.
+
 ## Features
 
 - **Isolated runs**: every run is a Docker container (or a host process for native benchmark
@@ -321,7 +324,7 @@ packages/orbit/   the `@zjunlp/orbit` package (CLI `orbit`, daemon, modules)
 packages/web/     the Web UI (React + Vite, served by the daemon)
 plugin/           the Orbit skill for Codex / Claude Code
 scripts/          repository checks (module boundaries)
-docs/             design.md, status.md, tasks/, guides/
+docs/             design.md, status.md, tasks/, guides/, ppt/
 ```
 
 Contributors and coding agents: read [AGENTS.md](AGENTS.md) first.

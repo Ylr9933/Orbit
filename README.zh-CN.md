@@ -10,6 +10,8 @@ Orbit 在隔离的 Docker 容器里、按 GPU / CPU / 内存租约运行它，�
 > 状态：0.1.0，开发中。单机使用（R0–R2）已验证；刷榜（R3）与多节点调度（R4）已实现，仍在测试。
 > 详见 [docs/status.md](docs/status.md) 与设计文档 [docs/design.md](docs/design.md)。
 
+[项目演示稿](docs/ppt/README.md)：在浏览器中打开 `docs/ppt/index.html` 即可离线演示。
+
 ## 功能
 
 - **隔离运行**：每个 Run 是一个 Docker 容器（原生 benchmark runner 可用宿主进程），代码快照放在
@@ -301,7 +303,7 @@ packages/orbit/   `@zjunlp/orbit` 包（CLI `orbit`、daemon、各模块）
 packages/web/     Web 界面（React + Vite，由 daemon 提供）
 plugin/           给 Codex / Claude Code 的 Orbit skill
 scripts/          仓库检查（模块边界）
-docs/             design.md、status.md、tasks/、guides/
+docs/             design.md、status.md、tasks/、guides/、ppt/
 ```
 
 贡献者与编程 Agent 请先阅读 [AGENTS.md](AGENTS.md)。
