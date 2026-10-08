@@ -311,3 +311,7 @@ docs/             design.md, status.md, tasks/, guides/
 ```
 
 Contributors and coding agents: read [AGENTS.md](AGENTS.md) first.
+
+## License
+
+[MIT](LICENSE) © 2026 ZJUNLP

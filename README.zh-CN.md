@@ -292,3 +292,7 @@ docs/             design.md、status.md、tasks/、guides/
 ```
 
 贡献者与编程 Agent 请先阅读 [AGENTS.md](AGENTS.md)。
+
+## 许可
+
+[MIT](LICENSE) © 2026 ZJUNLP
