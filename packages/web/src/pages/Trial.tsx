@@ -8,7 +8,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { IconAlert, IconFile, IconFlask } from "../components/icons.tsx";
 import { joinPath, Markdown } from "../components/Markdown.tsx";
 import { TopBar } from "../components/TopBar.tsx";
-import { Empty, Link, Loading, StateBadge, useNow } from "../components/ui.tsx";
+import { Empty, Link, Loading, StateBadge, toast, useNow } from "../components/ui.tsx";
 import {
   api,
   fileUrl,
@@ -17,6 +17,7 @@ import {
   type ReviewFile,
   type ReviewItem,
   type Run,
+  type Scoring,
   type Trial,
 } from "../lib/api.ts";
 import {
@@ -118,10 +119,35 @@ export function TrialPage({ jobId, trialId }: { jobId: string; trialId: string }
     );
   const o = trial.outcome;
   const method = job.spec.methods.find((m) => m.name === trial.method);
+  const rescore = async () => {
+    if (
+      !confirm(
+        "Score this trial again? A new verify run is started from the saved solve output; the Agent is not rerun and the current score is kept in the history.",
+      )
+    )
+      return;
+    try {
+      const r = await api.benchRescore(jobId, { trials: [trial.id] });
+      toast(r.trials.length ? "Rescoring" : (r.skipped[0]?.reason ?? "Not rescored"));
+      d.reload();
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  };
 
   return (
     <>
       <TopBar crumbs={crumbs}>
+        {job.state !== "running" && trial.state === "done" && (
+          <button
+            type="button"
+            className="btn sm"
+            onClick={rescore}
+            title="Verify and score again from the saved solve output"
+          >
+            Rescore
+          </button>
+        )}
         <Link className="btn sm" href={jobPath(jobId)}>
           <IconFlask size={13} /> Job
         </Link>
@@ -167,6 +193,7 @@ export function TrialPage({ jobId, trialId }: { jobId: string; trialId: string }
           <span className="faint">→</span>
           <PhaseCard label="Verify" run={verify} id={trial.verifyRunId} now={now} />
         </div>
+        {trial.history.length > 0 && <ScoringHistory history={trial.history} />}
       </div>
       <nav className="tabs">
         {tabs.map((t, i) => (
@@ -231,10 +258,47 @@ function TabBody(props: {
   return <Empty title="Unknown tab" />;
 }
 
+const evalClass = (e: string | undefined) =>
+  e === "valid" ? "good" : e === "invalid" ? "bad" : e === "unknown" ? "warn" : "";
+
 function EvalChip({ t }: { t: Trial }) {
   const e = t.outcome?.evaluation;
-  const cls = e === "valid" ? "good" : e === "invalid" ? "bad" : e === "unknown" ? "warn" : "";
-  return <span className={`chip ${cls}`}>{e ?? t.state}</span>;
+  return (
+    <span className={`chip ${evalClass(e)}`}>
+      {e ?? (t.history.length ? "rescoring" : t.state)}
+    </span>
+  );
+}
+
+/** Earlier scorings of the same solve run, newest first; each links to its verify run. */
+function ScoringHistory({ history }: { history: Scoring[] }) {
+  return (
+    <div className="scorings">
+      <span className="faint">Earlier scorings</span>
+      {[...history].reverse().map((h, i) => (
+        <span key={h.verifyRunId ?? String(i)} className="row" style={{ gap: 6 }}>
+          <span className={`chip ${evalClass(h.outcome.evaluation)}`}>{h.outcome.evaluation}</span>
+          <span className="num">
+            {fmtScore(h.outcome.score)}
+            <span className="faint"> / {fmtScore(h.outcome.maxScore)}</span>
+          </span>
+          {h.verifyRunId ? (
+            <Link className="chip link mono" href={runPath(h.verifyRunId)}>
+              verify
+            </Link>
+          ) : (
+            <span className="faint">no verify run</span>
+          )}
+          {h.endedAt && <span className="faint">{dateTime(h.endedAt)}</span>}
+          {h.outcome.issues.length > 0 && (
+            <span className="faint ellipsis" title={h.outcome.issues.join(" · ")}>
+              {h.outcome.issues.join(" · ")}
+            </span>
+          )}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function PhaseCard(props: { label: string; run: Run | undefined; id: string | null; now: number }) {

@@ -119,11 +119,14 @@ orbit bench run <benchmark> -t <task> -m oracle -m empty -m mine=codex,auth=<pro
 orbit bench show <job>                                   # per-method means, matrix, issues
 orbit bench compare <job> <job>...                       # all-valid and paired means
 orbit bench usage <job>...                               # measured peaks per task, suggestions
+orbit bench rescore <job> [-t <task>] [-m <method>]      # verify + score again, no Agent rerun
 ```
 
 Each trial is a solve run plus a separate verify run. Only `valid` trials count; read the issues of
 `invalid` ones (environment or scorer failures, unusable model) instead of treating them as zeros.
 Run `oracle` and `empty` first on a new benchmark or task set: oracle should score full, empty zero.
+After a scorer or grader fix, `orbit bench rescore` re-verifies the saved solve outputs; the earlier
+scores stay in each trial's history, the summary uses the latest.
 
 To add a benchmark Orbit does not know (write an adapter, a resources file) or to size its tasks
 from measured runs (`orbit bench usage`), use the `orbit-bench` skill.

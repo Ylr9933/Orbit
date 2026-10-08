@@ -301,6 +301,24 @@ export function BenchJobDetail({ id }: { id: string }) {
       toast((e as Error).message);
     }
   };
+  const rescore = async () => {
+    const n = trials.filter((t) => t.state === "done").length;
+    if (
+      !confirm(
+        `Score the ${n} finished trial(s) of this job again? Each gets a new verify run from its saved solve output; the Agent is not rerun and earlier scores are kept.`,
+      )
+    )
+      return;
+    try {
+      const r = await api.benchRescore(job.id);
+      toast(
+        `Rescoring ${r.trials.length} trial(s)${r.skipped.length ? `; ${r.skipped.length} skipped` : ""}`,
+      );
+      d.reload();
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  };
   const end = job.endedAt ? Date.parse(job.endedAt) : Date.now();
 
   return (
@@ -317,9 +335,19 @@ export function BenchJobDetail({ id }: { id: string }) {
             Cancel job
           </button>
         ) : (
-          <button type="button" className="btn sm danger" onClick={() => setDeleting(true)}>
-            Delete job
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn sm"
+              onClick={rescore}
+              title="Verify and score again from the saved solve outputs"
+            >
+              Rescore
+            </button>
+            <button type="button" className="btn sm danger" onClick={() => setDeleting(true)}>
+              Delete job
+            </button>
+          </>
         )}
       </TopBar>
       {deleting && (
@@ -578,13 +606,16 @@ function RunLinks({ t }: { t: Trial }) {
 
 function TrialCell({ t, seeds, metric }: { t: Trial; seeds: number; metric: MetricDef }) {
   const o = t.outcome;
-  const phase = t.state === "done" ? null : t.state;
+  const phase = t.state === "done" ? null : t.history.length ? "rescoring" : t.state;
   const title = [
     `${t.task} · ${t.method}${seeds > 1 ? ` #${t.seed}` : ""}`,
     phase ? `state: ${phase}` : `evaluation: ${o?.evaluation} · execution: ${o?.execution}`,
     o && o.score !== null ? `score: ${fmtScore(o.score)} / ${fmtScore(o.maxScore)}` : null,
     ...Object.entries(o?.metrics ?? {}).map(([k, v]) => `${k}: ${fmtScore(v)}`),
     ...(o?.issues ?? t.issues),
+    t.history.length
+      ? `rescored; earlier: ${t.history.map((h) => fmtScore(h.outcome.score)).join(", ")}`
+      : null,
     o?.cleanup === "failed" ? "cleanup failed" : null,
   ]
     .filter(Boolean)

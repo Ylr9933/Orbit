@@ -349,4 +349,54 @@ describe("bench jobs", () => {
     for (const id of ids) expect(existsSync(join(paths.runs, id))).toBe(false);
     await expect(client.benchJob(job.id)).rejects.toThrow(/not found/);
   });
+
+  it("rescores finished trials from the saved solve output and keeps the earlier scoring", async () => {
+    const job = await client.benchSubmit({
+      benchmark: "ext",
+      methods: [{ name: "oracle", agent: "oracle" }],
+    });
+    await expect(client.benchRescore(job.id, {})).rejects.toThrow(/is running/);
+    const settled = async (ok: (d: Awaited<ReturnType<typeof client.benchJob>>) => boolean) => {
+      let d = await client.benchJob(job.id);
+      for (let i = 0; i < 300 && !ok(d); i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        d = await client.benchJob(job.id);
+      }
+      return d;
+    };
+    const first = await settled((d) => d.job.state === "done");
+    const before = first.trials[0];
+    if (!before?.solveRunId || !before.verifyRunId) throw new Error("trial without runs");
+    expect(before.outcome?.score).toBe(7);
+
+    await expect(client.benchRescore(job.id, { tasks: ["nope"] })).rejects.toThrow(
+      /not in job .*: task nope/,
+    );
+    // A changed grader, as seen through the solve output it reads.
+    writeFileSync(join(paths.runs, before.solveRunId, "orbit", "output", "answer"), "5\n");
+    const r = await client.benchRescore(job.id, { methods: ["oracle"] });
+    expect(r).toEqual({ trials: [before.id], skipped: [] });
+    const d = await settled((x) => x.trials.every((t) => t.state === "done"));
+    const after = d.trials[0];
+    expect(d.job.state).toBe("done");
+    expect(after?.solveRunId).toBe(before.solveRunId);
+    expect(after?.verifyRunId).not.toBe(before.verifyRunId);
+    expect(after?.outcome).toMatchObject({ evaluation: "valid", score: 5 });
+    expect(after?.history).toEqual([
+      { verifyRunId: before.verifyRunId, outcome: before.outcome, endedAt: before.endedAt },
+    ]);
+    expect(d.summary[0]?.metrics.answer?.mean).toBe(5);
+
+    // The earlier verify run still belongs to the job and goes with it.
+    await expect(client.deleteRuns([before.verifyRunId])).rejects.toThrow(/delete the job instead/);
+    for (let i = 0; i < 50; i++) {
+      const runs = await client.list({ group: `bench-${job.id}` });
+      if (runs.every((x) => x.cleanup !== "pending")) break;
+      await new Promise((res) => setTimeout(res, 100));
+    }
+    const out = await client.benchDeleteJob(job.id);
+    expect(out.deleted.sort()).toEqual(
+      [before.solveRunId, before.verifyRunId, after?.verifyRunId as string].sort(),
+    );
+  });
 });

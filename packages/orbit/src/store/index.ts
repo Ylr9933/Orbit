@@ -7,6 +7,7 @@ import {
   RunEvent,
   type RunState,
   Trial,
+  trialRunIds,
 } from "../contracts/index.ts";
 import { nowIso } from "../lib/ids.ts";
 
@@ -61,6 +62,14 @@ const MIGRATIONS = [
      done INTEGER NOT NULL DEFAULT 0
    );
    CREATE INDEX remote_sync_open ON remote_sync(done);`,
+  // Every run a trial has had, including verify runs replaced by a rescore.
+  `CREATE TABLE trial_runs (
+     run_id TEXT PRIMARY KEY,
+     trial_id TEXT NOT NULL
+   );
+   CREATE INDEX trial_runs_trial ON trial_runs(trial_id);
+   INSERT OR IGNORE INTO trial_runs SELECT solve_run, id FROM trials WHERE solve_run IS NOT NULL;
+   INSERT OR IGNORE INTO trial_runs SELECT verify_run, id FROM trials WHERE verify_run IS NOT NULL;`,
 ];
 
 /** Mirroring progress of a run placed on another node (primary only). */
@@ -358,19 +367,30 @@ export class Store {
   /** Remove a job and its trials (its runs are removed through RunService). */
   deleteJob(id: string): void {
     this.tx(() => {
+      this.db
+        .prepare(
+          "DELETE FROM trial_runs WHERE trial_id IN (SELECT id FROM trials WHERE job_id = ?)",
+        )
+        .run(id);
       this.db.prepare("DELETE FROM trials WHERE job_id = ?").run(id);
       this.db.prepare("DELETE FROM bench_jobs WHERE id = ?").run(id);
     });
   }
 
   putTrial(t: Trial): void {
-    this.db
-      .prepare(
-        `INSERT INTO trials (id, job_id, state, solve_run, verify_run, doc) VALUES (?, ?, ?, ?, ?, ?)
+    this.tx(() => {
+      this.db
+        .prepare(
+          `INSERT INTO trials (id, job_id, state, solve_run, verify_run, doc) VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET state = excluded.state, solve_run = excluded.solve_run,
            verify_run = excluded.verify_run, doc = excluded.doc`,
-      )
-      .run(t.id, t.jobId, t.state, t.solveRunId, t.verifyRunId, JSON.stringify(t));
+        )
+        .run(t.id, t.jobId, t.state, t.solveRunId, t.verifyRunId, JSON.stringify(t));
+      const link = this.db.prepare(
+        "INSERT OR IGNORE INTO trial_runs (run_id, trial_id) VALUES (?, ?)",
+      );
+      for (const r of trialRunIds(t)) link.run(r, t.id);
+    });
   }
 
   getTrial(id: string): Trial | null {
@@ -387,11 +407,13 @@ export class Store {
     return rows.map((r) => Trial.parse(JSON.parse(r.doc)));
   }
 
-  /** The trial that owns a run as its solve or verify run. */
+  /** The trial that owns a run: its solve run, verify run or an earlier verify run. */
   trialByRun(runId: string): Trial | null {
     const row = this.db
-      .prepare("SELECT doc FROM trials WHERE solve_run = ? OR verify_run = ?")
-      .get(runId, runId) as { doc: string } | undefined;
+      .prepare(
+        "SELECT t.doc FROM trial_runs r JOIN trials t ON t.id = r.trial_id WHERE r.run_id = ?",
+      )
+      .get(runId) as { doc: string } | undefined;
     return row ? Trial.parse(JSON.parse(row.doc)) : null;
   }
 

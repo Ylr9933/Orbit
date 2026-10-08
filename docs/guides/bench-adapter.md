@@ -62,6 +62,8 @@ Run 描述就是 `orbit run` 的 RunSpec 字段（`image` 或 `dockerfile`、`re
 
 - `trial.staging` 是 trial 私有目录，放要挂进 Run 的副本或可写工作区；trial 结束时删除，需要留下的文件用 `collect`
   采集到 solve 输出（`output/collected/<容器路径>`）。挂载点在宿主目录内的，先建好目录，避免 Docker 以 root 创建。
+- `verify` 可能对同一个 solve 再调用一次（`orbit bench rescore`，例如修好评分脚本后）：只依赖 `solve.output`
+  与 checkout，staging 里需要的东西每次重新准备，不要假设 solve 时写入的 staging 还在。
 - benchmark checkout 只读：不要在里面写结果；Python 设 `PYTHONDONTWRITEBYTECODE=1`。
 - 分数可信才算 `invalid: false`：评审 / scorer 内部出错、模型不可用导致的 0 分要标 `invalid` 并写 issue；
   "方法没有产出"是方法的结果，应是有效的 0 分。取消、超时、未启动由 Orbit 判定，不用处理。

@@ -9,6 +9,8 @@ import type {
   BenchJobDetail,
   BenchJobList,
   Benchmark,
+  BenchRescoreInput,
+  BenchRescoreResult,
   BenchTask,
   DoctorReport,
   FolderMoveResult,
@@ -53,6 +55,7 @@ export type {
   RunEvent,
   RunSessions,
   RunState,
+  Scoring,
   SessionMessage,
   SessionTranscript,
   Trial,
@@ -123,6 +126,11 @@ export const api = {
   benchJobs: () => req<BenchJobList>("/bench/jobs").then((r) => r.jobs),
   benchJob: (id: string) => req<BenchJobDetail>(`/bench/jobs/${enc(id)}`),
   benchCancel: (id: string) => req<BenchJob>(`/bench/jobs/${enc(id)}/cancel`, { method: "POST" }),
+  benchRescore: (id: string, body: BenchRescoreInput = {}) =>
+    req<BenchRescoreResult>(`/bench/jobs/${enc(id)}/rescore`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   benchDeleteJob: (id: string) => req<RunDeletion>(`/bench/jobs/${enc(id)}`, { method: "DELETE" }),
   benchCompare: (ids: string[]) =>
     req<BenchCompare>(`/bench/compare?jobs=${ids.map(enc).join(",")}`),

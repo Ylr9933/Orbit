@@ -715,6 +715,7 @@ describe("aggregation", () => {
           review: null,
         }
       : null,
+    history: [],
     createdAt: "t",
     endedAt: null,
   });

@@ -15,6 +15,8 @@ import {
   Benchmark,
   type BenchmarkInput,
   BenchmarkList,
+  type BenchRescoreInput,
+  BenchRescoreResult,
   BenchTaskList,
   BenchUsage,
   CodeDiff,
@@ -174,6 +176,8 @@ export class OrbitClient {
       body: spec,
       timeoutMs: 600_000,
     });
+  benchRescore = (id: string, body: BenchRescoreInput) =>
+    this.call(BenchRescoreResult, `/bench/jobs/${enc(id)}/rescore`, { method: "POST", body });
   benchUsage = (ids: string[]) =>
     this.call(BenchUsage, `/bench/usage?jobs=${ids.map(enc).join(",")}`);
   benchDeleteJob = (id: string) =>

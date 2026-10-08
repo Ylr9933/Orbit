@@ -2,15 +2,16 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import type { OrbitClient } from "../client/index.ts";
-import type {
-  BenchCompare,
-  BenchJobDetail,
-  BenchJobList,
-  Benchmark,
-  BenchTask,
-  BenchUsage,
-  MethodSummary,
-  MetricSpec,
+import {
+  type BenchCompare,
+  type BenchJobDetail,
+  type BenchJobList,
+  type Benchmark,
+  type BenchTask,
+  type BenchUsage,
+  type MethodSummary,
+  type MetricSpec,
+  trialRunIds,
 } from "../contracts/index.ts";
 import { fmtCi, fmtMetric, primaryMetric, resolveMetrics } from "../contracts/metrics.ts";
 import { kv, type Print } from "./auth.ts";
@@ -122,7 +123,10 @@ function formatJob(d: BenchJobDetail): string {
       String(t.seed),
       t.state,
       o?.evaluation ?? "-",
-      o?.score == null ? "-" : `${o.score}/${o.maxScore}`,
+      (o?.score == null ? "-" : `${o.score}/${o.maxScore}`) +
+        (t.history.length
+          ? ` (was ${t.history.map((h) => h.outcome.score ?? h.outcome.evaluation).join(", ")})`
+          : ""),
       t.solveRunId ?? "-",
       t.verifyRunId ?? "-",
       (o?.issues ?? t.issues).join("; "),
@@ -404,6 +408,39 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
     });
 
   bench
+    .command("rescore <job>")
+    .description(
+      "score finished trials again from their saved solve output (no Agent rerun); earlier scores are kept",
+    )
+    .option("-t, --task <id>", "only this task (repeatable)", (v, p: string[]) => [...p, v], [])
+    .option(
+      "-m, --method <name>",
+      "only this method (repeatable)",
+      (v, p: string[]) => [...p, v],
+      [],
+    )
+    .option("--trial <id>", "only this trial (repeatable)", (v, p: string[]) => [...p, v], [])
+    .option("--json", "print JSON")
+    .action(
+      async (
+        id: string,
+        o: { task: string[]; method: string[]; trial: string[]; json?: boolean },
+      ) => {
+        const r = await (await client()).benchRescore(id, {
+          tasks: o.task,
+          methods: o.method,
+          trials: o.trial,
+        });
+        print(o.json, r, () =>
+          [
+            `rescoring ${r.trials.length} trial(s) of ${id}; follow with: orbit bench show ${id}`,
+            ...r.skipped.map((x) => `  skipped ${x.trial}: ${x.reason}`),
+          ].join("\n"),
+        );
+      },
+    );
+
+  bench
     .command("rm-job <job>")
     .description(
       "permanently delete a finished or cancelled job with all its trials and runs; asks you to type the job id",
@@ -413,7 +450,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
     .action(async (id: string, o: { yes?: boolean; json?: boolean }) => {
       const c = await client();
       const d = await c.benchJob(id);
-      const runs = d.trials.flatMap((t) => [t.solveRunId, t.verifyRunId]).filter(Boolean).length;
+      const runs = d.trials.flatMap(trialRunIds).length;
       await confirmTyped(
         `delete bench job ${id}${d.job.spec.name ? ` (${d.job.spec.name})` : ""}: ${d.trials.length} trial(s), ${runs} run(s) and their outputs`,
         id,

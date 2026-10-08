@@ -780,6 +780,14 @@ export const Outcome = z.object({
 });
 export type Outcome = z.infer<typeof Outcome>;
 
+/** A scoring of a trial that a rescore replaced: its verify run and outcome. */
+export const Scoring = z.object({
+  verifyRunId: z.string().nullable(),
+  outcome: Outcome,
+  endedAt: z.string().nullable(),
+});
+export type Scoring = z.infer<typeof Scoring>;
+
 export const TrialState = z.enum(["pending", "solving", "verifying", "done"]);
 export const Trial = z.object({
   id: z.string(),
@@ -793,10 +801,37 @@ export const Trial = z.object({
   /** Notes gathered before the outcome (e.g. artifacts the solve run did not produce). */
   issues: z.array(z.string()).default([]),
   outcome: Outcome.nullable(),
+  /**
+   * Earlier scorings, oldest first. A rescore moves the current verify run and outcome here and
+   * verifies the same solve run again; `verifyRunId` / `outcome` are always the latest.
+   */
+  history: z.array(Scoring).default([]),
   createdAt: z.string(),
   endedAt: z.string().nullable(),
 });
 export type Trial = z.infer<typeof Trial>;
+
+/** Every run a trial has had: its solve run, its verify run and earlier verify runs. */
+export function trialRunIds(t: Trial): string[] {
+  return [t.solveRunId, t.verifyRunId, ...t.history.map((h) => h.verifyRunId)].filter(
+    (r): r is string => Boolean(r),
+  );
+}
+
+/** Which finished trials of a job to score again (all of them when nothing is given). */
+export const BenchRescore = z.object({
+  tasks: z.array(z.string()).default([]),
+  methods: z.array(z.string()).default([]),
+  trials: z.array(z.string()).default([]),
+});
+export type BenchRescoreInput = z.input<typeof BenchRescore>;
+export const BenchRescoreResult = z.object({
+  /** Trials now being verified again. */
+  trials: z.array(z.string()),
+  /** Matching trials left as they are, with why. */
+  skipped: z.array(z.object({ trial: z.string(), reason: z.string() })),
+});
+export type BenchRescoreResult = z.infer<typeof BenchRescoreResult>;
 
 /** Solve resources of one task; `evidence` / `confidence` / `note` are for people and ignored. */
 export const TaskResources = z.strictObject({

@@ -199,7 +199,7 @@ Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行�
 - **Runs**：按 group 折叠、状态筛选、全文过滤（名称/参数/标签/分支），多选对比，键盘导航。三类条目：单个 Run、
   `-g` 实验组、bench job（显示为 job 行：benchmark、trial 进度、各方法均分；展开为 trial 行，每行 solve → verify
   状态、分数、有效性，点击进入 trial 页）。顶部按 All / Experiments / Benchmarks 筛选。
-- **Trial**（`/bench/<job>/trials/<trial>`）：结果与 issues、solve → verify 时间线与实测用量；标签由 adapter 的
+- **Trial**（`/bench/<job>/trials/<trial>`）：结果与 issues、solve → verify 时间线与实测用量、重新评分前的历次结果；标签由 adapter 的
   `review` 决定（每个声明的文件一个标签，按 kind 渲染；Grader 来自 `items`；Details 来自 `details` 与未知字段），
   之后固定有 Agent session 与 Outputs（两个 Run 的全部文件）。Markdown 只生成 React 元素，不渲染 HTML、不加载外部图片，
   图片按相对路径取同一 Run 的文件。bench 的 solve / verify Run 页面包屑为 `Bench / job / trial / phase`，带 “← Trial”。
@@ -289,6 +289,12 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
   `BenchService` 监听 Run 变化推进，daemon 重启后从库中恢复未完成的 trial。solve 与 verify 都是普通 Run
   （同一租约、队列、记录、Web 详情），`group = bench-<job>`，tags `{bench, job, trial, phase}`；verify Run
   `priority = 1`，排队时先于新的 solve 调度。
+- **重新评分**（`POST /bench/jobs/:id/rescore`，`orbit bench rescore <job> [-t task] [-m method] [--trial id]`，
+  Web job 页与 trial 页的 Rescore）：不重跑 Agent。只对已结束 job 中已完成、solve 输出仍在本机且需要 verify 的
+  trial；当前 `{verifyRunId, outcome, endedAt}` 移入 `Trial.history`，trial 回到 `solving`（solve Run 不变），
+  由同一状态机向适配器重新要 verify 描述（staging 由适配器按 solve 输出重建）、提交新的 verify Run 并评分；
+  当前结果始终是最新一次，汇总只看当前。job 状态不变，job 的取消不影响重新评分。旧 verify Run 仍属于该 trial
+  （`trial_runs` 表记录 trial 的全部 Run），随 job 移动、删除。
 - **Outcome 判定**（`bench/classify.ts`），执行、评测、清理分开：
 
 | 情况 | evaluation |
@@ -376,8 +382,8 @@ cwd 默认为代码快照（有快照时），否则 `project`，再否则 Run �
 daemon 重启后按 pid + 启动时间重新接管进程。运行中的 process Run 日志在 API 中不返回（写完后统一脱敏）。
 
 **接口**：API `GET/POST /benchmarks`、`DELETE /benchmarks/:name`、`GET /benchmarks/:name/tasks`、
-`GET/POST /bench/jobs`、`GET /bench/jobs/:id`、`POST /bench/jobs/:id/cancel`、`GET /bench/compare?jobs=a,b`；
-CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|compare [--metric]|usage`（`add --adapter <name|path> -c KEY=VALUE
+`GET/POST /bench/jobs`、`GET /bench/jobs/:id`、`POST /bench/jobs/:id/{cancel,rescore}`、`GET /bench/compare?jobs=a,b`；
+CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|rescore|compare [--metric]|usage`（`add --adapter <name|path> -c KEY=VALUE
 --resources <file>`）；Web `/bench`（job 列表与登记的 benchmark）、
 `/bench/<job>`（方法均分、有效性分布、任务 × 方法分数矩阵、问题列表与 solve/verify Run 链接）、
 `/bench/compare?jobs=`（逐任务对比、全部与配对均值 ± 95% CI、相对第一列的配对差、带参考线的排名条；`?metric=` 切换指标）。接入新 benchmark 见

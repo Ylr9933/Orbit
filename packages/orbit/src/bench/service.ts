@@ -15,6 +15,9 @@ import {
   BenchJobSpec,
   type BenchJobSpecInput,
   type Benchmark,
+  BenchRescore,
+  type BenchRescoreInput,
+  type BenchRescoreResult,
   type BenchTask,
   type BenchUsage,
   Folder,
@@ -30,6 +33,7 @@ import {
   type RunSpecInput,
   type ScoreResult,
   type Trial,
+  trialRunIds,
 } from "../contracts/index.ts";
 import {
   aggregate,
@@ -290,6 +294,7 @@ export class BenchService {
             verifyRunId: null,
             issues: [],
             outcome: null,
+            history: [],
             createdAt: job.createdAt,
             endedAt: null,
           };
@@ -365,12 +370,7 @@ export class BenchService {
     for (const job of jobs.values()) {
       job.folder = folder;
       this.deps.store.putJob(job);
-      runs.push(
-        ...this.deps.store
-          .trials(job.id)
-          .flatMap((t) => [t.solveRunId, t.verifyRunId])
-          .filter((r): r is string => Boolean(r)),
-      );
+      runs.push(...this.deps.store.trials(job.id).flatMap(trialRunIds));
     }
     this.deps.runs.setFolder(runs, folder);
     return { runs, jobs: [...jobs.keys()] };
@@ -492,13 +492,72 @@ export class BenchService {
     const trials = this.deps.store.trials(id);
     if (trials.some((t) => this.busy.has(t.id)))
       throw new UserError(`bench job ${id} is still being updated; try again shortly`);
-    const ids = trials
-      .flatMap((t) => [t.solveRunId, t.verifyRunId])
-      .filter((r): r is string => Boolean(r && this.deps.runs.get(r)));
+    const ids = trials.flatMap(trialRunIds).filter((r) => this.deps.runs.get(r));
     const out = await this.deps.runs.delete(ids, { forJob: true });
     this.deps.store.deleteJob(id);
     rmSync(join(this.deps.paths.bench, id), { recursive: true, force: true });
     return out;
+  }
+
+  /**
+   * Score finished trials again without rerunning the Agent: each keeps its solve run, gets a new
+   * verify run (the adapter builds it from the saved solve output) and a new outcome; the previous
+   * verify run and outcome move to `history`. Only for jobs that are no longer running.
+   */
+  rescore(id: string, input: BenchRescoreInput = {}): BenchRescoreResult {
+    const job = this.deps.store.getJob(id);
+    if (!job) throw new NotFoundError(`bench job not found: ${id}`);
+    if (job.state === "running")
+      throw new UserError(`bench job ${id} is running; rescore it once it has ended`);
+    const f = BenchRescore.parse(input);
+    const all = this.deps.store.trials(id);
+    const unknown = [
+      ...f.tasks.filter((x) => !all.some((t) => t.task === x)).map((x) => `task ${x}`),
+      ...f.methods.filter((x) => !all.some((t) => t.method === x)).map((x) => `method ${x}`),
+      ...f.trials.filter((x) => !all.some((t) => t.id === x)).map((x) => `trial ${x}`),
+    ];
+    if (unknown.length) throw new UserError(`not in job ${id}: ${unknown.join(", ")}`);
+    const picked = all.filter(
+      (t) =>
+        (!f.tasks.length || f.tasks.includes(t.task)) &&
+        (!f.methods.length || f.methods.includes(t.method)) &&
+        (!f.trials.length || f.trials.includes(t.id)),
+    );
+    const out: BenchRescoreResult = { trials: [], skipped: [] };
+    for (const t of picked) {
+      const why = this.rescoreBlocker(t);
+      if (why) {
+        out.skipped.push({ trial: t.id, reason: why });
+        continue;
+      }
+      t.history = [
+        ...t.history,
+        { verifyRunId: t.verifyRunId, outcome: t.outcome as Outcome, endedAt: t.endedAt },
+      ];
+      t.verifyRunId = null;
+      t.outcome = null;
+      t.endedAt = null;
+      t.state = "solving";
+      this.deps.store.putTrial(t);
+      out.trials.push(t.id);
+    }
+    if (out.trials.length === 0)
+      throw new UserError(
+        `nothing to rescore${out.skipped.length ? `: ${out.skipped.map((x) => `${x.trial} ${x.reason}`).join("; ")}` : ""}`,
+      );
+    this.advanceAll(out.trials);
+    return out;
+  }
+
+  /** Why a trial cannot be scored again, or null. */
+  private rescoreBlocker(t: Trial): string | null {
+    if (t.state !== "done" || !t.outcome || this.busy.has(t.id)) return "is not finished";
+    const solve = t.solveRunId ? this.deps.runs.get(t.solveRunId) : null;
+    if (!solve) return "has no solve run";
+    if (solve.remote) return `solve output stays on ${solve.node}`;
+    if (!solveVerdict(solve).verify) return `solve run ${solve.state}; nothing to verify`;
+    if (!existsSync(this.deps.runs.dirs(solve.id).output)) return "solve output is gone";
+    return null;
   }
 
   async cancel(id: string): Promise<BenchJob> {
@@ -609,10 +668,17 @@ export class BenchService {
     }
   }
 
+  /**
+   * Whether the job was cancelled under this trial. A rescore runs after the job has ended, so a
+   * trial being rescored is never affected by an earlier cancel.
+   */
+  private cancelled(jobId: string, t: Trial): boolean {
+    return t.history.length === 0 && this.deps.store.getJob(jobId)?.state === "cancelled";
+  }
+
   /** A job cancelled while a run was being submitted: cancel that run too. */
-  private async cancelIfJobCancelled(jobId: string, runId: string): Promise<void> {
-    if (this.deps.store.getJob(jobId)?.state === "cancelled")
-      await this.deps.runs.cancel(runId).catch(() => undefined);
+  private async cancelIfJobCancelled(jobId: string, t: Trial, runId: string): Promise<void> {
+    if (this.cancelled(jobId, t)) await this.deps.runs.cancel(runId).catch(() => undefined);
   }
 
   private skipped(t: Trial, evaluation: Outcome["evaluation"], issue: string): void {
@@ -669,7 +735,7 @@ export class BenchService {
         t.solveRunId = run.id;
         t.state = "solving";
         this.deps.store.putTrial(t);
-        await this.cancelIfJobCancelled(job.id, run.id);
+        await this.cancelIfJobCancelled(job.id, t, run.id);
       } catch (e) {
         return this.skipped(t, "invalid", `solve rejected: ${(e as Error).message}`);
       }
@@ -680,9 +746,9 @@ export class BenchService {
     if (!solve) return this.skipped(t, "unknown", "solve run missing");
 
     if (t.state === "solving") {
-      if (!isTerminal(solve.state)) return this.cancelIfJobCancelled(job.id, solve.id);
+      if (!isTerminal(solve.state)) return this.cancelIfJobCancelled(job.id, t, solve.id);
       const sv = solveVerdict(solve);
-      if (!sv.verify || job.state === "cancelled") {
+      if (!sv.verify || this.cancelled(job.id, t)) {
         const outcome = classify(solve, null, null, t.issues);
         if (sv.verify) {
           outcome.evaluation = "unknown";
@@ -695,7 +761,8 @@ export class BenchService {
         const { b, trial } = this.context(job, t);
         const reply = await this.adapter(b).verify(trial, this.ref(solve));
         spec = toRunSpec(reply.spec, trial.method, b, "verify");
-        t.issues = [...t.issues, ...reply.issues];
+        // A rescore asks again; the same solve output yields the same issues.
+        t.issues = [...new Set([...t.issues, ...reply.issues])];
       } catch (e) {
         return this.finish(t, failed(solve, t.issues, `verify spec: ${(e as Error).message}`));
       }
@@ -704,7 +771,7 @@ export class BenchService {
         t.verifyRunId = run.id;
         t.state = "verifying";
         this.deps.store.putTrial(t);
-        await this.cancelIfJobCancelled(job.id, run.id);
+        await this.cancelIfJobCancelled(job.id, t, run.id);
       } catch (e) {
         return this.finish(t, failed(solve, t.issues, `verify rejected: ${(e as Error).message}`));
       }
@@ -715,7 +782,7 @@ export class BenchService {
     const verify = t.verifyRunId ? runs.get(t.verifyRunId) : null;
     if (!verify)
       return this.finish(t, classify(solve, null, null, [...t.issues, "verify run missing"]));
-    if (!isTerminal(verify.state)) return this.cancelIfJobCancelled(job.id, verify.id);
+    if (!isTerminal(verify.state)) return this.cancelIfJobCancelled(job.id, t, verify.id);
     let score: ScoreResult | null = null;
     if (verify.startedAt && verify.state !== "cancelled" && verify.state !== "lost") {
       try {

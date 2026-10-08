@@ -1879,6 +1879,14 @@ a.score:hover {
 .trial-issues.neutral {
   color: var(--text-2);
 }
+/* Earlier scorings of a rescored trial, under the solve -> verify timeline. */
+.scorings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12.5px;
+}
 .trial-timeline {
   display: flex;
   align-items: center;
