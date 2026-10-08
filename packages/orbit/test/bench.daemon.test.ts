@@ -66,7 +66,9 @@ process.stdin.on("end", () => {
   const node = ${JSON.stringify(process.execPath)};
   if (req.op === "solve") {
     const v = req.trial.method.agent === "oracle" ? "7" : "0";
-    return say({ spec: { backend: "process", resources: { cpus: 1, memGB: 1 }, command: ["sh", "-c", "sleep 0.5; echo " + v + " > $ORBIT_OUTPUT/answer"] } });
+    const release = req.benchmark.config.usageReleaseFile ?? "";
+    const wait = release ? 'while [ ! -f "$ORBIT_TEST_USAGE_RELEASE" ]; do sleep 0.05; done; ' : "sleep 0.5; ";
+    return say({ spec: { backend: "process", resources: { cpus: 1, memGB: 1 }, env: { ORBIT_TEST_USAGE_RELEASE: release }, command: ["sh", "-c", wait + "echo " + v + " > $ORBIT_OUTPUT/answer"] } });
   }
   if (req.op === "verify")
     return say({ spec: { backend: "process", command: ["sh", "-c", "cp " + req.solve.output + "/answer $ORBIT_OUTPUT/score"] } });
@@ -301,12 +303,34 @@ describe("bench jobs", () => {
         tasks: { t1: { memGB: 4, evidence: "measured", confidence: "high" } },
       }),
     );
-    await client.benchmarkPut({ name: "res", adapter, path: home, resources: res });
+    const release = join(home, "usage-sampled");
+    await client.benchmarkPut({
+      name: "res",
+      adapter,
+      path: home,
+      resources: res,
+      config: { usageReleaseFile: release },
+    });
     const job = await client.benchSubmit({
       benchmark: "res",
       methods: [{ name: "oracle", agent: "oracle" }],
     });
     expect(job.resources).toEqual({ t1: { cpus: 2, memGB: 4, timeoutMin: 5 } });
+    // A fixed sleep can end before Docker discovery and the first real process sample on CI.
+    try {
+      await expect
+        .poll(
+          async () => {
+            const detail = await client.benchJob(job.id);
+            const id = detail.trials[0]?.solveRunId;
+            return id ? ((await client.get(id)).usage?.peakMemGB ?? 0) : 0;
+          },
+          { timeout: 15_000, interval: 100 },
+        )
+        .toBeGreaterThan(0);
+    } finally {
+      writeFileSync(release, "sampled");
+    }
     let d = await client.benchJob(job.id);
     for (let i = 0; i < 300 && d.job.state === "running"; i++) {
       await new Promise((r) => setTimeout(r, 100));
@@ -321,7 +345,7 @@ describe("bench jobs", () => {
     expect(verify.spec.resources.memGB).not.toBe(4);
     // Oracle runs say nothing about what a task needs: they are left out of the suggestions.
     expect((await client.benchUsage([job.id])).rows).toEqual([]);
-  });
+  }, 30_000);
 
   it("deletes finished runs and whole jobs, and refuses what is not finished or belongs to a job", async () => {
     const run = await client.submit({

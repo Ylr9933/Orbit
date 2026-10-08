@@ -11,6 +11,7 @@ User authorized merging into main and pushing both remotes; npm publication rema
 - Explicit dsh profile; reject reserved/skill-less built-in profiles. Copy local packages with `file:` so host dependencies resolve.
 - Match dsh/pi npm versions to the invoking CLI; keep registrations independent of the npx cache.
 - Installer regressions, package payload checks, bilingual docs and release guidance.
+- CI follow-up: hold the fake benchmark's real process until usage is sampled, replacing the timing assumption behind its intermittent assertion failure. No production behavior changed.
 
 ## Validation
 | Check | Revision | Result | Notes |
@@ -27,6 +28,8 @@ User authorized merging into main and pushing both remotes; npm publication rema
 | npm publish dry-run / archive contents | final tarball | passed | Public npmjs.org target, 45 expected files; no source tree or runtime artifacts |
 | Public npm install / registry publication | final code | not_run | Publication explicitly deferred; registry defaults covered by command fakes, real agent checks used local candidate artifacts |
 | Model inference / GPU experiments | final code | not_run | Plugin loading needs no inference; Docker/GPU prerequisites probed by doctor only |
+| Initial remote CI | `0db58ad` | failed | origin hit the existing benchmark usage timing race; xuehai passed verify and package smoke. Follow-up synchronizes the fixture with actual sampling. |
+| Usage timing regression + `pnpm verify` | `fix/bench-usage-test-sync` | passed | Real process sampling with the explicit fake benchmark; full suite still 168 passed / 4 gated Docker tests skipped |
 
 ## Next / open issues
 - Publish and check registry-based npx installation when authorized and npm authentication is ready.
