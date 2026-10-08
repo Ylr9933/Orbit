@@ -152,6 +152,7 @@ describe("bench jobs", () => {
     ).rejects.toThrow(/auth profile not found/);
   });
 
+  // Four solve/verify pairs need the full 30 s job wait on slower CI runners.
   it("runs oracle and empty as separate solve and verify runs and aggregates valid scores", async () => {
     const job = await client.benchSubmit({
       name: "smoke",
@@ -190,7 +191,7 @@ describe("bench jobs", () => {
     expect([cols?.oracle?.paired?.mean, cols?.empty?.paired?.mean]).toEqual([100, 0]);
     expect(cols?.empty?.diff).toMatchObject({ mean: -100, tasks: 2 });
     expect((await client.benchJobs()).map((j) => j.id)).toContain(job.id);
-  });
+  }, 45_000);
 
   it("runs an external adapter and refuses to register one that fails", async () => {
     const adapter = join(home, "adapter.cjs");
