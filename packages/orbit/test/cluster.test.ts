@@ -68,6 +68,15 @@ describe("bundles", () => {
     expect(existsSync(join(root, wrong))).toBe(false);
     await expect(receiveBundle(root, "../x", packBundle(src))).rejects.toThrow(/bad bundle/);
   });
+
+  it("keeps a bundle that is read only after tar has exited", async () => {
+    const src = tree("late");
+    const h = await treeHash(src);
+    const body = packBundle(src);
+    // A small tree is packed in milliseconds; Node discards a finished child's unread output.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await receiveBundle(join(tmp, "late-cache"), h, body)).toBe(join(tmp, "late-cache", h));
+  });
 });
 
 const gpu = (index: number, memGiB = 24) => ({

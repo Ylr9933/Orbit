@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, readlink, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 export const MAX_BUNDLE_BYTES = 2 * 1024 ** 3;
@@ -48,16 +48,23 @@ export async function treeHash(dir: string, maxBytes = MAX_BUNDLE_BYTES): Promis
   return createHash("sha256").update(lines.join("\n")).digest("hex");
 }
 
-/** A gzip tar stream of `dir`'s contents. */
+/**
+ * A gzip tar stream of `dir`'s contents. tar's output is piped at once into the returned stream: a
+ * child's stdout nobody reads yet is drained and discarded by Node when the child exits, which
+ * would lose small bundles read after a delay. It ends only once tar has exited successfully.
+ */
 export function packBundle(dir: string): Readable {
   const child = spawn("tar", ["-czf", "-", "-C", dir, "."], { stdio: ["ignore", "pipe", "pipe"] });
   let err = "";
   child.stderr.on("data", (d: Buffer) => {
     err += d.toString();
   });
-  const out = child.stdout;
+  const out = new PassThrough();
+  child.stdout.pipe(out, { end: false });
+  child.on("error", (e) => out.destroy(e));
   child.on("close", (code) => {
-    if (code !== 0) out.destroy(new Error(`tar failed (${code}): ${err.trim()}`));
+    if (code === 0) out.end();
+    else out.destroy(new Error(`tar failed (${code}): ${err.trim()}`));
   });
   return out;
 }
