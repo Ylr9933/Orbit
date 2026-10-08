@@ -41,6 +41,7 @@ export type {
   Method,
   MethodSummary,
   Metrics,
+  NodeResources,
   NodeStatus,
   NotifyTarget,
   Outcome,
