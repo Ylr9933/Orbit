@@ -11,6 +11,9 @@ import {
 } from "../contracts/index.ts";
 import { FeishuApi, groupCard, runCard, textCard } from "./feishu.ts";
 
+/** A target that cannot be saved as given (shown to the user). */
+export class NotifyError extends Error {}
+
 export type StoredTarget = ReturnType<typeof NotifyTargetInput.parse>;
 export type WebhookTarget = Exclude<StoredTarget, { kind: typeof FEISHU_APP }>;
 export type FeishuAppTarget = Extract<StoredTarget, { kind: typeof FEISHU_APP }>;
@@ -62,6 +65,14 @@ export class NotifyStore {
   put(input: NotifyTargetInputT): NotifyTarget {
     const t = NotifyTargetInput.parse(input);
     const old = this.read().find((x) => x.name === t.name);
+    // Feishu delivers each event to one of an app's connections: two targets would lose commands.
+    if (t.kind === FEISHU_APP) {
+      const appId = t.appId;
+      const twin = this.read().find(
+        (x) => x.kind === FEISHU_APP && x.appId === appId && x.name !== t.name,
+      );
+      if (twin) throw new NotifyError(`app ${appId} is already bound as ${twin.name}`);
+    }
     // Replacing an app (e.g. a rotated secret) keeps its paired users.
     if (t.kind === FEISHU_APP && !t.users)
       t.users = old?.kind === FEISHU_APP && old.appId === t.appId ? old.users : [];
@@ -76,7 +87,7 @@ export class NotifyStore {
   addUser(name: string, openId: string): void {
     const all = this.read();
     const t = all.find((x) => x.name === name);
-    if (t?.kind !== FEISHU_APP) throw new Error(`${name} is not a ${FEISHU_APP} target`);
+    if (t?.kind !== FEISHU_APP) throw new NotifyError(`${name} is not a ${FEISHU_APP} target`);
     if (!t.users?.includes(openId)) t.users = [...(t.users ?? []), openId];
     this.write(all);
   }

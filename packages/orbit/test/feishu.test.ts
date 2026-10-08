@@ -2,7 +2,15 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { type Ledger, type Metrics, NotifyTargetInput, type Run } from "../src/contracts/index.ts";
+import { checkFeishu, initFeishu } from "../src/cli/feishu.ts";
+import type { OrbitClient } from "../src/client/index.ts";
+import {
+  type Ledger,
+  type Metrics,
+  type NotifyTarget,
+  NotifyTargetInput,
+  type Run,
+} from "../src/contracts/index.ts";
 import { FeishuBots, type IncomingMessage } from "../src/feishu/index.ts";
 import {
   type Card,
@@ -263,5 +271,106 @@ describe("feishu bots", () => {
     await bots.sync();
     expect(bots.connection("app")).toBe("stopped");
     expect(links[1]?.closed).toBe(true);
+  });
+});
+
+describe("orbit feishu init", () => {
+  /** A client over a real store, with the bot connection state set by the test. */
+  function fakeClient(connection: NotifyTarget["connection"], testError?: string) {
+    const store = new NotifyStore(join(dir, `init-${Math.random()}.json`));
+    const calls: string[] = [];
+    const client = {
+      notifyList: async () =>
+        store.list().map((t) => (t.kind === "feishu-app" ? { ...t, connection } : t)),
+      notifyPut: async (t: Parameters<NotifyStore["put"]>[0]) => store.put(t),
+      notifyReconnect: async (name: string) => {
+        calls.push(`reconnect ${name}`);
+        return { ok: true };
+      },
+      notifyTest: async (name: string) => {
+        calls.push(`test ${name}`);
+        if (testError) throw new Error(testError);
+        return { ok: true };
+      },
+    } as unknown as OrbitClient;
+    return { store, client, calls };
+  }
+  const registered = {
+    client_id: "cli_1111111111111111",
+    client_secret: "new-secret",
+    user_info: { open_id: "ou_scanner", tenant_brand: "feishu" },
+  };
+
+  it("creates the app from the QR scan, pairs the scanner and checks the bot", async () => {
+    const { store, client, calls } = fakeClient("connected");
+    const lines: string[] = [];
+    const r = await initFeishu(
+      {
+        client,
+        say: (l) => lines.push(l),
+        qr: (url) => `QR(${url})`,
+        register: async (onQr) => {
+          onQr("https://open.feishu.cn/page/launcher?user_code=X", 600);
+          return registered;
+        },
+      },
+      "phone",
+      ["failed"],
+    );
+    expect(lines[0]).toBe("QR(https://open.feishu.cn/page/launcher?user_code=X)");
+    expect(r).toEqual({
+      name: "phone",
+      appId: registered.client_id,
+      users: 1,
+      connection: "connected",
+      test: "sent",
+    });
+    expect(calls).toEqual(["reconnect phone", "test phone"]);
+    const saved = store.targets()[0];
+    expect(saved).toMatchObject({ kind: "feishu-app", users: ["ou_scanner"], on: ["failed"] });
+    expect(JSON.stringify(store.list())).not.toContain("new-secret");
+  });
+
+  it("refuses a taken name and an app bound twice", async () => {
+    const { store, client } = fakeClient("connected");
+    store.put({ ...APP, name: "phone" });
+    const d = { client, say: () => {}, qr: () => "", register: async () => registered };
+    await expect(initFeishu(d, "phone", ["failed"])).rejects.toThrow(/exists/);
+    expect(() => store.put({ ...APP, name: "other" })).toThrow(/already bound as phone/);
+  });
+
+  it("says what to fix when the long connection or sending fails", async () => {
+    const { store, client } = fakeClient("failed", "error 99991672: Access denied");
+    store.put({ ...APP, name: "phone", users: ["ou_1"] });
+    const lines: string[] = [];
+    const r = await checkFeishu(
+      { client, say: (l) => lines.push(l), sleep: async () => {} },
+      "phone",
+    );
+    expect(r.connection).toBe("failed");
+    expect(r.test).toContain("99991672");
+    expect(lines.join("\n")).toContain(`https://open.feishu.cn/app/${APP.appId}/event`);
+    expect(lines.join("\n")).toContain(`https://open.feishu.cn/app/${APP.appId}/auth`);
+  });
+
+  it("reconnects one bot on request", async () => {
+    const store = new NotifyStore(join(dir, "reconnect.json"));
+    store.put({ ...APP, name: "app" });
+    let opened = 0;
+    const bots = new FeishuBots({
+      store,
+      feishu: () => fakeApi().api,
+      log: () => {},
+      api: async () => ({}) as never,
+      connect: async (_t, _m, onState) => {
+        opened++;
+        onState("connected");
+        return { close: () => {} };
+      },
+    });
+    await bots.sync();
+    await bots.reconnect("app");
+    expect(opened).toBe(2);
+    expect(bots.connection("app")).toBe("connected");
   });
 });

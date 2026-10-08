@@ -38,7 +38,7 @@ import {
 import type { FeishuBots } from "../feishu/index.ts";
 import { sameSecret, tokenMatches } from "../lib/tokens.ts";
 import { VERSION } from "../lib/version.ts";
-import type { Notifier, NotifyStore } from "../notify/index.ts";
+import { type Notifier, NotifyError, type NotifyStore } from "../notify/index.ts";
 import {
   decodePath,
   listArtifacts,
@@ -311,6 +311,12 @@ export function createApp(deps: AppDeps): Hono {
     void feishu.sync();
     return c.json({ ok: true });
   });
+  api.post("/notify/:name/reconnect", (c) => {
+    const t = notifyStore.targets().find((x) => x.name === c.req.param("name"));
+    if (t?.kind !== "feishu-app") throw new NotFoundError("feishu-app target not found");
+    void feishu.reconnect(t.name);
+    return c.json({ ok: true });
+  });
   api.post("/notify/:name/pair", async (c) => {
     const { code } = NotifyPairInput.parse(await c.req.json());
     try {
@@ -450,7 +456,7 @@ function must<T>(v: T | null): T {
 function errorResponse(c: Context, err: Error) {
   if (err instanceof NotFoundError) return c.json({ error: err.message }, 404);
   if (err instanceof BadGateway) return c.json({ error: err.message }, 502);
-  if (err instanceof UserError || err instanceof AuthError)
+  if (err instanceof UserError || err instanceof AuthError || err instanceof NotifyError)
     return c.json({ error: err.message }, 400);
   if (err instanceof z.ZodError) return c.json({ error: z.prettifyError(err) }, 400);
   if (err instanceof SyntaxError) return c.json({ error: `invalid JSON: ${err.message}` }, 400);

@@ -274,6 +274,11 @@ Agent 的 home 放在 `/orbit/agent/{codex,claude}`（`CODEX_HOME`、`CLAUDE_CON
 **飞书应用**（`feishu-app`；推送在 `notify/feishu.ts`，用 OpenAPI 的 `fetch`，不用 SDK；接收在 `feishu/`）：
 - daemon 为每个应用保持一条**出向**长连接（官方 `@larksuiteoapi/node-sdk` 的 `WSClient`，仅在有该类目标时懒加载；
   `wsConfig.pingTimeout = 3` 收不到 pong 即重连），无需公网地址，daemon 仍只监听 `127.0.0.1`。
+- 创建：`orbit feishu init [name]` 在 CLI 中调用 SDK 的 `registerApp`（OAuth 设备码），终端打印二维码（`uqr`）；扫码确认页
+  预填机器人、消息权限与 `im.message.receive_v1`（飞书未开放预填时被忽略），返回 appId/secret 与扫码人 open_id，
+  CLI 经 `POST notify` 保存（扫码人即配对用户）。订阅方式（长连接）不能经二维码预填；`orbit feishu check` 调
+  `POST notify/:name/reconnect` 重连、等待连接并发测试卡片，失败时给出要改的后台页面。一个 daemon 可有多个
+  `feishu-app` 目标，同一 appId 只能绑一个（飞书每个事件只投给应用的一条连接）。
 - 配对：未配对的用户私聊机器人时收到 6 位码（10 分钟有效），在本机 `orbit notify pair <name> <code>` 后其 open_id
   记入 `users`；重新保存同一 appId 的目标保留 `users`。群聊只处理 @ 机器人的消息。未配对用户得不到任何数据。
 - 只读命令：`/gpu`（`ledger`：每张卡的显存、利用率、占用者，CPU/内存/磁盘，队列，worker）、`/runs`（最近 10 个）、

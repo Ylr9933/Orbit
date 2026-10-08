@@ -217,16 +217,21 @@ orbit notify list
 Kinds: `feishu`, `dingtalk`, `wecom`, `slack`, `webhook`. Events: `succeeded`, `failed`, `group` (one
 summary when a group has finished). Failure messages include the reason and the last log lines.
 
-A Feishu self-built app (`feishu-app`) also lets you check on Orbit from your phone. The daemon holds an
-outbound long connection, so no public address is needed. In the Feishu developer console, enable the bot,
-choose "receive events through persistent connection", subscribe to `im.message.receive_v1`, grant
-`im:message` (send as bot), and publish a version. Then:
+A Feishu bot (`feishu-app`) also lets you check on Orbit from your phone. The daemon holds an outbound
+long connection, so no public address is needed:
 
 ```bash
-orbit notify add phone --kind feishu-app --app-id cli_xxxxxxxxxxxxxxxx --secret-stdin
-# message the bot in Feishu; it replies with a code
-orbit notify pair phone 123456
+orbit feishu init phone       # prints a QR code: scan it with the Feishu app and confirm
+orbit feishu check phone      # after changing the app in the Feishu console: reconnect and test
 ```
+
+Scanning creates the app with the bot, the message permissions and the `im.message.receive_v1` event
+pre-filled, and pairs it with you. If `init` reports that the long connection or the test card failed,
+it prints the console page to fix (subscription mode "persistent connection", permissions, publish a
+version); then run `orbit feishu check`. An existing app can be added with
+`orbit notify add phone --kind feishu-app --app-id cli_… --secret-stdin`; others then message the bot
+and run the `orbit notify pair` command it replies with. Each target is its own app; never bind the same
+app to two daemons (Feishu hands each event to only one connection).
 
 Paired users get run and group cards (with metric curves) and can send `/gpu`, `/runs` and
 `/show <run id>`. Commands are read-only; unpaired users only get a pairing code.

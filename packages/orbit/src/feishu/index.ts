@@ -120,6 +120,13 @@ export class FeishuBots {
     }
   }
 
+  /** Close and reopen one bot's connection (e.g. after its settings changed in Feishu). */
+  async reconnect(name: string): Promise<void> {
+    this.bots.get(name)?.link?.close();
+    this.bots.delete(name);
+    await this.sync();
+  }
+
   connection(name: string): Connection {
     return this.bots.get(name)?.state ?? "stopped";
   }

@@ -141,6 +141,8 @@ export class OrbitClient {
     this.call(NotifyTarget, "/notify", { method: "POST", body: t });
   notifyRemove = (name: string) => this.call(Ok, `/notify/${enc(name)}`, { method: "DELETE" });
   notifyTest = (name: string) => this.call(Ok, `/notify/${enc(name)}/test`, { method: "POST" });
+  notifyReconnect = (name: string) =>
+    this.call(Ok, `/notify/${enc(name)}/reconnect`, { method: "POST" });
   notifyPair = (name: string, code: string) =>
     this.call(Ok, `/notify/${enc(name)}/pair`, { method: "POST", body: { code } });
 

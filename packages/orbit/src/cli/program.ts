@@ -18,6 +18,7 @@ import { kv, registerAuth, registerNotify } from "./auth.ts";
 import { registerBench } from "./bench.ts";
 import { parseDataset, registerCluster } from "./cluster.ts";
 import { confirmTyped } from "./confirm.ts";
+import { registerFeishu } from "./feishu.ts";
 import {
   fmtBytes,
   formatDoctor,
@@ -619,6 +620,7 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
 
   registerAuth(program, client, print);
   registerNotify(program, client, print);
+  registerFeishu(program, client, print);
   registerBench(program, client, print);
   registerCluster(program, client, print);
 
