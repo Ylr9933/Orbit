@@ -26,6 +26,7 @@ Orbit 在隔离的 Docker 容器里、按 GPU / CPU / 内存租约运行它，�
 - **Agent 凭据**：Codex 与 Claude Code 可以在容器*内*运行，支持 login、API key、中转（relay）三种
   profile；密钥不出现在命令行，日志中自动脱敏。
 - **通知**：Run 或分组结束时发送到飞书、钉钉、企业微信、Slack 或通用 webhook。
+- **手机上查看**：`orbit feishu init` 扫码即建好飞书机器人，收带指标曲线的结果卡片，随时发 `/gpu`、`/runs` 查看状态。
 - **刷榜**：任务 × 方法 × 种子的 job；每个 trial 是一个 solve Run 加一个独立的 verify Run，只有有效
   分数计入均值。内置 Harbor 任务目录（如 Terminal-Bench Science）与 ASI-Bench 适配器。
 - **多机**：一台机器把 Run 放到已加入的 worker 上；代码按内容哈希传输，数据集在各节点按名字登记，
@@ -204,21 +205,26 @@ orbit notify list
 类型：`feishu`、`dingtalk`、`wecom`、`slack`、`webhook`。事件：`succeeded`、`failed`、`group`（分组
 全部结束时发一条汇总）。失败消息附带原因和日志最后几行。
 
-飞书机器人（`feishu-app`）可以在手机上查看 Orbit。daemon 主动向飞书建立长连接，不需要公网地址：
+### 手机上查看（飞书机器人）
 
 ```bash
-orbit feishu init phone       # 终端里打印二维码：用飞书扫码并确认
-orbit feishu check phone      # 在飞书后台改过应用设置后：重连并发测试卡片
+orbit feishu init phone       # 终端打印二维码：用手机飞书扫码并确认
 ```
 
-扫码会新建应用，机器人能力、消息权限和 `im.message.receive_v1` 事件已预填，并自动与你配对。若 `init`
-提示长连接或测试卡片失败，按它给出的后台页面修改（订阅方式选「长连接」、开通权限、发布版本），再运行
-`orbit feishu check`。已有的应用可以用 `orbit notify add phone --kind feishu-app --app-id cli_… --secret-stdin`
-添加；其他人私聊机器人后，运行它回复的 `orbit notify pair` 命令即可。每个目标对应一个独立的应用；同一个应用
-不要绑到两个 daemon 上（飞书每个事件只投递给其中一条连接）。
+扫码会新建一个飞书应用（机器人能力、消息权限、接收消息事件已预填），并自动与扫码人配对，之后：
 
-配对后会收到 Run 和分组的结果卡片（带指标曲线），也可以发 `/gpu`、`/runs`、`/show <run id>` 查询。
-命令都是只读的；未配对的用户只会收到配对码。
+- Run 或分组结束时，机器人发来结果卡片：状态、资源与实测峰值、指标曲线（如 loss），失败时附日志尾。
+- 随时私聊机器人（群里需 @ 它）：`/gpu` 看每张卡的显存、利用率和占用者，以及 CPU、内存、队列；`/runs` 看最近的
+  Run；`/show <run id>` 看某个 Run 的卡片。命令都是只读的。
+
+daemon 主动向飞书建立长连接，不需要公网地址，daemon 仍只监听本机。若 `init` 提示长连接或测试卡片失败，按它
+给出的后台页面修改（订阅方式选「长连接」、开通权限、发布版本），再运行 `orbit feishu check phone` 重连并测试。
+
+- 可以绑定多个机器人（名字不同即可），但同一个应用只能绑一次，也不要绑到两台机器的 daemon 上（飞书每个事件
+  只投递给其中一条连接）。同时配对多个机器人会收到重复的通知。
+- 已有的应用：`orbit notify add phone --kind feishu-app --app-id cli_… --secret-stdin`。其他人私聊机器人会收到
+  配对码，在本机运行它回复的 `orbit notify pair phone <code>` 后才能使用；未配对的人看不到任何数据。
+- `orbit notify list` 查看配对人数和连接状态，`orbit notify rm phone` 删除。
 
 ### 刷榜
 

@@ -1,5 +1,5 @@
 # Feishu bot setup by QR code
-branch: feat/feishu-init · status: in_progress · updated: 2026-10-08
+branch: feat/feishu-init · status: completed · updated: 2026-10-08
 
 ## Goal
 `orbit feishu init` creates a Feishu bot by scanning a QR code with the Feishu app, saves it paired with
@@ -19,7 +19,7 @@ the scanner and checks it, instead of setting the app up by hand in the develope
 | `pnpm verify` | working tree | passed | 13 tests in `feishu.test.ts` (fake registration and client) |
 | `orbit feishu check phone` on the real daemon | working tree | passed | connected, test card sent |
 | `orbit feishu init` up to the QR code | working tree | passed | QR printed, aborted before scanning, nothing saved |
-| Scan and create a new app | working tree | not_run | for the user; unknown: pre-filled scopes (Feishu gray release), default subscription mode, publishing |
+| Scan and create a new app | 7ae06c3 | passed | by the user on a phone; `phone2` connected with 1 paired user |
 
 ## Next / open issues
 - If new apps do not default to the long connection, `check` tells the user to switch it in the console.

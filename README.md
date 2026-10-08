@@ -31,6 +31,8 @@ Open `docs/ppt/index.html` in a browser to present offline.
 - **Agent credentials**: Codex and Claude Code can run *inside* containers with login, API-key or
   relay profiles; secrets never go on the command line and are redacted from logs.
 - **Notifications**: Feishu, DingTalk, WeCom, Slack or a generic webhook when runs or groups finish.
+- **On your phone**: `orbit feishu init` sets up a Feishu bot from one QR scan; it sends result cards with
+  metric curves and answers `/gpu` and `/runs`.
 - **Benchmarks**: task × method × seed jobs; each trial is a solve run plus a separate verify run, and
   only valid scores enter means. Adapters for Harbor task directories (e.g. Terminal-Bench Science)
   and ASI-Bench.
@@ -217,24 +219,33 @@ orbit notify list
 Kinds: `feishu`, `dingtalk`, `wecom`, `slack`, `webhook`. Events: `succeeded`, `failed`, `group` (one
 summary when a group has finished). Failure messages include the reason and the last log lines.
 
-A Feishu bot (`feishu-app`) also lets you check on Orbit from your phone. The daemon holds an outbound
-long connection, so no public address is needed:
+### On your phone (Feishu bot)
 
 ```bash
 orbit feishu init phone       # prints a QR code: scan it with the Feishu app and confirm
-orbit feishu check phone      # after changing the app in the Feishu console: reconnect and test
 ```
 
-Scanning creates the app with the bot, the message permissions and the `im.message.receive_v1` event
-pre-filled, and pairs it with you. If `init` reports that the long connection or the test card failed,
-it prints the console page to fix (subscription mode "persistent connection", permissions, publish a
-version); then run `orbit feishu check`. An existing app can be added with
-`orbit notify add phone --kind feishu-app --app-id cli_… --secret-stdin`; others then message the bot
-and run the `orbit notify pair` command it replies with. Each target is its own app; never bind the same
-app to two daemons (Feishu hands each event to only one connection).
+Scanning creates a Feishu app (bot, message permissions and the message event pre-filled) paired with
+whoever scanned it. Then:
 
-Paired users get run and group cards (with metric curves) and can send `/gpu`, `/runs` and
-`/show <run id>`. Commands are read-only; unpaired users only get a pairing code.
+- When a run or group finishes, the bot sends a card: state, resources and measured peaks, metric curves
+  (e.g. loss), and the log tail for failures.
+- Message the bot at any time (mention it in groups): `/gpu` shows memory, utilization and holder of each
+  GPU plus CPU, memory and the queue; `/runs` the recent runs; `/show <run id>` one run. Commands are
+  read-only.
+
+The daemon opens an outbound long connection to Feishu: no public address is needed and the daemon still
+listens on localhost only. If `init` reports that the long connection or the test card failed, it prints
+the console page to fix (subscription mode "persistent connection", permissions, publish a version);
+then run `orbit feishu check phone` to reconnect and test.
+
+- Several bots can be bound (with different names), but each app only once, and never to the daemons of
+  two machines (Feishu hands each event to only one connection). Pairing with several bots duplicates
+  notifications.
+- An existing app: `orbit notify add phone --kind feishu-app --app-id cli_… --secret-stdin`. Others who
+  message the bot get a pairing code and can use it after you run `orbit notify pair phone <code>`;
+  unpaired people see no data.
+- `orbit notify list` shows paired users and the connection; `orbit notify rm phone` removes the bot.
 
 ### Benchmarks
 
