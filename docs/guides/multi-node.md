@@ -3,7 +3,8 @@
 适用版本：`refactor/ts-rewrite` R4。模型与规则见 [design §8](../design.md#8-多节点r4)。
 
 前提：每台机器装好 Orbit、Docker（GPU 机器需 NVIDIA 容器运行时），`orbit doctor` 通过；
-机器之间能直连某个端口（推荐 Tailscale，或内网、SSH 隧道）。集群协议是明文 HTTP，不要暴露到公网。
+**主节点能连到 worker 的一个端口**（单向即可，不需要互相 SSH 或共享存储；推荐 Tailscale，或内网、SSH 隧道）。
+集群协议是明文 HTTP，不要暴露到公网。
 
 ## 1. 加入 worker
 
@@ -11,18 +12,24 @@
 
 ```bash
 orbit node expose --listen 100.64.0.12:7718   # 记住设置，daemon 重启后自动恢复监听
-orbit node token                              # 打印 cluster token（只给主节点用）
+orbit node token                              # 打印 cluster token（只给主节点用），复制它
 ```
+
+worker 开着防火墙时，只对主节点放行该端口，例如 ufw：
+`sudo ufw allow from <主节点 IP> to any port 7718 proto tcp`。在主节点上检查：
+`curl -s -o /dev/null -w "%{http_code}\n" http://100.64.0.12:7718/cluster/v1/info` 返回 `401` 即网络已通
+（超时多半是防火墙丢包）。
 
 在主节点（Agent 所在机器）上：
 
 ```bash
-ssh gpu2 orbit node token | orbit node add http://100.64.0.12:7718 --token-stdin
+orbit node add http://100.64.0.12:7718   # 提示输入 token：粘贴（不回显）后回车
 orbit node ls           # online，显示 GPU 数、租约、排队
 orbit resources         # 本机 + 每个 worker 的 GPU 与队列
 ```
 
-token 不走命令行参数（也可 `--token-env VAR`）。`orbit node token --rotate` 使旧 token 失效，
+token 不走命令行参数。脚本里可以用管道（`ssh gpu2 orbit node token | orbit node add <url> --token-stdin`）
+或 `--token-env VAR`。`orbit node token --rotate` 使旧 token 失效，
 之后需在主节点重新 `node add`。`orbit node expose --off` 停止监听。
 
 ## 2. 数据与凭据

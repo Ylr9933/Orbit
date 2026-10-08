@@ -382,7 +382,7 @@ CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|compare [--metric]|usage`�
 
 **加入**：worker 上 `orbit node expose --listen <addr>:<port>` 开启集群监听（`/cluster/v1`，
 `Authorization: Bearer <cluster token>`；token 在 `cluster.json`（0600），与本机 daemon token 无关），
-主节点 `orbit node add <url> --token-stdin` 登记（`nodes.json`，0600）。协议为明文 HTTP，只用于
+主节点 `orbit node add <url>` 登记（终端里提示输入 token，不回显；也可 `--token-stdin` 管道或 `--token-env`）（`nodes.json`，0600）。协议为明文 HTTP，只用于
 Tailscale / 内网 / SSH 隧道；cluster token 等同于在该节点运行容器的权限。节点名取 `ORBIT_NODE` 或主机名，
 `ORBIT_GPUS` 限定本 daemon 管理的 GPU（同机仿真多节点时使用）。
 

@@ -1,12 +1,12 @@
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import type { OrbitClient } from "../client/index.ts";
 import type { Dataset, NodeStatus } from "../contracts/index.ts";
 import type { Print } from "./auth.ts";
+import { readStdinSecret } from "./confirm.ts";
 
 function formatNodes(nodes: NodeStatus[]): string {
-  if (nodes.length === 0) return "no worker nodes (orbit node add <url> --token-stdin)";
+  if (nodes.length === 0) return "no worker nodes (orbit node add <url>)";
   return nodes
     .map((n) => {
       const i = n.info;
@@ -25,13 +25,15 @@ function formatDatasets(ds: Dataset[]): string {
 }
 
 /** A token from stdin or a variable, never from argv (it would land in shell history and `ps`). */
-function readToken(o: { tokenStdin?: boolean; tokenEnv?: string }): string {
-  if (o.tokenStdin) return readFileSync(0, "utf8").trim();
+async function readToken(o: { tokenStdin?: boolean; tokenEnv?: string }): Promise<string> {
   if (o.tokenEnv) {
     const v = process.env[o.tokenEnv];
     if (!v) throw new Error(`${o.tokenEnv} is not set`);
     return v.trim();
   }
+  // At a terminal the token is asked for; piped in, it is read with --token-stdin.
+  if (o.tokenStdin || process.stdin.isTTY)
+    return readStdinSecret("Paste the token printed by `orbit node token` on the worker");
   throw new Error("give the node token with --token-stdin or --token-env VAR");
 }
 
@@ -55,11 +57,14 @@ export function registerCluster(
     .command("add")
     .description("register a worker node by its exposed URL (e.g. http://gpu2:7718)")
     .argument("<url>")
-    .option("--token-stdin", "read the worker's token (orbit node token, on the worker) from stdin")
+    .option(
+      "--token-stdin",
+      "read the worker's token (orbit node token, on the worker) from a pipe; at a terminal you are asked for it anyway",
+    )
     .option("--token-env <VAR>", "read the worker's token from this environment variable")
     .option("--json", "print JSON")
     .action(async (url: string, o: { tokenStdin?: boolean; tokenEnv?: string; json?: boolean }) => {
-      const n = await (await client()).nodeAdd(url, readToken(o));
+      const n = await (await client()).nodeAdd(url, await readToken(o));
       print(o.json, n, () => `added ${n.name}\n${formatNodes([n])}`);
     });
   node
@@ -86,7 +91,7 @@ export function registerCluster(
       print(o.json, s, () =>
         s.listen
           ? `node ${s.node} ${s.listening ? "listening" : "NOT listening"} on ${s.listen}${s.error ? ` (${s.error})` : ""}\n` +
-            "join from this host: orbit node token | ssh <primary> orbit node add http://<this-host>:<port> --token-stdin"
+            `to join: run \`orbit node token\` here, then on the primary run \`orbit node add http://${s.listen}\` and paste the token`
           : `node ${s.node} is not exposed`,
       );
     });

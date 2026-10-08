@@ -11,6 +11,7 @@ import type {
   NotifyEvent,
   NotifyTarget,
 } from "../contracts/index.ts";
+import { readStdinSecret } from "./confirm.ts";
 
 export type Print = (json: boolean | undefined, value: unknown, text: () => string) => void;
 
@@ -80,7 +81,7 @@ async function codexLogin(): Promise<string> {
 }
 
 async function readSecret(o: AddOpts, env: Record<string, string>): Promise<string> {
-  if (o.keyStdin) return readFileSync(0, "utf8").trim();
+  if (o.keyStdin) return readStdinSecret(`Paste the ${o.harness} ${o.kind} secret`);
   if (o.keyEnv) {
     const v = process.env[o.keyEnv];
     if (!v?.trim()) throw new Error(`${o.keyEnv} is not set`);

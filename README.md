@@ -248,10 +248,11 @@ Every machine runs Orbit. The machine your agent works on (the primary) places r
 added; local resources are used first.
 
 ```bash
-# on the worker (e.g. Tailscale address 100.64.0.12)
+# on the worker (e.g. Tailscale address 100.64.0.12); its firewall must let the primary reach 7718
 orbit node expose --listen 100.64.0.12:7718
-# on the primary
-ssh gpu2 orbit node token | orbit node add http://100.64.0.12:7718 --token-stdin
+orbit node token                                # copy the printed token
+# on the primary: asks for the token (paste it, input hidden, then Enter)
+orbit node add http://100.64.0.12:7718
 orbit node ls
 orbit data add imagenet /data/imagenet          # on every node that has the data
 orbit run -d imagenet --gpus 1 --image pytorch/pytorch -- python train.py

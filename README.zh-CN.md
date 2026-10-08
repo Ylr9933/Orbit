@@ -233,10 +233,11 @@ Run。每个任务的 solve 资源（GPU、内存、CPU、超时）可由 `orbit
 每台机器都运行 Orbit。Agent 所在的机器（主节点）把 Run 放到已加入的 worker 上，优先使用本机资源。
 
 ```bash
-# 在 worker 上（例如 Tailscale 地址 100.64.0.12）
+# 在 worker 上（例如 Tailscale 地址 100.64.0.12）；防火墙需允许主节点访问 7718
 orbit node expose --listen 100.64.0.12:7718
-# 在主节点上
-ssh gpu2 orbit node token | orbit node add http://100.64.0.12:7718 --token-stdin
+orbit node token                                # 复制打印出的 token
+# 在主节点上：会提示输入 token（粘贴，不回显，回车结束）
+orbit node add http://100.64.0.12:7718
 orbit node ls
 orbit data add imagenet /data/imagenet          # 在每台有这份数据的机器上执行
 orbit run -d imagenet --gpus 1 --image pytorch/pytorch -- python train.py
