@@ -10,7 +10,7 @@ import {
   readConfig,
   writeConfig,
 } from "../config/paths.ts";
-import { isTerminal, type Run, type RunSpecInput } from "../contracts/index.ts";
+import { isTerminal, type Run, type RunSpecInput, runDisplayName } from "../contracts/index.ts";
 import { exec } from "../lib/exec.ts";
 import { VERSION } from "../lib/version.ts";
 import { detectAgent } from "./agent.ts";
@@ -87,6 +87,9 @@ interface RunOpts {
   json?: boolean;
   wait?: boolean;
   folder?: string;
+  check?: boolean;
+  smoke?: string;
+  smokeTimeout: number;
 }
 
 function addRunOptions(cmd: Command): Command {
@@ -137,7 +140,67 @@ function addRunOptions(cmd: Command): Command {
     .option("--timeout <min>", "stop the run after this many minutes", num)
     .option("-t, --tag <KEY=VALUE>", "tag", collect, [])
     .option("-w, --wait", "wait for completion and exit with the run's status")
+    .option("--check", "only run the pre-flight checks (data, output disk, image, placement)")
+    .option(
+      "--smoke <command>",
+      "first run this short shell command with the same settings; submit only if it succeeds",
+    )
+    .option("--smoke-timeout <min>", "time limit of the smoke run", num, 15)
     .option("--json", "print JSON");
+}
+
+/**
+ * Pre-flight checks of `spec` on the daemon. Prints them all with --check, else only warnings and
+ * failures. False when nothing should be submitted.
+ */
+async function preflight(c: OrbitClient, spec: RunSpecInput, o: RunOpts): Promise<boolean> {
+  const r = await c.check(spec);
+  if (o.check) {
+    console.log(o.json ? JSON.stringify(r, null, 2) : formatDoctor(r));
+    if (!r.ok) process.exitCode = 1;
+    return false;
+  }
+  const notable = r.checks.filter((x) => !x.ok || x.warn);
+  if (notable.length) console.error(formatDoctor({ ok: r.ok, checks: notable }));
+  if (!r.ok) process.exitCode = 1;
+  return r.ok;
+}
+
+/**
+ * The --smoke run: `spec` with the smoke command (in `sh -c`, `{key}` substituted), outside any
+ * group. Returns its id when it succeeded, else null.
+ */
+async function smokeRun(
+  c: OrbitClient,
+  spec: RunSpecInput,
+  o: RunOpts,
+  params: Record<string, string> = {},
+): Promise<string | null> {
+  const command = ["sh", "-c", substitute([o.smoke ?? ""], params)[0] ?? ""];
+  const run = await c.submit(
+    {
+      ...spec,
+      name: `${runDisplayName(spec)} (smoke)`,
+      group: undefined,
+      params: {},
+      tags: { ...spec.tags, smoke: "true" },
+      command,
+      timeoutMin: o.smokeTimeout,
+    },
+    o.folder,
+  );
+  console.error(`smoke run ${run.id} submitted; waiting for it`);
+  let r = await c.get(run.id);
+  while (!isTerminal(r.state) || r.cleanup === "pending") r = await c.wait(run.id, 60);
+  if (r.state === "succeeded") {
+    console.error(`smoke run ${r.id} succeeded`);
+    return r.id;
+  }
+  console.error(
+    `smoke run ${r.id} ${r.state}${r.reason ? ` (${r.reason})` : ""}; nothing else submitted (orbit logs ${r.id})`,
+  );
+  process.exitCode = 1;
+  return null;
 }
 
 async function gitRoot(dir: string): Promise<string | null> {
@@ -270,7 +333,14 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
       .passThroughOptions(),
   ).action(async (command: string[], o: RunOpts) => {
     const c = await client();
-    const run = await c.submit(await buildSpec(o, command), o.folder);
+    const spec = await buildSpec(o, command);
+    if (!(await preflight(c, spec, o))) return;
+    if (o.smoke) {
+      const parentId = await smokeRun(c, spec, o);
+      if (!parentId) return;
+      spec.parentId = parentId;
+    }
+    const run = await c.submit(spec, o.folder);
     if (o.wait) return waitAll(c, [run.id], Boolean(o.json), true);
     print(o.json, run, () => `${run.id}  ${run.state}${run.reason ? ` (${run.reason})` : ""}`);
   });
@@ -292,18 +362,26 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
     const c = await client();
     const group =
       o.group ?? o.name ?? `sweep-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}`;
-    const runs: Run[] = [];
+    const specs: RunSpecInput[] = [];
     for (const params of grid) {
       const suffix = Object.entries(params)
         .map(([k, v]) => `${k}=${v}`)
         .join(",");
-      const spec = await buildSpec(
-        { ...o, group, name: `${o.name ?? group}[${suffix}]` },
-        substitute(command, params),
-        params,
+      specs.push(
+        await buildSpec(
+          { ...o, group, name: `${o.name ?? group}[${suffix}]` },
+          substitute(command, params),
+          params,
+        ),
       );
-      runs.push(await c.submit(spec, o.folder));
     }
+    // Every combination shares the settings that are checked; the first stands for all of them.
+    const first = specs[0] as RunSpecInput;
+    if (!(await preflight(c, first, o))) return;
+    const parentId = o.smoke ? await smokeRun(c, first, o, first.params) : undefined;
+    if (parentId === null) return;
+    const runs: Run[] = [];
+    for (const spec of specs) runs.push(await c.submit({ ...spec, parentId }, o.folder));
     if (o.wait)
       return waitAll(
         c,

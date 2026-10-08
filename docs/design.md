@@ -144,6 +144,13 @@ createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage? }`
 | `$ORBIT_METRICS` = `/orbit/metrics.jsonl` | 每行一个 JSON：`{"step": 10, "loss": 0.3}`，Web 画曲线 |
 | `$ORBIT_RUN_ID` | 当前 Run ID |
 
+**运行前检查**：`RunService.preflight` 是提交校验的唯一实现：`submit` 遇到第一个失败项即拒绝；`POST runs/check`
+（`orbit run|sweep --check`）不建 Run，返回完整清单（`DoctorReport` 形状）：spec、project、镜像是否已在本机、每个
+挂载（宿主路径 / 数据集在哪些节点、注册路径是否还在）、输出目录（数据盘剩余空间、可写）、placement（现在能在哪个
+节点启动，或排队原因；worker 数据盘偏低时 `warn`）。`orbit run|sweep` 提交前都会调用它并打印 warn/FAIL 项。
+`--smoke '<cmd>'` 用相同设置（`sh -c`，sweep 时代入第一组参数，不进 group，标签 `smoke=true`，默认 15 分钟上限）
+先跑一个试跑 Run；成功才提交正式 Run，其 `parentId` 指向试跑。等待在 CLI 中进行，daemon 不保存“待提交”状态。
+
 **代码快照**：记录 `HEAD` commit、未提交 diff 与未跟踪文件列表；复制 `git ls-files -co --exclude-standard`
 的文件到快照目录。数据和权重不进快照，用命名 dataset 只读挂载。
 
@@ -178,7 +185,7 @@ oomKilled }`，运行中写库（不发变更事件），终态前再采一次�
 
 `/api/v1`：`health`、`resources`、`doctor`、`ledger`（资源 + 活动租约 + 排队原因）、`GET/POST runs`、
 `runs/:id`、`runs/:id/{cancel,note,wait,events,logs,log.txt,metrics,artifacts,files/*,diff,session}`、
-`POST runs/delete`、`stream`（SSE：`run` 变化推送，`deleted` 删除推送）、`GET/POST auth`、`DELETE auth/:name`、`POST auth/:name/test`、
+`POST runs/check`（运行前检查）、`POST runs/delete`、`stream`（SSE：`run` 变化推送，`deleted` 删除推送）、`GET/POST auth`、`DELETE auth/:name`、`POST auth/:name/test`、
 `GET/POST notify`、`DELETE notify/:name`、`POST notify/:name/test`，bench 路由（§7），
 `GET/POST cluster/nodes`、`DELETE cluster/nodes/:name`、`GET/POST cluster/expose`、`GET cluster/token`、
 `POST cluster/token/rotate`、`GET/POST datasets`、`DELETE datasets/:name`（§8），`GET folders`、`POST folders/move`、

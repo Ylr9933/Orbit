@@ -1,8 +1,8 @@
-import { statfs } from "node:fs/promises";
-import { type OrbitPaths, onSystemDisk } from "../config/paths.ts";
+import type { OrbitPaths } from "../config/paths.ts";
 import type { DoctorCheck, DoctorReport, Harness } from "../contracts/index.ts";
 import { hostCli } from "../harness/index.ts";
 import { exec } from "../lib/exec.ts";
+import { diskCheck as disk } from "../resources/disk.ts";
 
 async function tool(name: string, cmd: string, args: string[]): Promise<DoctorCheck> {
   const r = await exec(cmd, args);
@@ -20,27 +20,6 @@ async function harness(h: Harness): Promise<DoctorCheck> {
     detail: cli
       ? `${cli.version} (${cli.hostBin})`
       : "not found; --auth runs with this harness fail",
-  };
-}
-
-const GIB = 1024 ** 3;
-/** Free space below which a disk is reported: 10% of it, but at least 50 GB and at most 500 GB. */
-const lowFreeGB = (totalGB: number) => Math.max(50, Math.min(totalGB * 0.1, 500));
-
-/** Free space of a directory's disk, and whether it is low or the system disk. */
-async function disk(name: string, dir: string, hint: string): Promise<DoctorCheck> {
-  const fs = await statfs(dir).catch(() => null);
-  if (!fs) return { name, ok: false, warn: false, detail: `${dir} not found` };
-  const free = (fs.bavail * fs.bsize) / GIB;
-  const total = (fs.blocks * fs.bsize) / GIB;
-  const notes: string[] = [];
-  if (onSystemDisk(dir)) notes.push(`on the system disk; ${hint}`);
-  if (free < lowFreeGB(total)) notes.push("low on space");
-  return {
-    name,
-    ok: true,
-    warn: notes.length > 0,
-    detail: `${dir}  ${Math.round(free)}/${Math.round(total)} GB free${notes.length ? ` (${notes.join("; ")})` : ""}`,
   };
 }
 

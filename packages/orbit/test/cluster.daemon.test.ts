@@ -123,6 +123,47 @@ describe("multi-node", () => {
     ).rejects.toThrow(/dataset only-here not registered there/);
   });
 
+  it("checks a run before submitting it, without creating one", async () => {
+    const before = (await client.list()).length;
+    const base = { command: ["true"], image: "orbit-test/none:1" };
+    const ok = await client.check({
+      ...base,
+      mounts: [{ dataset: "only-here", target: "/d", mode: "ro" }],
+    });
+    const byName = Object.fromEntries(ok.checks.map((c) => [c.name, c]));
+    expect(ok.ok).toBe(true);
+    expect(byName["mount /d"]?.detail).toMatch(/dataset only-here \(ro\) on p0:/);
+    expect(byName.image).toMatchObject({ ok: true, warn: true });
+    expect(byName.output?.detail).toContain(pPaths.runs);
+    expect(byName.placement?.detail).toMatch(/^starts now on p0/);
+
+    const pinned = await client.check({
+      ...base,
+      resources: { node: "w1" },
+      mounts: [{ dataset: "only-here", target: "/d", mode: "ro" }],
+    });
+    expect(pinned.ok).toBe(false);
+    expect(pinned.checks.find((c) => !c.ok)?.detail).toMatch(
+      /w1: dataset only-here not registered/,
+    );
+
+    const missing = await client.check({
+      ...base,
+      mounts: [{ dataset: "absent", target: "/d", mode: "ro" }],
+    });
+    expect(missing.checks.find((c) => c.name === "mount /d")).toMatchObject({
+      ok: false,
+      detail: "dataset absent is not registered on any node",
+    });
+
+    const bad = await client.check({ ...base, project: join(home, "no-such-repo") });
+    expect(bad).toMatchObject({ ok: false, checks: [{ name: "spec", ok: false }] });
+    await expect(client.submit({ ...base, project: join(home, "no-such-repo") })).rejects.toThrow(
+      /project not found/,
+    );
+    expect((await client.list()).length).toBe(before);
+  });
+
   it("sends the code snapshot, places the run on the worker and mirrors its outcome", async () => {
     const r = await client.submit({
       command: ["python", "train.py"],

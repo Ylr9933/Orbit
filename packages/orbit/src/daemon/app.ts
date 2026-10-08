@@ -113,6 +113,8 @@ export function createApp(deps: AppDeps): Hono {
     c.json(await runs.submit(await c.req.json(), { folder: c.req.query("folder") }), 201),
   );
 
+  api.post("/runs/check", async (c) => c.json(await runs.check(await c.req.json())));
+
   api.get("/folders", (c) => c.json<FolderList>({ folders: deps.store.folders() }));
   api.post("/folders/move", async (c) => {
     const { folder, ids } = FolderMove.parse(await c.req.json());

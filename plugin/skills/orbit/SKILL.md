@@ -53,6 +53,10 @@ orbit sweep --image python:3.12-slim --gpus 1 -g lr-sweep \
 - `--dockerfile path/Dockerfile` builds a project image instead of `--image` (cached by content).
 - Uncommitted changes and untracked files are included in the snapshot, so you do not need to commit first. Large data and weights are not copied: prefer a registered dataset, `-d <name>` (mounted read-only at `/data/<name>`; see `orbit data ls`), or mount a host path with `-m /host/path:/data` (read-only; add `:rw` only if needed).
 - `-e KEY=VALUE` for non-secret environment variables, `--pass-env VAR` for secrets; `--no-network` for offline runs; `-t key=value` for tags.
+- Every `run`/`sweep` is checked first (data, output disk, image, where it would start); warnings and
+  failures are printed. `--check` only prints the checks. For a long or expensive run, add
+  `--smoke '<short command>'` (e.g. `--smoke 'python train.py --steps 20'`): it runs first with the
+  same settings, and the real run is submitted only if it succeeds.
 - Use `-g <group>` for runs that belong together (sweeps, ablations) so they can be compared.
 - Name every run and job for the human who reviews them: `-n` short and specific (`baseline`,
   `lr 3e-4 warmup`, `noskills xhigh random8`), groups as the question they answer (`lr-sweep`). No

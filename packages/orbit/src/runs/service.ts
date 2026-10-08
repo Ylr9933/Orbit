@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
+  accessSync,
   appendFileSync,
+  constants,
   cpSync,
   createReadStream,
   createWriteStream,
@@ -23,6 +25,8 @@ import type { AuthStore } from "../auth/index.ts";
 import { type OrbitPaths, type RunDirs, runDirs } from "../config/paths.ts";
 import {
   type AuthTestResult,
+  type DoctorCheck,
+  type DoctorReport,
   Folder,
   isTerminal,
   type Lease,
@@ -47,6 +51,7 @@ import { newId, nowIso } from "../lib/ids.ts";
 import { Redactor } from "../lib/redact.ts";
 import { dirBytes, safeJoin } from "../records/index.ts";
 import { allocate, infeasible } from "../resources/allocate.ts";
+import { diskCheck, lowFreeGB } from "../resources/disk.ts";
 import { resolveAgentRef } from "../sessions/index.ts";
 import type { RunFilter, Store } from "../store/index.ts";
 import { bundleDir, isBundleHash } from "../workspace/bundle.ts";
@@ -266,50 +271,9 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     const spec = RunSpec.parse(input);
     const folder = Folder.safeParse(opts.folder ?? "");
     if (!folder.success) throw new UserError(folder.error.issues[0]?.message ?? "invalid folder");
-    if (spec.project && !isAbsolute(spec.project))
-      throw new UserError("project must be an absolute path");
-    if (spec.backend === "process") {
-      if (!this.deps.shim) throw new UserError("process runs are not available in this daemon");
-      if (spec.cwd && (!isAbsolute(spec.cwd) || !existsSync(spec.cwd)))
-        throw new UserError(`cwd not found: ${spec.cwd}`);
-      if (spec.mounts.length > 0 || spec.collect.length > 0 || spec.workdir)
-        throw new UserError("mounts, collect and workdir apply to docker runs only");
-    }
-    if (spec.agentBundle) {
-      if (!spec.auth) throw new UserError("agentBundle needs an auth profile");
-      if (
-        !isAbsolute(spec.agentBundle) ||
-        !statSync(spec.agentBundle, { throwIfNoEntry: false })?.isDirectory()
-      )
-        throw new UserError(`agentBundle directory not found: ${spec.agentBundle}`);
-    }
-    for (const m of spec.mounts) {
-      if (m.source && (!isAbsolute(m.source) || !existsSync(m.source)))
-        throw new UserError(`mount source not found: ${m.source}`);
-    }
-    if (spec.dockerfile) {
-      const df = isAbsolute(spec.dockerfile)
-        ? spec.dockerfile
-        : resolve(spec.project ?? "/", spec.dockerfile);
-      if (!existsSync(df)) throw new UserError(`dockerfile not found: ${df}`);
-      spec.dockerfile = df;
-    }
+    const failed = (await this.preflight(spec)).find((c) => !c.ok);
+    if (failed) throw new UserError(failed.detail);
     if (spec.agent) spec.agent = await resolveAgentRef(spec.agent);
-    // A node's own auth profile decides host networking; a worker applies its own on arrival.
-    if (spec.auth && this.deps.auth?.get(spec.auth)?.profile.hostNetwork) spec.hostNetwork = true;
-    if (spec.hostNetwork && !spec.network)
-      throw new UserError("host network conflicts with network disabled");
-    const local = await this.localBlocker(spec);
-    if (local) {
-      const reasons: [string, string][] = [[this.node, local]];
-      let anywhere = false;
-      for (const n of this.remoteNodes()) {
-        const why = remoteBlocker(spec, n);
-        if (why) reasons.push([n.name, why]);
-        else anywhere = true;
-      }
-      if (!anywhere) throw new UserError(joinReasons(reasons));
-    }
 
     const id = newId();
     const dirs = runDirs(this.paths, id);
@@ -487,6 +451,162 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       }
     })();
     return this.ticking;
+  }
+
+  /**
+   * Check a run before submitting it: the same validation as `submit`, plus (as `full`) whether the
+   * image and datasets are there, the output disk has room, and where and when it would start.
+   */
+  async check(input: RunSpecInput): Promise<DoctorReport> {
+    const checks = await this.preflight(RunSpec.parse(input), true);
+    return { ok: checks.every((c) => c.ok), checks };
+  }
+
+  /** Why `spec` is invalid on this daemon, or null. Resolves `spec.dockerfile` and host networking. */
+  private specError(spec: RunSpec): string | null {
+    if (spec.project && !isAbsolute(spec.project)) return "project must be an absolute path";
+    if (spec.project && !statSync(spec.project, { throwIfNoEntry: false })?.isDirectory())
+      return `project not found: ${spec.project}`;
+    if (spec.backend === "process") {
+      if (!this.deps.shim) return "process runs are not available in this daemon";
+      if (spec.cwd && (!isAbsolute(spec.cwd) || !existsSync(spec.cwd)))
+        return `cwd not found: ${spec.cwd}`;
+      if (spec.mounts.length > 0 || spec.collect.length > 0 || spec.workdir)
+        return "mounts, collect and workdir apply to docker runs only";
+    }
+    if (spec.agentBundle) {
+      if (!spec.auth) return "agentBundle needs an auth profile";
+      if (
+        !isAbsolute(spec.agentBundle) ||
+        !statSync(spec.agentBundle, { throwIfNoEntry: false })?.isDirectory()
+      )
+        return `agentBundle directory not found: ${spec.agentBundle}`;
+    }
+    for (const m of spec.mounts) {
+      if (m.source && (!isAbsolute(m.source) || !existsSync(m.source)))
+        return `mount source not found: ${m.source}`;
+    }
+    if (spec.dockerfile) {
+      const df = isAbsolute(spec.dockerfile)
+        ? spec.dockerfile
+        : resolve(spec.project ?? "/", spec.dockerfile);
+      if (!existsSync(df)) return `dockerfile not found: ${df}`;
+      spec.dockerfile = df;
+    }
+    // A node's own auth profile decides host networking; a worker applies its own on arrival.
+    if (spec.auth && this.deps.auth?.get(spec.auth)?.profile.hostNetwork) spec.hostNetwork = true;
+    if (spec.hostNetwork && !spec.network) return "host network conflicts with network disabled";
+    return null;
+  }
+
+  private async preflight(spec: RunSpec, full = false): Promise<DoctorCheck[]> {
+    const checks: DoctorCheck[] = [];
+    const add = (name: string, ok: boolean, detail: string, warn = false) =>
+      checks.push({ name, ok, warn, detail });
+    const invalid = this.specError(spec);
+    if (invalid) {
+      add("spec", false, invalid);
+      return checks;
+    }
+    const nodes = this.remoteNodes();
+    if (full) {
+      if (spec.project)
+        add("project", true, `${spec.project} (${spec.snapshot ? "snapshot" : "read-only mount"})`);
+      if (spec.backend === "docker") {
+        if (spec.dockerfile) add("image", true, `built from ${spec.dockerfile}`);
+        else if (spec.image) {
+          const have = await docker.imageExists(spec.image);
+          add(
+            "image",
+            true,
+            have
+              ? `${spec.image} (on this node)`
+              : `${spec.image} not on this node; pulled at start`,
+            !have,
+          );
+        }
+      }
+      for (const m of spec.mounts) {
+        const name = `mount ${m.target}`;
+        if (m.source) add(name, true, `${m.source} (${m.mode})`);
+        else if (m.dataset) {
+          const local = this.deps.datasets?.path(m.dataset);
+          const where = [
+            ...(local ? [`${this.node}:${local}`] : []),
+            ...nodes.filter((n) => n.datasets.includes(m.dataset as string)).map((n) => n.name),
+          ];
+          if (local && !existsSync(local))
+            add(name, false, `dataset ${m.dataset}: ${local} is registered but missing`);
+          else if (where.length === 0)
+            add(name, false, `dataset ${m.dataset} is not registered on any node`);
+          else add(name, true, `dataset ${m.dataset} (${m.mode}) on ${where.join(", ")}`);
+        }
+      }
+      const out = await diskCheck(
+        "output",
+        this.paths.runs,
+        "move runs to a large disk with `orbit config data <dir>`",
+      );
+      try {
+        accessSync(this.paths.runs, constants.W_OK);
+      } catch {
+        Object.assign(out, { ok: false, detail: `${this.paths.runs} is not writable` });
+      }
+      checks.push(out);
+    }
+    const local = await this.localBlocker(spec);
+    const reasons: [string, string][] = local ? [[this.node, local]] : [];
+    const candidates = nodes.filter((n) => {
+      const why = remoteBlocker(spec, n);
+      if (why) reasons.push([n.name, why]);
+      return !why;
+    });
+    if (local && candidates.length === 0) add("placement", false, joinReasons(reasons));
+    else if (full) checks.push(await this.startCheck(spec, local === null, candidates));
+    return checks;
+  }
+
+  /** Where the run would start if submitted now (runs already queued may go first). */
+  private async startCheck(
+    spec: RunSpec,
+    here: boolean,
+    candidates: RemoteNode[],
+  ): Promise<DoctorCheck> {
+    const waits: [string, string][] = [];
+    const ahead = this.store.queuedRuns().length;
+    const queue = ahead ? `; ${ahead} run(s) already queued may go first` : "";
+    if (here) {
+      const a = allocate(spec.resources, await this.resources(true), this.store.activeLeases());
+      if (a.ok)
+        return {
+          name: "placement",
+          ok: true,
+          warn: false,
+          detail: `starts now on ${this.node}${a.gpuIds.length ? ` with ${a.gpuIds.length} GPU(s)` : ""}${queue}`,
+        };
+      waits.push([this.node, a.reason]);
+    }
+    const mirrors = candidates.length ? this.mirrors() : [];
+    for (const n of candidates) {
+      if (!n.online) {
+        waits.push([n.name, "offline"]);
+        continue;
+      }
+      const r = n.resources as NodeResources;
+      const a = allocate(spec.resources, r, nodeLeases(n, mirrors));
+      if (!a.ok) {
+        waits.push([n.name, a.reason]);
+        continue;
+      }
+      const low = r.disk.freeGB < lowFreeGB(r.disk.totalGB);
+      return {
+        name: "placement",
+        ok: true,
+        warn: low,
+        detail: `starts now on ${n.name}${low ? ` (its data disk has ${Math.round(r.disk.freeGB)} GB free)` : ""}${queue}`,
+      };
+    }
+    return { name: "placement", ok: true, warn: true, detail: `queues: ${joinReasons(waits)}` };
   }
 
   /** Why `spec` can never run on this node as configured now, or null. */

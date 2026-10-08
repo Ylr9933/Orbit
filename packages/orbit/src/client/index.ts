@@ -92,6 +92,9 @@ export class OrbitClient {
       body: spec,
       timeoutMs: 600_000,
     });
+  /** Pre-flight checks of a run without submitting it. */
+  check = (spec: RunSpecInput) =>
+    this.call(DoctorReport, "/runs/check", { method: "POST", body: spec, timeoutMs: 120_000 });
   list = (q: { states?: RunState[]; group?: string; folder?: string; limit?: number } = {}) => {
     const p = new URLSearchParams();
     if (q.states?.length) p.set("state", q.states.join(","));
