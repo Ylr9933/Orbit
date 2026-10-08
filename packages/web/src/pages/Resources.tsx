@@ -2,8 +2,16 @@ import { PALETTE } from "../components/Chart.tsx";
 import { IconAlert, IconChip } from "../components/icons.tsx";
 import { TopBar } from "../components/TopBar.tsx";
 import { Empty, Link, Loading, StateIcon } from "../components/ui.tsx";
-import { api, type Gpu, type Lease, type NodeStatus, type Run } from "../lib/api.ts";
-import { ago, duration, queuedFor, runPath, runTitle } from "../lib/format.ts";
+import {
+  api,
+  type Gpu,
+  type Lease,
+  type NodeResources,
+  type NodeStatus,
+  type Run,
+} from "../lib/api.ts";
+import { ago, dateTime, duration, queuedFor, runPath, runTitle } from "../lib/format.ts";
+import { setQuery, useLocation } from "../lib/router.ts";
 import { useRuns } from "../lib/runs-store.ts";
 import { useAsync } from "../lib/use.ts";
 
@@ -13,6 +21,7 @@ const gib = (mib: number) => (mib / 1024).toFixed(mib >= 10240 ? 0 : 1);
 export function Resources() {
   const ledger = useAsync(() => api.ledger(), [], { poll: true, pollMs: 3000 });
   const runs = useRuns();
+  const loc = useLocation();
   const byId = new Map(runs.map((r) => [r.id, r]));
   const d = ledger.data;
   if (!d)
@@ -22,176 +31,348 @@ export function Resources() {
       <Loading />
     );
 
-  const res = d.resources;
-  const active = d.leases.filter((l) => l.state === "active");
-  const owner = new Map<string, Lease>();
-  for (const l of active) for (const g of l.gpuIds) owner.set(g, l);
-  const leaseColor = new Map(active.map((l, i) => [l.id, PALETTE[i % PALETTE.length] as string]));
-  const leasedCpus = active.reduce((a, l) => a + l.cpus, 0);
-  const leasedMem = active.reduce((a, l) => a + l.memGB, 0);
-  const freeGpus = res.gpus.filter((g) => g.available && !owner.has(g.uuid)).length;
+  const local = d.resources.node;
+  const worker = d.nodes.find((n) => n.name === loc.query.get("node")) ?? null;
+  const pick = (name: string | null) => setQuery({ node: name });
+  const probedAt = worker ? worker.info?.resources.probedAt : d.resources.probedAt;
 
   return (
     <>
-      <TopBar crumbs={[{ label: "Resources" }, { label: res.node }]}>
+      <TopBar crumbs={[{ label: "Resources" }, { label: worker?.name ?? local }]}>
+        {d.nodes.length > 0 && (
+          <div className="seg" role="tablist" aria-label="Node">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!worker}
+              className={worker ? "" : "on"}
+              onClick={() => pick(null)}
+              title="This node"
+            >
+              {local}
+            </button>
+            {d.nodes.map((n) => (
+              <button
+                key={n.name}
+                type="button"
+                role="tab"
+                aria-selected={worker?.name === n.name}
+                className={worker?.name === n.name ? "on" : ""}
+                onClick={() => pick(n.name)}
+                title={`${n.url} · ${n.online ? "online" : "offline"}`}
+              >
+                <NodeDot online={n.online} /> {n.name}
+              </button>
+            ))}
+          </div>
+        )}
         <span className="faint" style={{ fontSize: 12 }}>
-          probed {ago(res.probedAt)} · refreshes every 3 s
+          {probedAt ? `probed ${ago(probedAt)}` : "no report yet"} · refreshes every 3 s
         </span>
       </TopBar>
       <div className="page">
         <div className="page-pad col" style={{ gap: 16 }}>
-          <div className="stats">
-            <Stat
-              v={`${freeGpus} / ${res.gpus.length}`}
-              l="GPUs free"
-              frac={res.gpus.length ? 1 - freeGpus / res.gpus.length : 0}
-            />
-            <Stat
-              v={`${leasedCpus} / ${res.cpu.count}`}
-              l={`CPUs leased · ${res.cpu.busy.toFixed(0)} in use · load ${res.cpu.load1.toFixed(1)}`}
-              frac={leasedCpus / res.cpu.count}
-              used={res.cpu.busy / res.cpu.count}
-            />
-            <Stat
-              v={`${(res.memory.totalGB - res.memory.availableGB).toFixed(0)} / ${res.memory.totalGB.toFixed(0)} GB`}
-              l={`memory used · ${leasedMem} GB leased`}
-              frac={1 - res.memory.availableGB / res.memory.totalGB}
-            />
-            <Stat
-              v={`${res.disk.freeGB.toFixed(0)} GB`}
-              l={`disk free · ${res.disk.path}`}
-              frac={1 - res.disk.freeGB / res.disk.totalGB}
-            />
-            <Stat v={String(d.queued.length)} l="runs queued" />
-          </div>
-
-          <section className="col" style={{ gap: 8 }}>
-            <h3 className="section-title">GPUs</h3>
-            {res.gpuError && (
-              <div
-                className="callout"
-                style={{ "--c": "var(--st-cancelled)" } as React.CSSProperties}
-              >
-                <IconAlert size={15} /> {res.gpuError}
-              </div>
-            )}
-            {res.gpus.length === 0 ? (
-              <Empty title="No GPUs detected" icon={<IconChip size={28} />} />
-            ) : (
-              <div className="gpus">
-                {res.gpus.map((g) => (
-                  <GpuTile
-                    key={g.uuid}
-                    g={g}
-                    lease={owner.get(g.uuid)}
-                    run={byId.get(owner.get(g.uuid)?.runId ?? "")}
-                    color={leaseColor.get(owner.get(g.uuid)?.id ?? "")}
+          {worker ? (
+            <WorkerDetail n={worker} runs={runs} byId={byId} />
+          ) : (
+            <>
+              <NodeDetail
+                res={d.resources}
+                leases={d.leases}
+                queued={d.queued.length}
+                byId={byId}
+              />
+              {d.nodes.length > 0 && <Nodes nodes={d.nodes} runs={runs} onOpen={pick} />}
+              <section className="card">
+                <div className="card-h">
+                  Queue <span className="sub">{d.queued.length}</span>
+                </div>
+                {d.queued.length === 0 ? (
+                  <div className="card-b faint">
+                    Nothing waiting. Runs that cannot get resources wait here instead of failing.
+                  </div>
+                ) : (
+                  <QueueTable
+                    rows={d.queued.map((q) => ({ id: q.runId, reason: q.reason }))}
+                    byId={byId}
                   />
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="card">
-            <div className="card-h">
-              Active leases <span className="sub">{active.length}</span>
-            </div>
-            {active.length === 0 ? (
-              <div className="card-b faint">No active leases.</div>
-            ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Run</th>
-                    <th>GPUs</th>
-                    <th className="r">CPUs</th>
-                    <th className="r">Memory</th>
-                    <th className="r">Held for</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {active.map((l) => {
-                    const r = byId.get(l.runId);
-                    return (
-                      <tr key={l.id}>
-                        <td>
-                          <RunCell id={l.runId} run={r} color={leaseColor.get(l.id)} />
-                        </td>
-                        <td className="mono">
-                          {l.gpuIds
-                            .map((u) => `#${res.gpus.find((g) => g.uuid === u)?.index ?? "?"}`)
-                            .join(" ") || "—"}
-                        </td>
-                        <td className="r num">{l.cpus}</td>
-                        <td className="r num">{l.memGB} GB</td>
-                        <td className="r num muted">
-                          {duration(Date.now() - Date.parse(l.createdAt))}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </section>
-
-          {d.nodes.length > 0 && <Nodes nodes={d.nodes} runs={runs} />}
-
-          <section className="card">
-            <div className="card-h">
-              Queue <span className="sub">{d.queued.length}</span>
-            </div>
-            {d.queued.length === 0 ? (
-              <div className="card-b faint">
-                Nothing waiting. Runs that cannot get resources wait here instead of failing.
-              </div>
-            ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th style={{ width: 40 }}>#</th>
-                    <th>Run</th>
-                    <th>Requested</th>
-                    <th>Waiting because</th>
-                    <th className="r">Waiting</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {d.queued.map((q, i) => {
-                    const r = byId.get(q.runId);
-                    const rq = r?.spec.resources;
-                    return (
-                      <tr key={q.runId}>
-                        <td className="faint num">{i + 1}</td>
-                        <td>
-                          <RunCell id={q.runId} run={r} />
-                        </td>
-                        <td className="mono muted">
-                          {rq
-                            ? `${rq.gpus} GPU${rq.gpuMemGB ? ` ≥${rq.gpuMemGB}G` : ""} · ${rq.cpus} CPU · ${rq.memGB} GB`
-                            : "—"}
-                        </td>
-                        <td>{q.reason ?? "—"}</td>
-                        <td className="r num muted">{r ? duration(queuedFor(r)) : "—"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </section>
+                )}
+              </section>
+            </>
+          )}
         </div>
       </div>
     </>
   );
 }
 
-/** Worker nodes this daemon places runs on: their resources as last reported, and our runs there. */
-function Nodes({ nodes, runs }: { nodes: NodeStatus[]; runs: Run[] }) {
+const NodeDot = ({ online }: { online: boolean }) => (
+  <span
+    className="node-dot"
+    style={{ background: online ? "var(--st-succeeded)" : "var(--st-failed)" }}
+  />
+);
+
+/**
+ * One node's resources: stat cards, GPU cards and active leases. Leases of runs this node does not
+ * know (a worker's own runs, or runs from another primary) are listed without a link.
+ */
+function NodeDetail({
+  res,
+  leases,
+  queued,
+  byId,
+}: {
+  res: NodeResources;
+  leases: Lease[];
+  queued: number;
+  byId: Map<string, Run>;
+}) {
+  const active = leases.filter((l) => l.state === "active");
+  const owner = new Map<string, Lease>();
+  for (const l of active) for (const g of l.gpuIds) owner.set(g, l);
+  const leaseColor = new Map(active.map((l, i) => [l.id, PALETTE[i % PALETTE.length] as string]));
+  const leasedCpus = active.reduce((a, l) => a + l.cpus, 0);
+  const leasedMem = active.reduce((a, l) => a + l.memGB, 0);
+  const freeGpus = res.gpus.filter((g) => g.available && !owner.has(g.uuid)).length;
+  const external = res.gpus.filter((g) => !g.available && !owner.has(g.uuid)).length;
+
+  return (
+    <>
+      <div className="stats">
+        <Stat
+          v={`${freeGpus} / ${res.gpus.length}`}
+          l={`GPUs free${external ? ` · ${external} busy outside Orbit` : ""}`}
+          frac={res.gpus.length ? 1 - freeGpus / res.gpus.length : 0}
+        />
+        <Stat
+          v={`${leasedCpus} / ${res.cpu.count}`}
+          l={`CPUs leased · ${res.cpu.busy.toFixed(0)} in use · load ${res.cpu.load1.toFixed(1)}`}
+          frac={leasedCpus / res.cpu.count}
+          used={res.cpu.busy / res.cpu.count}
+        />
+        <Stat
+          v={`${(res.memory.totalGB - res.memory.availableGB).toFixed(0)} / ${res.memory.totalGB.toFixed(0)} GB`}
+          l={`memory used · ${leasedMem} GB leased`}
+          frac={1 - res.memory.availableGB / res.memory.totalGB}
+        />
+        <Stat
+          v={`${res.disk.freeGB.toFixed(0)} GB`}
+          l={`disk free · ${res.disk.path}`}
+          frac={1 - res.disk.freeGB / res.disk.totalGB}
+        />
+        <Stat v={String(queued)} l="runs queued" />
+      </div>
+
+      <section className="col" style={{ gap: 8 }}>
+        <h3 className="section-title">GPUs</h3>
+        {res.gpuError && (
+          <div className="callout" style={{ "--c": "var(--st-cancelled)" } as React.CSSProperties}>
+            <IconAlert size={15} /> {res.gpuError}
+          </div>
+        )}
+        {res.gpus.length === 0 ? (
+          <Empty title="No GPUs detected" icon={<IconChip size={28} />} />
+        ) : (
+          <div className="gpus">
+            {res.gpus.map((g) => (
+              <GpuTile
+                key={g.uuid}
+                g={g}
+                lease={owner.get(g.uuid)}
+                run={byId.get(owner.get(g.uuid)?.runId ?? "")}
+                color={leaseColor.get(owner.get(g.uuid)?.id ?? "")}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="card-h">
+          Active leases <span className="sub">{active.length}</span>
+        </div>
+        {active.length === 0 ? (
+          <div className="card-b faint">No active leases.</div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Run</th>
+                <th>GPUs</th>
+                <th className="r">CPUs</th>
+                <th className="r">Memory</th>
+                <th className="r">Held for</th>
+              </tr>
+            </thead>
+            <tbody>
+              {active.map((l) => (
+                <tr key={l.id}>
+                  <td>
+                    <RunCell id={l.runId} run={byId.get(l.runId)} color={leaseColor.get(l.id)} />
+                  </td>
+                  <td className="mono">
+                    {l.gpuIds
+                      .map((u) => `#${res.gpus.find((g) => g.uuid === u)?.index ?? "?"}`)
+                      .join(" ") || "—"}
+                  </td>
+                  <td className="r num">{l.cpus}</td>
+                  <td className="r num">{l.memGB} GB</td>
+                  <td className="r num muted">{duration(Date.now() - Date.parse(l.createdAt))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+    </>
+  );
+}
+
+/** A worker as its last heartbeat reported it, with the runs this node has waiting there. */
+function WorkerDetail({ n, runs, byId }: { n: NodeStatus; runs: Run[]; byId: Map<string, Run> }) {
+  const i = n.info;
+  const ours = runs.filter((r) => r.remote && r.node === n.name);
+  // A run placed there but still waiting in the worker's own queue.
+  const waiting = ours.filter((r) => r.state === "starting" && !r.startedAt);
+  const running = ours.filter(
+    (r) => r.state === "running" || (r.state === "starting" && r.startedAt),
+  );
+  return (
+    <>
+      {(!n.online || n.error) && (
+        <div className="callout" style={{ "--c": "var(--st-failed)" } as React.CSSProperties}>
+          <IconAlert size={15} />
+          {n.online ? "" : "Offline. "}
+          {n.error ?? ""}
+          {i &&
+            !n.online &&
+            ` Showing the last report (${n.lastSeen ? ago(n.lastSeen) : "never"}).`}
+        </div>
+      )}
+      <section className="card">
+        <div className="card-h">
+          <NodeDot online={n.online} /> {n.name}
+          <span className="sub mono">{n.url}</span>
+        </div>
+        <div className="card-b">
+          <dl className="kv">
+            <dt>Orbit</dt>
+            <dd className="mono">{i ? `${i.version} · protocol ${i.protocol}` : "—"}</dd>
+            <dt>Last report</dt>
+            <dd>{n.lastSeen ? `${ago(n.lastSeen)} (${dateTime(n.lastSeen)})` : "never"}</dd>
+            <dt>Our runs there</dt>
+            <dd>
+              {running.length} running · {waiting.length} waiting in its queue
+              {i ? ` · ${i.queued} queued there in total` : ""}
+            </dd>
+            <dt>Datasets</dt>
+            <dd className="mono">{i?.datasets.join(", ") || "—"}</dd>
+            <dt>Auth profiles</dt>
+            <dd>
+              {i?.profiles.length ? (
+                <span className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                  {i.profiles.map((p) => (
+                    <span
+                      key={p.name}
+                      className={`chip mono ${p.cli ? "" : "warn"}`}
+                      title={
+                        p.cli
+                          ? `${p.harness} CLI installed`
+                          : `${p.harness} CLI missing: runs with this profile are not placed here`
+                      }
+                    >
+                      {p.name} · {p.harness}
+                      {p.cli ? "" : " · no CLI"}
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                <span className="faint">none (runs with --auth are not placed here)</span>
+              )}
+            </dd>
+          </dl>
+        </div>
+      </section>
+      {i ? (
+        <NodeDetail res={i.resources} leases={i.leases} queued={i.queued} byId={byId} />
+      ) : (
+        <Empty title={`No report from ${n.name} yet`} icon={<IconChip size={28} />}>
+          The primary asks every node for its resources every few seconds.
+        </Empty>
+      )}
+      {waiting.length > 0 && (
+        <section className="card">
+          <div className="card-h">
+            Our runs waiting on {n.name} <span className="sub">{waiting.length}</span>
+          </div>
+          <QueueTable rows={waiting.map((r) => ({ id: r.id, reason: r.reason }))} byId={byId} />
+        </section>
+      )}
+    </>
+  );
+}
+
+function QueueTable({
+  rows,
+  byId,
+}: {
+  rows: { id: string; reason: string | null }[];
+  byId: Map<string, Run>;
+}) {
+  return (
+    <table className="table">
+      <thead>
+        <tr>
+          <th style={{ width: 40 }}>#</th>
+          <th>Run</th>
+          <th>Requested</th>
+          <th>Waiting because</th>
+          <th className="r">Waiting</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((q, i) => {
+          const r = byId.get(q.id);
+          const rq = r?.spec.resources;
+          return (
+            <tr key={q.id}>
+              <td className="faint num">{i + 1}</td>
+              <td>
+                <RunCell id={q.id} run={r} />
+              </td>
+              <td className="mono muted">
+                {rq
+                  ? `${rq.gpus} GPU${rq.gpuMemGB ? ` ≥${rq.gpuMemGB}G` : ""} · ${rq.cpus} CPU · ${rq.memGB} GB`
+                  : "—"}
+              </td>
+              <td>{q.reason ?? "—"}</td>
+              <td className="r num muted">{r ? duration(queuedFor(r)) : "—"}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/** Worker nodes this daemon places runs on: their resources as last reported; a row opens its detail. */
+function Nodes({
+  nodes,
+  runs,
+  onOpen,
+}: {
+  nodes: NodeStatus[];
+  runs: Run[];
+  onOpen: (name: string) => void;
+}) {
   return (
     <section className="card">
       <div className="card-h">
-        Worker nodes <span className="sub">{nodes.filter((n) => n.online).length} online</span>
+        Worker nodes{" "}
+        <span className="sub">
+          {nodes.filter((n) => n.online).length} online · click a node for its detail
+        </span>
       </div>
       <table className="table">
         <thead>
@@ -211,23 +392,18 @@ function Nodes({ nodes, runs }: { nodes: NodeStatus[]; runs: Run[] }) {
             const active = i?.leases.filter((l) => l.state === "active") ?? [];
             const held = new Set(active.flatMap((l) => l.gpuIds));
             const free = i?.resources.gpus.filter((g) => g.available && !held.has(g.uuid)).length;
+            const external = i?.resources.gpus.filter(
+              (g) => !g.available && !held.has(g.uuid),
+            ).length;
             const ours = runs.filter(
               (r) =>
                 r.remote && r.node === n.name && (r.state === "running" || r.state === "starting"),
             ).length;
             return (
-              <tr key={n.name}>
+              <tr key={n.name} className="click" onClick={() => onOpen(n.name)}>
                 <td>
                   <div className="row" style={{ gap: 8 }}>
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 4,
-                        flex: "none",
-                        background: n.online ? "var(--st-succeeded)" : "var(--st-failed)",
-                      }}
-                    />
+                    <NodeDot online={n.online} />
                     <b>{n.name}</b>
                     <span className="faint mono" style={{ fontSize: 11 }}>
                       {n.url}
@@ -239,7 +415,12 @@ function Nodes({ nodes, runs }: { nodes: NodeStatus[]; runs: Run[] }) {
                     </div>
                   )}
                 </td>
-                <td className="num">{i ? `${free} / ${i.resources.gpus.length}` : "—"}</td>
+                <td className="num">
+                  {i ? `${free} / ${i.resources.gpus.length}` : "—"}
+                  {external ? (
+                    <span className="faint"> · {external} busy outside Orbit</span>
+                  ) : null}
+                </td>
                 <td className="r num">
                   {i
                     ? `${active.reduce((a, l) => a + l.cpus, 0)} · ${i.resources.cpu.busy.toFixed(0)} / ${i.resources.cpu.count}`
@@ -314,9 +495,18 @@ function RunCell({ id, run, color }: { id: string; run?: Run; color?: string }) 
         <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flex: "none" }} />
       )}
       {run && <StateIcon state={run.state} size={12} />}
-      <Link href={`${runPath(id)}`} className="ellipsis" style={{ color: "var(--text)" }}>
-        {run ? runTitle(run) : id}
-      </Link>
+      {run ? (
+        <Link href={`${runPath(id)}`} className="ellipsis" style={{ color: "var(--text)" }}>
+          {runTitle(run)}
+        </Link>
+      ) : (
+        <span
+          className="muted"
+          title="Not a run of this node (the worker's own, or another primary's)"
+        >
+          not ours
+        </span>
+      )}
       <span className="faint mono" style={{ fontSize: 11 }}>
         {id}
       </span>
