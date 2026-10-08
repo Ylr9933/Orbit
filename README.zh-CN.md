@@ -67,7 +67,8 @@ orbit doctor                    # 检查 docker、nvidia-smi、git、node 与 Ag
 orbit resources                 # GPU、CPU、内存、磁盘、租约与队列
 ```
 
-第一条 `orbit` 命令会自动在后台启动 daemon。它只监听 `127.0.0.1:7717`，状态保存在 `~/.orbit`。
+第一条 `orbit` 命令会自动在后台启动 daemon。它只监听 `127.0.0.1:7717`，状态保存在 `~/.orbit`。每个用户各跑自己的
+daemon：如果 7717 已被其他用户的 daemon 占用，会自动换一个空闲端口（CLI 通过 `~/.orbit` 找到它）。
 
 在某个 git 仓库里运行一个命令：
 
@@ -156,7 +157,8 @@ orbit web <id> --open           # 在 Web 中打开该 Run
 通知配置）。按 `?` 查看快捷键。
 
 daemon 只监听 `127.0.0.1`。从其他机器查看时用 SSH 隧道：
-`ssh -L 7717:127.0.0.1:7717 gpu-server`，然后在本地打开打印出的 URL。
+`ssh -L 7717:127.0.0.1:7717 gpu-server`，然后在本地打开打印出的 URL（daemon 不在 7717 时，用 `orbit web`
+打印的 URL 里的端口）。
 
 ### Agent 接入
 
@@ -277,7 +279,7 @@ orbit run -d imagenet --gpus 1 --image pytorch/pytorch -- python train.py
 | --- | --- | --- |
 | 状态目录（数据库、profile、配置） | `~/.orbit` | `ORBIT_HOME` |
 | 数据目录（Run 目录、bench staging、代码 bundle） | 同状态目录 | `orbit config data <dir>` 或 `ORBIT_DATA` |
-| daemon 端口（`127.0.0.1`） | 7717 | `ORBIT_PORT` 或 `orbit daemon --port` |
+| daemon 端口（`127.0.0.1`） | 7717，被占用时换空闲端口 | `ORBIT_PORT` 或 `orbit daemon --port`（此时端口被占用直接报错） |
 | 节点名 | 主机名 | `ORBIT_NODE` |
 | Orbit 可用的 GPU | 全部 | `ORBIT_GPUS=0,1` |
 | daemon 地址与 token | `~/.orbit/daemon.json`（0600） | |

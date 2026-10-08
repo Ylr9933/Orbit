@@ -188,16 +188,24 @@ export async function startDaemon(
     webDir: findWebDir(),
   });
 
-  const server = await new Promise<ServerType>((resolve, reject) => {
-    const s = serve(
-      { fetch: app.fetch, hostname: "127.0.0.1", port: opts.port ?? paths.port },
-      () => resolve(s),
-    );
-    s.once("error", reject);
-  }).catch((e) => {
-    store.close();
-    throw e;
-  });
+  const listen = (port: number) =>
+    new Promise<ServerType>((resolve, reject) => {
+      const s = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, () => resolve(s));
+      s.once("error", reject);
+    });
+  const wanted = opts.port ?? paths.port;
+  const server = await listen(wanted)
+    .catch((e: NodeJS.ErrnoException) => {
+      // Another user's daemon on the default port: take any free one. Clients find the daemon
+      // through daemon.json, never by the port.
+      if (e.code !== "EADDRINUSE" || opts.port !== undefined || paths.portSet) throw e;
+      console.error(`orbit: port ${wanted} is in use (another user's daemon?); using a free port`);
+      return listen(0);
+    })
+    .catch((e) => {
+      store.close();
+      throw e;
+    });
   const addr = server.address();
   const port = typeof addr === "object" && addr ? addr.port : (opts.port ?? paths.port);
   const url = `http://127.0.0.1:${port}`;

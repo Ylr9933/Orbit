@@ -22,6 +22,8 @@ export interface OrbitPaths {
   gpus: string[] | null;
   /** Daemon port on 127.0.0.1 (`ORBIT_PORT`, default 7717). */
   port: number;
+  /** True when `ORBIT_PORT` chose the port: then a busy port is an error instead of a fallback. */
+  portSet: boolean;
   /** JSON `{ url, token, pid }` written by the running daemon (0600). */
   daemonFile: string;
   daemonLog: string;
@@ -91,6 +93,7 @@ export function orbitPaths(env: NodeJS.ProcessEnv = process.env): OrbitPaths {
     node: env.ORBIT_NODE || hostname(),
     gpus: gpus.length > 0 ? gpus : null,
     port: Number(env.ORBIT_PORT) || DEFAULT_PORT,
+    portSet: Boolean(Number(env.ORBIT_PORT)),
     daemonFile: join(home, "daemon.json"),
     daemonLog: join(home, "daemon.log"),
     db: join(home, "orbit.db"),

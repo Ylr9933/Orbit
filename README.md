@@ -76,7 +76,8 @@ orbit resources                 # GPUs, CPU, memory, disk, leases and the queue
 ```
 
 The first `orbit` command starts a background daemon automatically. It listens only on
-`127.0.0.1:7717` and keeps its state in `~/.orbit`.
+`127.0.0.1:7717` and keeps its state in `~/.orbit`. Every user runs their own daemon: when another
+user's daemon already holds 7717, yours takes a free port (the CLI finds it through `~/.orbit`).
 
 Run something from inside a git repository:
 
@@ -169,7 +170,8 @@ leases, queue, worker nodes), bench jobs and comparisons, and settings (doctor, 
 profiles). Keyboard shortcuts are listed with `?`.
 
 The daemon listens on `127.0.0.1` only. To view it from another machine, use an SSH tunnel:
-`ssh -L 7717:127.0.0.1:7717 gpu-server`, then open the printed URL locally.
+`ssh -L 7717:127.0.0.1:7717 gpu-server`, then open the printed URL locally (use the port in the URL that
+`orbit web` prints if your daemon is not on 7717).
 
 ### Agent integration
 
@@ -302,7 +304,7 @@ public internet. Details: [docs/guides/multi-node.md](docs/guides/multi-node.md)
 | --- | --- | --- |
 | State directory (database, profiles, config) | `~/.orbit` | `ORBIT_HOME` |
 | Data directory (run directories, bench staging, code bundles) | the state directory | `orbit config data <dir>`, or `ORBIT_DATA` |
-| Daemon port (on `127.0.0.1`) | 7717 | `ORBIT_PORT`, or `orbit daemon --port` |
+| Daemon port (on `127.0.0.1`) | 7717, else a free port | `ORBIT_PORT`, or `orbit daemon --port` (then a busy port is an error) |
 | Node name | host name | `ORBIT_NODE` |
 | GPUs Orbit may use | all | `ORBIT_GPUS=0,1` |
 | Daemon endpoint and token | `~/.orbit/daemon.json` (0600) | |

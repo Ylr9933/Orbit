@@ -85,7 +85,8 @@ examples/      bench-adapters/<benchmark>/: external bench adapters (not part of
 | web (`packages/web/src`) | 自身文件；`@zjunlp/orbit` 只能 `import type` 自 `@zjunlp/orbit/contracts`，另可在运行时使用无依赖的 `@zjunlp/orbit/naming`（Run 显示名规则）与 `@zjunlp/orbit/metrics`（bench 指标的取值、聚合与格式化） |
 
 - **daemon 是本机状态的唯一写者**。CLI/MCP/Web 只通过 HTTP API 访问；CLI 需要时自动拉起 daemon。
-  daemon 只监听 `127.0.0.1`（默认端口 7717，`ORBIT_PORT` 可改），启动时生成随机 token，与地址一起写入
+  daemon 只监听 `127.0.0.1`（默认端口 7717，被占用时——同一台机器上另一个用户的 daemon——自动换空闲端口；`ORBIT_PORT` /
+  `--port` 指定的端口被占用则报错），启动时生成随机 token，与地址一起写入
   `~/.orbit/daemon.json`（0600）；所有 `/api/v1` 请求需 `Authorization: Bearer <token>` 或 Web 登录后的
   HttpOnly cookie（token 比较为常数时间；凭 cookie 的写请求须同源，否则 403）。`ORBIT_HOME` 可覆盖 `~/.orbit`。
 - **小状态与大数据分开**：`ORBIT_HOME`（默认 `~/.orbit`）只放数据库、profile、配置与 daemon 端点；Run 目录、bench
