@@ -1,6 +1,6 @@
 # Orbit status
 
-- **Updated at:** 2026-10-08T18:00:00+08:00
+- **Updated at:** 2026-10-08T19:00:00+08:00
 - **Basis:** `main`
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none.
@@ -27,6 +27,7 @@
 ## Main gaps
 
 - ASI / TB-Science not checked against originals. R4 not run on two real machines; no bundle cache eviction.
+- Per-user daemons on one machine (busy 7717 → free port) can lease the same free GPU at once; fix when needed with a shared per-GPU lock.
 - Bench metrics: tests and fake adapters only; group notifications may fire between solve and verify. Untried: some auth kinds, real IM webhooks (the Feishu app was checked on a phone). No MCP server; no overcommit.
 
 ## Next priorities
