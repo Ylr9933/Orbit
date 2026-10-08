@@ -36,7 +36,7 @@ Orbit 在隔离的 Docker 容器里、按 GPU / CPU / 内存租约运行它，�
 ## 环境要求
 
 - Linux。
-- Node.js 24.18 及以上（24.x）。仅源码开发需要 pnpm 10。
+- Node.js 24.18 及以上（24.x）。源码开发和 dsh 插件安装需要 pnpm 10。
 - Docker，当前用户无需 `sudo` 即可使用（例如加入 `docker` 组）。
 - GPU 运行：NVIDIA 驱动，以及 NVIDIA CDI spec 或 NVIDIA Container Toolkit 之一。
 - git（用于代码快照）。
@@ -163,19 +163,21 @@ daemon 只监听 `127.0.0.1`。从其他机器查看时用 SSH 隧道：
 
 ### Agent 接入
 
-已安装 Claude Code 后，一条命令安装两个 Orbit skill（npm 发布后可用）：
+已安装对应 Agent CLI 后，选择一条命令安装（npm 发布后可用）：
 
 ```bash
-npx -y @zjunlp/orbit plugin install
+npx -y @zjunlp/orbit plugin install claude
+npx -y @zjunlp/orbit plugin install codex
+npx -y @zjunlp/orbit plugin install dsh --profile headless
+npx -y @zjunlp/orbit plugin install pi
 ```
 
-命令会注册 `zjunlp/Orbit` GitHub marketplace，并在用户范围安装 `orbit@orbit`。
-重启 Claude Code 后可使用 `/orbit:orbit` 与 `/orbit:orbit-bench`；未全局安装 `orbit` 时，
-skill 会通过 `npx` 调用。开发时可用 `pnpm orbit plugin install --source .` 安装本地版本。
-手动 marketplace 安装与 Codex skill 安装见 [plugin/README.md](plugin/README.md)。
+不指定 Agent 时默认安装 Claude Code 插件。重启 Agent 后加载 `orbit` 和 `orbit-bench`；
+四个平台共享同一份 skills，未全局安装 `orbit` 时通过 `npx` 调用。dsh 需要 pnpm，并显式指定
+带 skills 服务的 profile。支持版本、本地开发、更新和卸载见 [plugin/README.md](plugin/README.md)。
 
-CLI 需要网络权限访问本地 daemon。每个 Run 都会记录发起它的 Agent 会话，Web 中可直接查看。
-MCP 尚未实现；当前插件通过已有 CLI 和 HTTP API 工作。
+CLI 需要网络权限访问本地 daemon。会话采集与容器内 Agent 目前支持 Codex 和 Claude Code；
+dsh/pi 的宿主机插件通过已有 CLI 提交实验，其会话解析与容器内 harness 尚未实现。MCP 仍未实现。
 
 ### 在 Run 中运行 Agent（凭据 profile）
 

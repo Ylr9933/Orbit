@@ -1,12 +1,13 @@
 # Orbit status
 
-- **Updated at:** 2026-10-08T21:53:12+08:00
-- **Basis:** `feat/npm-plugin-install`
+- **Updated at:** 2026-10-08T22:27:03+08:00
+- **Basis:** `main` (validated on `feat/npm-plugin-install`)
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
-- **Blockers:** none for implementation; npm publication deferred by the user.
+- **Blockers:** none for implementation; first npm publication deferred by the user (publisher authentication still needed).
 
 ## Available
 
+- npm tarball with Web and shared skills; one-command native plugins for Claude Code, Codex, dsh and pi. Isolated real installs and skill loading verified. [Plugin guide](../plugin/README.md) · [Release guide](guides/releasing.md).
 - `pnpm verify` (Biome, tsc, boundaries, vitest, builds). Auto-started local daemon (127.0.0.1, token/cookie, sqlite); `orbit run / sweep / ps / show / logs / wait [-g] / cancel / note / resources / doctor / web / auth / notify / bench / node / data`.
 - Resource leases with a queue (with reasons); use outside Orbit is respected (busy GPUs, measured CPU
   use, `MemAvailable`). Docker executor: code snapshot, CDI GPU mapping checked against the lease,
@@ -25,16 +26,15 @@
 
 ## Main gaps
 
-- npm tarball and `orbit plugin install` implemented; first public release deferred by the user (npm login and review/merge still needed). [Release guide](guides/releasing.md).
 - ASI / TB-Science not checked against originals. R4 not run on two real machines; no bundle cache eviction.
 - Per-user daemons on one machine (busy 7717 → free port) can lease the same free GPU at once; fix when needed with a shared per-GPU lock.
-- Bench metrics: tests and fake adapters only; group notifications may fire between solve and verify. Untried: some auth kinds, real IM webhooks (the Feishu app was checked on a phone). No MCP server; no overcommit.
+- Bench metrics: tests and fake adapters only; group notifications may fire between solve and verify. Untried: some auth kinds, real IM webhooks (the Feishu app was checked on a phone). No MCP server or dsh/pi session capture/in-container harnesses; no overcommit.
 
 ## Next priorities
-1. Real Agent bench jobs (RCB first), Web `/bench`, R4 on two machines; review, merge.
+1. Real Agent bench jobs (RCB first), Web `/bench`, R4 on two machines.
 2. Original-parity check on sampled ASI and TB-Science tasks.
 
 ## Records
 
 [design.md](design.md) · [R0](tasks/20260929-ts-rewrite-r0.md) · [R1](tasks/20260930-r1-research-loop.md) · [R2](tasks/20260930-r2-auth-notify.md) · [R3](tasks/20260930-r3-bench.md) · [R4](tasks/20260930-r4-multinode.md) · [review](tasks/20261001-code-review.md) · [cpu](tasks/20261002-cpu-external-load.md) ·
-[adapters](tasks/20261003-bench-adapter-protocol.md) · [resources](tasks/20261003-bench-resources-usage.md) · [validity](tasks/20261004-bench-validity-checks.md) · [web](tasks/20261004-web-jobs-trials-delete.md) · [metrics](tasks/20261005-bench-metrics.md) · [folders](tasks/20261005-data-dir-folders.md) · [gpu-procs](tasks/20261006-gpu-processes.md) · [preflight](tasks/20261008-preflight-smoke.md) · [rescore](tasks/20261008-bench-rescore.md) · [feishu-app](tasks/20261008-feishu-app.md) · [feishu-init](tasks/20261008-feishu-init.md) · [npm](tasks/20261008-npm-plugin-install.md)
+[adapters](tasks/20261003-bench-adapter-protocol.md) · [resources](tasks/20261003-bench-resources-usage.md) · [validity](tasks/20261004-bench-validity-checks.md) · [web](tasks/20261004-web-jobs-trials-delete.md) · [metrics](tasks/20261005-bench-metrics.md) · [folders](tasks/20261005-data-dir-folders.md) · [gpu-procs](tasks/20261006-gpu-processes.md) · [preflight](tasks/20261008-preflight-smoke.md) · [rescore](tasks/20261008-bench-rescore.md) · [feishu-app](tasks/20261008-feishu-app.md) · [feishu-init](tasks/20261008-feishu-init.md) · [npm](tasks/20261008-npm-plugin-install.md) · [plugins](tasks/20261008-agent-plugins.md)

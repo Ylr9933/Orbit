@@ -6,6 +6,7 @@ export default defineConfig({
     contracts: "src/contracts/index.ts",
     naming: "src/contracts/naming.ts",
     metrics: "src/contracts/metrics.ts",
+    "plugin/dsh": "src/dsh.ts",
   },
   format: "esm",
   platform: "node",

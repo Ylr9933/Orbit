@@ -44,7 +44,7 @@ Open `docs/ppt/index.html` in a browser to present offline.
 ## Requirements
 
 - Linux.
-- Node.js 24.18 or later (24.x). pnpm 10 is only needed for source development.
+- Node.js 24.18 or later (24.x). pnpm 10 is needed for source development and dsh plugin installation.
 - Docker, usable by your user without `sudo` (e.g. a member of the `docker` group).
 - For GPU runs: the NVIDIA driver and either an NVIDIA CDI spec or the NVIDIA Container Toolkit.
 - git (for code snapshots).
@@ -179,20 +179,23 @@ The daemon listens on `127.0.0.1` only. To view it from another machine, use an 
 
 ### Agent integration
 
-With Claude Code installed, install both Orbit skills in one command (after the npm release):
+With your agent CLI installed, choose one command (after the npm release):
 
 ```bash
-npx -y @zjunlp/orbit plugin install
+npx -y @zjunlp/orbit plugin install claude
+npx -y @zjunlp/orbit plugin install codex
+npx -y @zjunlp/orbit plugin install dsh --profile headless
+npx -y @zjunlp/orbit plugin install pi
 ```
 
-This registers the `zjunlp/Orbit` GitHub marketplace and installs `orbit@orbit` for your user.
-Restart Claude Code to load `/orbit:orbit` and `/orbit:orbit-bench`. The skills use `npx` when
-`orbit` is not on PATH. A local checkout can be tested with `pnpm orbit plugin install --source .`.
-Manual marketplace installation and Codex skill installation are in [plugin/README.md](plugin/README.md).
+Omitting the agent defaults to Claude Code. Restart the agent to load `orbit` and `orbit-bench`.
+All four integrations share the same skills and use `npx` when `orbit` is not on PATH. dsh requires
+pnpm and an explicit profile with its skills service. See [plugin/README.md](plugin/README.md) for
+supported versions, local development, native management and removal.
 
-The CLI needs network access to reach the local daemon. Each run records the agent session that
-submitted it, and the Web UI shows that transcript. MCP is not implemented yet; this plugin uses
-the existing CLI and HTTP API.
+The CLI needs network access to the local daemon. Session capture and in-container agents support
+Codex and Claude Code; dsh/pi host plugins use the existing CLI without adding those harnesses.
+MCP is not implemented yet.
 
 ### Agents inside runs (auth profiles)
 

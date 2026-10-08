@@ -43,11 +43,17 @@ Web (local SPA served by the daemon): runs, compare, logs, sessions, bench revie
 vitest 测试，Biome 格式/lint，tsdown 打包。发布为单个 npm 包 `@zjunlp/orbit`，命令 `orbit`。
 
 分发：`pnpm pack:release` 先构建 Web、CLI 与契约 JS / 声明文件，生成包含 Web、README 与 MIT 许可的
-tarball；pnpm 的 `publishConfig.exports` 将仓库内源码入口替换为发布包的 `dist` 入口。
+tarball（含共享 skills 与 dsh 薄入口）；pnpm 的 `publishConfig.exports` 将仓库内源码入口替换为发布包的 `dist` 入口。
 `pnpm smoke:package [tarball]` 在仓库外安装，验证 CLI、导出、自动 daemon 与 Web 资源。
 用户通过 `npx -y @zjunlp/orbit doctor` 试用或 `npm install -g @zjunlp/orbit` 安装。
-`orbit plugin install` 只调用 Claude Code 的 marketplace 注册与用户范围安装命令（默认 `zjunlp/Orbit`，
-`--source` 可选本地 checkout）；两个 skill 在无全局 CLI 时使用 npx。插件不自动安装全局包，也不修改 daemon 状态。
+`orbit plugin install [claude|codex|dsh|pi]` 调用各平台原生安装器，省略平台仍默认 Claude。
+Claude / Codex 注册 `zjunlp/Orbit` marketplace 后安装 `orbit@orbit`；Codex 使用根 `plugin.json` 和
+`.agents/plugins/marketplace.json`。dsh 必须指定带 skills 服务的 `--profile`，通过 npm bundle 的
+Cordis patch 挂载薄入口，委托宿主的 filesystem provider；本地包通过 `file:` 安装，避免目录链接在
+profile 外解析不到宿主依赖。pi 通过 npm 包的 `pi.skills` 发现 skills；本地目录注册需保留该目录。
+dsh / pi 默认安装与当前 CLI 相同版本的 npm 包，不引用 npx 临时缓存。各平台只有
+`plugin/skills/` 一份源文件，构建时复制入包；无全局 CLI 时使用 npx。安装器不改 daemon 状态或凭据。
+插件支持不扩展容器内 harness、auth 或会话解析（目前仍只有 Codex / Claude）；MCP 独立待实现。
 GitHub Release 的 `v<version>` 标签触发 npm 发布工作流，通过 npm trusted publishing 认证；首次发布需要维护者登录。
 
 ## 3. 代码布局与依赖方向
@@ -68,9 +74,10 @@ packages/orbit/src/
   cli/         commander commands; talks to daemon through client only
   mcp/         MCP tools; talks to daemon through client only
   bin.ts       composition root of the `orbit` executable (wires cli + daemon); nothing imports it
+  dsh.ts       optional host plugin entry; delegates skill loading to dsh's filesystem provider
 packages/web/  React SPA (Vite, uPlot); imports `@zjunlp/orbit/contracts` types only; built into
                packages/orbit/dist/web and served by the daemon
-plugin/        skills/orbit (running experiments) and skills/orbit-bench (adapters, task resources) for Codex / Claude Code (+ .claude-plugin manifest)
+plugin/        canonical skills/orbit and skills/orbit-bench; portable / Claude manifests and dsh bundle patch
 examples/      bench-adapters/<benchmark>/: external bench adapters (not part of the package)
 ```
 

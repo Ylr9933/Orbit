@@ -7,6 +7,14 @@ import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const manifest = JSON.parse(readFileSync(join(root, "packages/orbit/package.json"), "utf8"));
+const portable = JSON.parse(readFileSync(join(root, "plugin/plugin.json"), "utf8"));
+const claude = JSON.parse(readFileSync(join(root, "plugin/.claude-plugin/plugin.json"), "utf8"));
+assert.equal(portable.name, claude.name);
+assert.equal(
+  portable.version,
+  claude.version,
+  "Codex and Claude must receive the same plugin version",
+);
 const temp = mkdtempSync(join(tmpdir(), "orbit-package-"));
 const env = {
   ...process.env,
@@ -43,6 +51,22 @@ try {
   assert.ok(existsSync(join(pkg, "LICENSE")));
   assert.ok(existsSync(join(pkg, "README.md")));
   const installed = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8"));
+  assert.deepEqual(installed.pi.skills, ["./dist/plugin/skills"]);
+  assert.ok(existsSync(join(pkg, installed.dsh.bundle.patch)));
+  const dsh = await import(join(pkg, "dist/plugin/dsh.mjs"));
+  assert.equal(typeof dsh.apply, "function");
+  assert.deepEqual(dsh.inject, ["skills"]);
+  assert.ok(
+    !existsSync(join(temp, "node_modules/@deepseek-ai/dsh-skill-filesystem")),
+    "dsh stays an optional host dependency",
+  );
+  for (const name of ["orbit", "orbit-bench"]) {
+    assert.equal(
+      readFileSync(join(pkg, "dist/plugin/skills", name, "SKILL.md"), "utf8"),
+      readFileSync(join(root, "plugin/skills", name, "SKILL.md"), "utf8"),
+      `packaged ${name} must match the canonical skill`,
+    );
+  }
   for (const target of Object.values(installed.exports) as { types: string; import: string }[]) {
     assert.ok(existsSync(join(pkg, target.types)), `missing types: ${target.types}`);
     assert.ok(existsSync(join(pkg, target.import)), `missing runtime: ${target.import}`);
