@@ -1,6 +1,7 @@
 import {
   type DoctorReport,
   type FolderStat,
+  type GpuProcess,
   inFolder,
   type Lease,
   type Ledger,
@@ -106,10 +107,19 @@ export function fmtNum(v: number): string {
   return a !== 0 && (a < 1e-3 || a >= 1e5) ? v.toExponential(3) : String(Number(v.toPrecision(5)));
 }
 
+/** One line per process holding memory: who, what, and for how long. Unknown parts are `?`. */
+function processLine(p: GpuProcess, now: number): string {
+  const started = p.startedAt ? Date.parse(p.startedAt) : null;
+  const age = started !== null && Number.isFinite(started) ? duration(now - started) : "unknown";
+  const where = p.runId ? `run ${p.runId}` : (p.container ?? "no container");
+  return `      pid ${p.pid}  ${p.memMiB} MiB  ${p.user ?? "unknown"}  ${p.command ?? "unknown"}  ${where}  ${age}`;
+}
+
 function formatNode(r: NodeResources, leases: Lease[], head: string): string[] {
   const owner = new Map(leases.flatMap((x) => x.gpuIds.map((g) => [g, x.runId] as const)));
   const lines = [head];
   if (r.gpuError) lines.push(`gpus: unavailable (${r.gpuError})`);
+  const now = Date.now();
   for (const g of r.gpus) {
     const run = owner.get(g.uuid);
     const state = run ? `run ${run}` : g.available ? "free" : "busy (external)";
@@ -117,6 +127,7 @@ function formatNode(r: NodeResources, leases: Lease[], head: string): string[] {
     lines.push(
       `  gpu${g.index} ${g.name}  ${g.memUsedMiB}/${g.memTotalMiB} MiB  util ${util.padStart(4)}  ${state}`,
     );
+    for (const p of g.processes) lines.push(processLine(p, now));
   }
   const leasedCpu = leases.reduce((n, x) => n + x.cpus, 0);
   const leasedMem = leases.reduce((n, x) => n + x.memGB, 0);

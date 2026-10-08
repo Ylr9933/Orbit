@@ -35,6 +35,7 @@ export type {
   CodeSnapshot,
   FolderStat,
   Gpu,
+  GpuProcess,
   Lease,
   Ledger,
   LogChunk,

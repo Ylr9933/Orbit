@@ -82,6 +82,7 @@ describe("GPU memory requests", () => {
         utilPct: 0,
         externalMemMiB: 0,
         available: true,
+        processes: [],
       },
     ],
     gpuError: null,

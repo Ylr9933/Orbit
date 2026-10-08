@@ -88,6 +88,7 @@ const gpu = (index: number, memGiB = 24) => ({
   utilPct: 0,
   externalMemMiB: 0,
   available: true,
+  processes: [],
 });
 
 const resources = (n: number): NodeResources => ({

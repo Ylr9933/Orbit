@@ -1,7 +1,8 @@
 import { readFile, statfs } from "node:fs/promises";
 import { availableParallelism, hostname, loadavg } from "node:os";
-import type { Gpu, NodeResources } from "../contracts/index.ts";
+import type { Gpu, GpuProcess, NodeResources } from "../contracts/index.ts";
 import { exec } from "../lib/exec.ts";
+import { type ComputeApp, describeProcesses, parseComputeApps } from "./gpu-procs.ts";
 
 /** A GPU is busy when processes outside Orbit hold more than this much memory. */
 export const EXTERNAL_BUSY_MIB = 1024;
@@ -49,24 +50,33 @@ export function parseGpuCsv(csv: string): RawGpu[] {
     });
 }
 
-/** Parse `nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory`; returns MiB per GPU UUID. */
-export function parseComputeApps(csv: string): Map<string, number> {
-  const byGpu = new Map<string, number>();
-  for (const line of csv.split("\n")) {
-    const [uuid, , mem] = line.split(",").map((f) => f.trim());
-    const mib = num(mem);
-    if (!uuid || mib === null) continue;
-    byGpu.set(uuid, (byGpu.get(uuid) ?? 0) + mib);
-  }
-  return byGpu;
-}
-
-/** Combine per-GPU memory with process usage. All usage counts as external; the allocator handles GPUs held by Orbit leases separately. */
-export function classifyGpus(raw: RawGpu[], appsMiB: Map<string, number>): Gpu[] {
+/**
+ * Combine per-GPU memory with its compute processes. All usage counts as external; the allocator
+ * handles GPUs held by Orbit leases separately.
+ */
+export function classifyGpus(
+  raw: RawGpu[],
+  apps: ComputeApp[],
+  described: Map<number, GpuProcess> = new Map(),
+): Gpu[] {
   return raw.map((g) => {
+    const mine = apps.filter((a) => a.uuid === g.uuid);
     // Some drivers (e.g. in containers) hide processes; fall back to total used memory.
-    const external = appsMiB.get(g.uuid) ?? g.memUsedMiB;
-    return { ...g, externalMemMiB: external, available: external < EXTERNAL_BUSY_MIB };
+    const external = mine.length ? mine.reduce((n, a) => n + a.memMiB, 0) : g.memUsedMiB;
+    const processes = mine
+      .map((a) => ({
+        ...(described.get(a.pid) ?? {
+          pid: a.pid,
+          user: null,
+          command: null,
+          startedAt: null,
+          container: null,
+          runId: null,
+        }),
+        memMiB: a.memMiB,
+      }))
+      .sort((x, y) => y.memMiB - x.memMiB);
+    return { ...g, externalMemMiB: external, available: external < EXTERNAL_BUSY_MIB, processes };
   });
 }
 
@@ -90,8 +100,9 @@ async function probeGpus(): Promise<{ gpus: Gpu[]; error: string | null }> {
     "--format=csv,noheader,nounits",
   ]);
   try {
-    const appsMiB = apps.code === 0 ? parseComputeApps(apps.stdout) : new Map<string, number>();
-    return { gpus: classifyGpus(parseGpuCsv(q.stdout), appsMiB), error: null };
+    const rows = apps.code === 0 ? parseComputeApps(apps.stdout) : [];
+    const described = await describeProcesses(rows).catch(() => new Map<number, GpuProcess>());
+    return { gpus: classifyGpus(parseGpuCsv(q.stdout), rows, described), error: null };
   } catch (e) {
     return { gpus: [], error: (e as Error).message };
   }

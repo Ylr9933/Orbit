@@ -5,6 +5,7 @@ import { Empty, Link, Loading, StateIcon } from "../components/ui.tsx";
 import {
   api,
   type Gpu,
+  type GpuProcess,
   type Lease,
   type NodeResources,
   type NodeStatus,
@@ -182,6 +183,7 @@ function NodeDetail({
                 lease={owner.get(g.uuid)}
                 run={byId.get(owner.get(g.uuid)?.runId ?? "")}
                 color={leaseColor.get(owner.get(g.uuid)?.id ?? "")}
+                byId={byId}
               />
             ))}
           </div>
@@ -514,7 +516,68 @@ function RunCell({ id, run, color }: { id: string; run?: Run; color?: string }) 
   );
 }
 
-function GpuTile({ g, lease, run, color }: { g: Gpu; lease?: Lease; run?: Run; color?: string }) {
+/** `wangxuehai` or `unknown`; a uid without a /etc/passwd entry shows as `uid 1001`. */
+const who = (p: GpuProcess) => p.user ?? "unknown";
+
+/** What the process is, or why we cannot say. */
+const what = (p: GpuProcess) => p.command ?? "unknown";
+
+/** PID, container and how long the process has been running; unreadable parts stay hidden. */
+function ProcessMeta({ p, now }: { p: GpuProcess; now: number }) {
+  const started = p.startedAt ? Date.parse(p.startedAt) : null;
+  const age =
+    started !== null && Number.isFinite(started) ? duration(Math.max(0, now - started)) : null;
+  return (
+    <span className="faint mono" style={{ fontSize: 11 }}>
+      pid {p.pid}
+      {p.container ? ` · ${p.container}` : ""}
+      {age ? ` · ${age}` : ""}
+    </span>
+  );
+}
+
+/** One process holding memory on a GPU: who, what, where and its size. */
+function GpuProcessRow({ p, run, now }: { p: GpuProcess; run?: Run; now: number }) {
+  return (
+    <div className="gpuproc">
+      <div className="col" style={{ minWidth: 0, flex: 1 }}>
+        <div className="row" style={{ gap: 6, minWidth: 0 }}>
+          <span className="ellipsis mono" style={{ fontSize: 12 }} title={p.command ?? undefined}>
+            {what(p)}
+          </span>
+          {p.memMiB > 0 && (
+            <span className="faint num" style={{ fontSize: 11 }}>
+              {gib(p.memMiB)} GiB
+            </span>
+          )}
+        </div>
+        <div className="row" style={{ gap: 6, justifyContent: "space-between" }}>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {who(p)}
+          </span>
+          <ProcessMeta p={p} now={now} />
+        </div>
+      </div>
+      {p.runId && <RunCell id={p.runId} run={run} />}
+    </div>
+  );
+}
+
+function GpuTile({
+  g,
+  lease,
+  run,
+  color,
+  byId,
+}: {
+  g: Gpu;
+  lease?: Lease;
+  run?: Run;
+  color?: string;
+  /** Runs of this node, to link the processes that belong to one. */
+  byId: Map<string, Run>;
+}) {
+  const now = Date.now();
   const external = !lease && !g.available;
   const status = lease ? "leased" : external ? "busy (external)" : "free";
   const c = lease ? color : external ? "var(--st-cancelled)" : "var(--st-succeeded)";
@@ -578,6 +641,18 @@ function GpuTile({ g, lease, run, color }: { g: Gpu; lease?: Lease; run?: Run; c
           <span className="faint">available</span>
         )}
       </div>
+      {g.processes.length > 0 && (
+        <div className="col gpuprocs">
+          {g.processes.map((p) => (
+            <GpuProcessRow
+              key={`${p.pid}-${p.memMiB}`}
+              p={p}
+              run={p.runId ? byId.get(p.runId) : undefined}
+              now={now}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

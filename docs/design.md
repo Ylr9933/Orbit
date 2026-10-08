@@ -109,6 +109,14 @@ examples/      bench-adapters/<benchmark>/: external bench adapters (not part of
 （5% 核数，至少 1 核）；刚创建的租约尚未体现在实测中，故不扣除（偏向排队）。内存同时受
 `MemAvailable` 约束。只影响准入，不抢占运行中的 Run。
 
+**谁占着 GPU**（`resources/gpu-procs.ts`）：把 `nvidia-smi --query-compute-apps` 的每个 pid 补成
+`Gpu.processes` 的一项 `{ pid, memMiB, user, command, startedAt, container, runId }`：用户取自
+`/proc/<pid>/status` 的 uid 加上 `/etc/passwd`；启动时间 = `/proc/stat` 的 `btime` 加上
+`/proc/<pid>/stat` 第 22 字段的时钟节拍（`getconf CLK_TCK`）；命令只记进程名和它跑的脚本或模块
+（`python -m vllm...`），**不记参数**（可能含 key）；容器名与 `orbit.run` 来自一次缓存的
+`docker ps`（5 s）。读不到的字段（别的 PID namespace、进程已退出、无权限）为 null，界面显示
+unknown。纯粹用于展示：准入只看显存占用。
+
 **RunSpec**：
 ```
 { name?, project?(repo path), image | dockerfile, command(argv), resources,
@@ -193,7 +201,8 @@ Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行�
   搜索、跟随）、Metrics（uPlot，平滑、同步十字线）、Artifacts、Code（相对快照 commit 的 diff）、
   Session（提交者会话标出提交点，与 Run 内 Agent 会话并排）、Events。
 - **Compare**：`?ids=` / `?group=`，按 seed 聚合 mean ± std、相对基线的变化、曲线叠加、配置差异。
-- **Resources**：GPU 卡片（Orbit 租约 / 外部占用 / 空闲、显存与利用率）、租约与队列、worker 节点表（§8）。
+- **Resources**：GPU 卡片（Orbit 租约 / 外部占用 / 空闲、显存与利用率，以及占用显存的每个进程：用户、
+  命令、PID、容器或 Run、已运行多久）、租约与队列、worker 节点表（§8）。
 - **Bench**：job 列表、job 详情（分数矩阵，格子进入 trial 页）、方法对比（§7）。
 - **删除**（不可恢复）：`POST runs/delete` 只删已终态且清理完成、不属于 bench trial 的 Run（远端 Run 须镜像同步结束）；
   全部校验通过才动手，删除记录、事件、租约与 Run 目录（容器以 root 写下的文件用该镜像的临时容器清掉；仍删不掉的

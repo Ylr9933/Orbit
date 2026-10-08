@@ -4,6 +4,21 @@ export { autoRunName, runDisplayName } from "./naming.ts";
 
 export const API_PREFIX = "/api/v1";
 
+/** A process holding GPU memory; null fields could not be read (shown as unknown). */
+export const GpuProcess = z.object({
+  pid: z.number().int(),
+  memMiB: z.number(),
+  user: z.string().nullable(),
+  /** Process name and its script or module, without arguments (they may hold secrets). */
+  command: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  /** Docker container name when the process runs in one. */
+  container: z.string().nullable(),
+  /** The Orbit run of that container. */
+  runId: z.string().nullable(),
+});
+export type GpuProcess = z.infer<typeof GpuProcess>;
+
 export const Gpu = z.object({
   index: z.number().int(),
   uuid: z.string(),
@@ -14,6 +29,8 @@ export const Gpu = z.object({
   /** Memory used on the GPU by any process; the allocator treats leased GPUs separately. */
   externalMemMiB: z.number(),
   available: z.boolean(),
+  /** Compute processes on this GPU, largest first (empty when the driver does not list them). */
+  processes: z.array(GpuProcess).default([]),
 });
 export type Gpu = z.infer<typeof Gpu>;
 

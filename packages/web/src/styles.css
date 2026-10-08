@@ -1464,6 +1464,19 @@ mark.cur {
 .gpu .idx {
   font: 600 20px var(--font-mono);
 }
+/* Who holds the memory: one row per compute process. */
+.gpuprocs {
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.gpuproc {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .stat {
   display: flex;
   flex-direction: column;

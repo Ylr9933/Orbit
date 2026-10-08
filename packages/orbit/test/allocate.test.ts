@@ -13,6 +13,7 @@ const gpu = (index: number, over: Partial<NodeResources["gpus"][number]> = {}) =
   utilPct: 0,
   externalMemMiB: 10,
   available: true,
+  processes: [],
   ...over,
 });
 
