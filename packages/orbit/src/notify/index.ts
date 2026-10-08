@@ -1,14 +1,19 @@
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
+  FEISHU_APP,
   isTerminal,
+  type Metrics,
   type NotifyEvent,
   type NotifyTarget,
   NotifyTargetInput,
   type NotifyTargetInput as NotifyTargetInputT,
   type Run,
 } from "../contracts/index.ts";
+import { FeishuApi, groupCard, runCard, textCard } from "./feishu.ts";
 
-type StoredTarget = ReturnType<typeof NotifyTargetInput.parse>;
+export type StoredTarget = ReturnType<typeof NotifyTargetInput.parse>;
+export type WebhookTarget = Exclude<StoredTarget, { kind: typeof FEISHU_APP }>;
+export type FeishuAppTarget = Extract<StoredTarget, { kind: typeof FEISHU_APP }>;
 
 /** Webhook URLs usually embed a token: show only the origin and the last 4 characters. */
 export function urlHint(url: string): string {
@@ -20,12 +25,10 @@ export function urlHint(url: string): string {
   }
 }
 
-const toPublic = (t: StoredTarget): NotifyTarget => ({
-  name: t.name,
-  kind: t.kind,
-  on: t.on,
-  urlHint: urlHint(t.url),
-});
+const toPublic = (t: StoredTarget): NotifyTarget =>
+  t.kind === FEISHU_APP
+    ? { name: t.name, kind: t.kind, on: t.on, urlHint: t.appId, users: t.users?.length ?? 0 }
+    : { name: t.name, kind: t.kind, on: t.on, urlHint: urlHint(t.url) };
 
 /** Notification targets in one 0600 JSON file, written only by the daemon. */
 export class NotifyStore {
@@ -58,11 +61,24 @@ export class NotifyStore {
 
   put(input: NotifyTargetInputT): NotifyTarget {
     const t = NotifyTargetInput.parse(input);
+    const old = this.read().find((x) => x.name === t.name);
+    // Replacing an app (e.g. a rotated secret) keeps its paired users.
+    if (t.kind === FEISHU_APP && !t.users)
+      t.users = old?.kind === FEISHU_APP && old.appId === t.appId ? old.users : [];
     const all = [...this.read().filter((x) => x.name !== t.name), t].sort((a, b) =>
       a.name.localeCompare(b.name),
     );
     this.write(all);
     return toPublic(t);
+  }
+
+  /** Pair a Feishu user (open_id) with an app target. */
+  addUser(name: string, openId: string): void {
+    const all = this.read();
+    const t = all.find((x) => x.name === name);
+    if (t?.kind !== FEISHU_APP) throw new Error(`${name} is not a ${FEISHU_APP} target`);
+    if (!t.users?.includes(openId)) t.users = [...(t.users ?? []), openId];
+    this.write(all);
   }
 
   remove(name: string): boolean {
@@ -79,10 +95,13 @@ export interface Message {
   title: string;
   text: string;
   runs: Run[];
+  group?: string;
+  /** Redacted log tail of a failed run (also in `text`). */
+  log?: string;
 }
 
-/** Request body for each target kind. */
-export function payload(kind: StoredTarget["kind"], m: Message): unknown {
+/** Request body for each webhook kind. */
+export function payload(kind: WebhookTarget["kind"], m: Message): unknown {
   const text = `${m.title}\n${m.text}`.trim();
   switch (kind) {
     case "feishu":
@@ -121,6 +140,7 @@ export function runMessage(run: Run, logTail: string, webUrl?: string): Message 
     title: `[orbit] ${ok ? "✅" : "❌"} ${label(run)} ${run.state}`,
     text: lines.join("\n"),
     runs: [run],
+    log: !ok && logTail ? logTail : undefined,
   };
 }
 
@@ -141,6 +161,7 @@ export function groupMessage(group: string, runs: Run[], webUrl?: string): Messa
     title: `[orbit] ${bad.length === 0 ? "✅" : "⚠️"} group ${group} finished (${runs.length} runs)`,
     text: lines.join("\n"),
     runs,
+    group,
   };
 }
 
@@ -151,7 +172,7 @@ function duration(a: string, b: string): string {
   return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
 }
 
-export async function send(target: StoredTarget, m: Message): Promise<void> {
+export async function send(target: WebhookTarget, m: Message): Promise<void> {
   const res = await fetch(target.url, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -183,6 +204,8 @@ export interface NotifierDeps {
   logTail(runId: string): string;
   /** Daemon URL for links, known once the server listens. */
   webUrl?: () => string | undefined;
+  /** Metric series of a run, for the curves on Feishu app cards. */
+  metrics?(runId: string): Promise<Metrics | null>;
   /** Where send errors go; they never affect runs. */
   log?: (msg: string) => void;
 }
@@ -219,12 +242,36 @@ export class Notifier {
       .filter((t) => (only ? t.name === only : t.on.includes(m.event)));
     await Promise.all(
       targets.map((t) =>
-        send(t, m).catch((e: Error) => {
+        (t.kind === FEISHU_APP ? this.sendApp(t, m) : send(t, m)).catch((e: Error) => {
           this.deps.log?.(`notify ${t.name}: ${e.message}`);
           if (only) throw e;
         }),
       ),
     );
+  }
+
+  private readonly apis = new Map<string, FeishuApi>();
+
+  /** The OpenAPI client of an app target (one token cache per app id and secret). */
+  feishu(t: FeishuAppTarget): FeishuApi {
+    const key = `${t.appId}:${t.appSecret}`;
+    const api = this.apis.get(key) ?? new FeishuApi(t.appId, t.appSecret);
+    this.apis.set(key, api);
+    return api;
+  }
+
+  private async sendApp(t: FeishuAppTarget, m: Message): Promise<void> {
+    const users = t.users ?? [];
+    if (users.length === 0)
+      throw new Error("no paired users: message the bot in Feishu, then run `orbit notify pair`");
+    const run = m.runs.length === 1 && !m.group ? m.runs[0] : undefined;
+    const c = run
+      ? runCard(run, (await this.deps.metrics?.(run.id).catch(() => null)) ?? null, m.log)
+      : m.group
+        ? groupCard(m.group, m.runs)
+        : textCard(m.title, m.text);
+    const api = this.feishu(t);
+    await Promise.all(users.map((u) => api.sendCard("open_id", u, c)));
   }
 
   /** Send a test message to one target; throws on failure. */

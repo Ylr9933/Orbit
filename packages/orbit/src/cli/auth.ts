@@ -134,8 +134,15 @@ function formatProfiles(ps: AuthProfile[]): string {
 function formatTargets(ts: NotifyTarget[]): string {
   if (ts.length === 0) return "no notification targets; add one with `orbit notify add`";
   return table([
-    ["NAME", "KIND", "ON", "URL"],
-    ...ts.map((t) => [t.name, t.kind, t.on.join(","), t.urlHint]),
+    ["NAME", "KIND", "ON", "URL / APP", "USERS", "CONNECTION"],
+    ...ts.map((t) => [
+      t.name,
+      t.kind,
+      t.on.join(","),
+      t.urlHint,
+      t.users === undefined ? "" : String(t.users),
+      t.connection ?? "",
+    ]),
   ]);
 }
 
@@ -243,15 +250,19 @@ export function registerNotify(program: Command, client: () => Promise<OrbitClie
   const notify = program
     .command("notify")
     .description(
-      "send run completion / failure notifications to Feishu, DingTalk, WeCom, Slack or a webhook",
+      "send run completion / failure notifications to Feishu, DingTalk, WeCom, Slack or a webhook; " +
+        "a Feishu app (feishu-app) also answers /gpu, /runs and /show in Feishu",
     );
 
   notify
     .command("add <name>")
     .description("create or replace a target")
-    .requiredOption("--kind <kind>", "feishu | dingtalk | wecom | slack | webhook")
+    .requiredOption("--kind <kind>", "feishu | dingtalk | wecom | slack | webhook | feishu-app")
     .option("--url <url>", "webhook URL")
     .option("--url-env <VAR>", "read the webhook URL from this environment variable")
+    .option("--app-id <id>", "feishu-app: the app id (cli_...)")
+    .option("--secret-env <VAR>", "feishu-app: read the app secret from this environment variable")
+    .option("--secret-stdin", "feishu-app: read the app secret from stdin")
     .option("--on <events>", "comma-separated: succeeded,failed,group", "succeeded,failed,group")
     .option("--json", "print JSON")
     .action(
@@ -261,21 +272,53 @@ export function registerNotify(program: Command, client: () => Promise<OrbitClie
           kind: NotifyTarget["kind"];
           url?: string;
           urlEnv?: string;
+          appId?: string;
+          secretEnv?: string;
+          secretStdin?: boolean;
           on: string;
           json?: boolean;
         },
       ) => {
-        const url = o.url ?? (o.urlEnv ? process.env[o.urlEnv] : undefined);
-        if (!url) throw new Error("give --url or --url-env");
-        const t = await (await client()).notifyPut({
-          name,
-          kind: o.kind,
-          url,
-          on: o.on.split(",").filter(Boolean) as NotifyEvent[],
-        });
-        print(o.json, t, () => `saved ${t.name}: ${t.kind} on ${t.on.join(",")}`);
+        const on = o.on.split(",").filter(Boolean) as NotifyEvent[];
+        let t: NotifyTarget;
+        if (o.kind === "feishu-app") {
+          if (!o.appId) throw new Error("give --app-id");
+          const appSecret = o.secretStdin
+            ? await readStdinSecret("Paste the Feishu app secret")
+            : o.secretEnv
+              ? process.env[o.secretEnv]?.trim()
+              : undefined;
+          if (!appSecret)
+            throw new Error(
+              "give the secret with --secret-stdin or --secret-env VAR (it must be set)",
+            );
+          t = await (await client()).notifyPut({
+            name,
+            kind: o.kind,
+            appId: o.appId,
+            appSecret,
+            on,
+          });
+        } else {
+          const url = o.url ?? (o.urlEnv ? process.env[o.urlEnv] : undefined);
+          if (!url) throw new Error("give --url or --url-env");
+          t = await (await client()).notifyPut({ name, kind: o.kind, url, on });
+        }
+        print(o.json, t, () =>
+          t.kind === "feishu-app"
+            ? `saved ${t.name}: ${t.kind} on ${t.on.join(",")}; message the bot in Feishu to pair (${t.users ?? 0} paired)`
+            : `saved ${t.name}: ${t.kind} on ${t.on.join(",")}`,
+        );
       },
     );
+
+  notify
+    .command("pair <name> <code>")
+    .description("allow the Feishu user who got this code from the bot")
+    .action(async (name: string, code: string) => {
+      await (await client()).notifyPair(name, code);
+      console.log(`paired with ${name}`);
+    });
 
   notify
     .command("list")

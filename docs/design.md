@@ -51,6 +51,7 @@ packages/orbit/src/
   config/      paths (~/.orbit), config file, daemon endpoint/token
   store/       sqlite access and migrations
   resources/ auth/ images/ workspace/ executor/ harness/ records/ notify/ sessions/   domain modules
+  feishu/      Feishu app bots (long connection, pairing, read-only commands); uses notify
   runs/        orchestrates domain modules into a Run
   bench/       builds trials on top of runs
   cluster/     multi-node (R4)
@@ -77,6 +78,7 @@ examples/      bench-adapters/<benchmark>/: external bench adapters (not part of
 | runs | 以上所有 domain 模块 |
 | bench | runs 及其可依赖的模块 |
 | cluster | runs, resources, workspace, records 及基础模块；runs 不依赖 cluster（经 `runs/placement.ts` 的 `RemotePlacement` 注入） |
+| feishu | contracts, lib, config, store, notify（经注入的函数调用 daemon 自己的 API） |
 | daemon | 除 cli/mcp/client 外全部 |
 | client | contracts, lib, config |
 | cli, mcp | client, contracts, lib, config |
@@ -186,7 +188,7 @@ oomKilled }`，运行中写库（不发变更事件），终态前再采一次�
 `/api/v1`：`health`、`resources`、`doctor`、`ledger`（资源 + 活动租约 + 排队原因）、`GET/POST runs`、
 `runs/:id`、`runs/:id/{cancel,note,wait,events,logs,log.txt,metrics,artifacts,files/*,diff,session}`、
 `POST runs/check`（运行前检查）、`POST runs/delete`、`stream`（SSE：`run` 变化推送，`deleted` 删除推送）、`GET/POST auth`、`DELETE auth/:name`、`POST auth/:name/test`、
-`GET/POST notify`、`DELETE notify/:name`、`POST notify/:name/test`，bench 路由（§7），
+`GET/POST notify`、`DELETE notify/:name`、`POST notify/:name/{test,pair}`，bench 路由（§7），
 `GET/POST cluster/nodes`、`DELETE cluster/nodes/:name`、`GET/POST cluster/expose`、`GET cluster/token`、
 `POST cluster/token/rotate`、`GET/POST datasets`、`DELETE datasets/:name`（§8），`GET folders`、`POST folders/move`、
 `POST folders/export`（文件夹，见下）。`POST runs` 与 `POST bench/jobs` 可带 `?folder=`，`GET runs` 可按 `?folder=` 筛选（含子文件夹）。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
@@ -263,10 +265,23 @@ Agent 的 home 放在 `/orbit/agent/{codex,claude}`（`CODEX_HOME`、`CLAUDE_CON
 容器本身就是沙箱：容器内 codex 用 `--dangerously-bypass-approvals-and-sandbox`，claude 用
 `--dangerously-skip-permissions`。profile 设置 `hostNetwork` 时 Run 使用宿主网络（例如代理只监听 127.0.0.1）。
 
-**通知**：`~/.orbit/notify.json`（0600）中的目标 `{ name, kind: feishu | dingtalk | wecom | slack | webhook, url, on[] }`，
+**通知**：`~/.orbit/notify.json`（0600）中的目标：webhook `{ name, kind: feishu | dingtalk | wecom | slack | webhook, url, on[] }`，或飞书自建应用
+`{ name, kind: feishu-app, appId, appSecret, users[], on[] }`，
 `on` ⊆ `succeeded | failed | group`。单个 Run（无 group）结束时按状态通知；group 中的 Run 不单独通知，
 该 group 不再有排队/运行中的 Run 时发一条汇总（成功/失败计数、失败的 Run 与原因）。失败通知附原因与日志最后几行
 （已脱敏）。发送失败只记 daemon 日志，不影响 Run。Web 可开启浏览器通知（页面打开时）。
+
+**飞书应用**（`feishu-app`；推送在 `notify/feishu.ts`，用 OpenAPI 的 `fetch`，不用 SDK；接收在 `feishu/`）：
+- daemon 为每个应用保持一条**出向**长连接（官方 `@larksuiteoapi/node-sdk` 的 `WSClient`，仅在有该类目标时懒加载；
+  `wsConfig.pingTimeout = 3` 收不到 pong 即重连），无需公网地址，daemon 仍只监听 `127.0.0.1`。
+- 配对：未配对的用户私聊机器人时收到 6 位码（10 分钟有效），在本机 `orbit notify pair <name> <code>` 后其 open_id
+  记入 `users`；重新保存同一 appId 的目标保留 `users`。群聊只处理 @ 机器人的消息。未配对用户得不到任何数据。
+- 只读命令：`/gpu`（`ledger`：每张卡的显存、利用率、占用者，CPU/内存/磁盘，队列，worker）、`/runs`（最近 10 个）、
+  `/show <id>`（Run 卡片：资源、实测峰值、指标曲线、失败时的日志尾）；其余回复帮助。命令经 `app.request()` 在进程内
+  调用 `/api/v1`，与其他客户端走同一套路由；没有取消、提交等写操作。
+- 推送：Run / group 结束时给每个配对用户发 Card 2.0 卡片；单个 Run 附最多 2 条指标曲线（含 `loss` 的优先，抽稀到
+  200 点，纯折线、不标数值：飞书的 chart 组件不支持 `markPoint`/`markLine`，逐点标签在手机上重叠）。
+- 消息 ID 在内存中去重（最近 1000 条）；处理器立即返回，避免飞书因未及时确认而重投。
 
 ## 7. 刷榜（bench）
 

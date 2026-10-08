@@ -202,6 +202,19 @@ orbit notify list
 类型：`feishu`、`dingtalk`、`wecom`、`slack`、`webhook`。事件：`succeeded`、`failed`、`group`（分组
 全部结束时发一条汇总）。失败消息附带原因和日志最后几行。
 
+飞书自建应用（`feishu-app`）还能在手机上查看 Orbit。daemon 主动向飞书建立长连接，不需要公网地址。在飞书
+开发者后台：添加机器人能力，订阅方式选「使用长连接接收事件」，添加事件 `im.message.receive_v1`，开通
+`im:message`（以应用身份发消息）权限，然后发布版本。之后：
+
+```bash
+orbit notify add phone --kind feishu-app --app-id cli_xxxxxxxxxxxxxxxx --secret-stdin
+# 在飞书里私聊机器人，它会回复一个配对码
+orbit notify pair phone 123456
+```
+
+配对后会收到 Run 和分组的结果卡片（带指标曲线），也可以发 `/gpu`、`/runs`、`/show <run id>` 查询。
+命令都是只读的；未配对的用户只会收到配对码。
+
 ### 刷榜
 
 ```bash

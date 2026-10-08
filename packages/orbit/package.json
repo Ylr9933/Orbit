@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@hono/node-server": "2.1.3",
+    "@larksuiteoapi/node-sdk": "1.74.0",
     "commander": "15.0.0",
     "hono": "4.13.11",
     "smol-toml": "1.9.0",

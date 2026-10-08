@@ -29,11 +29,13 @@ import {
   type Ledger,
   NodeAddInput,
   type NodeStatus,
+  NotifyPairInput,
   type NotifyTarget,
   type Run,
   type RunSessions,
   RunState,
 } from "../contracts/index.ts";
+import type { FeishuBots } from "../feishu/index.ts";
 import { sameSecret, tokenMatches } from "../lib/tokens.ts";
 import { VERSION } from "../lib/version.ts";
 import type { Notifier, NotifyStore } from "../notify/index.ts";
@@ -58,6 +60,7 @@ export interface AppDeps {
   auth: AuthStore;
   notifyStore: NotifyStore;
   notifier: Notifier;
+  feishu: FeishuBots;
   bench: BenchService;
   benchmarks: BenchmarkRegistry;
   cluster: ClusterService;
@@ -71,7 +74,7 @@ export interface AppDeps {
 const COOKIE = "orbit_token";
 
 export function createApp(deps: AppDeps): Hono {
-  const { runs, auth, notifyStore, notifier, bench, benchmarks, cluster, datasets } = deps;
+  const { runs, auth, notifyStore, notifier, feishu, bench, benchmarks, cluster, datasets } = deps;
   const app = new Hono();
   const api = new Hono();
 
@@ -292,11 +295,29 @@ export function createApp(deps: AppDeps): Hono {
     return c.json<AuthTestResult>(await runs.testAuth(c.req.param("name"), body.image));
   });
 
-  api.get("/notify", (c) => c.json<{ targets: NotifyTarget[] }>({ targets: notifyStore.list() }));
-  api.post("/notify", async (c) => c.json(notifyStore.put(await c.req.json()), 201));
+  const withConnection = (t: NotifyTarget): NotifyTarget =>
+    t.kind === "feishu-app" ? { ...t, connection: feishu.connection(t.name) } : t;
+  api.get("/notify", (c) =>
+    c.json<{ targets: NotifyTarget[] }>({ targets: notifyStore.list().map(withConnection) }),
+  );
+  api.post("/notify", async (c) => {
+    const t = notifyStore.put(await c.req.json());
+    void feishu.sync();
+    return c.json(withConnection(t), 201);
+  });
   api.delete("/notify/:name", (c) => {
     if (!notifyStore.remove(c.req.param("name")))
       throw new NotFoundError("notify target not found");
+    void feishu.sync();
+    return c.json({ ok: true });
+  });
+  api.post("/notify/:name/pair", async (c) => {
+    const { code } = NotifyPairInput.parse(await c.req.json());
+    try {
+      await feishu.pair(c.req.param("name"), code);
+    } catch (e) {
+      throw new UserError((e as Error).message);
+    }
     return c.json({ ok: true });
   });
   api.post("/notify/:name/test", async (c) => {

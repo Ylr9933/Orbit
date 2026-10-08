@@ -180,16 +180,46 @@ export type AuthTestResult = z.infer<typeof AuthTestResult>;
 
 export const NotifyEvent = z.enum(["succeeded", "failed", "group"]);
 export type NotifyEvent = z.infer<typeof NotifyEvent>;
-export const NotifyTargetInput = z.object({
+const NotifyOn = z.array(NotifyEvent).min(1).default(["succeeded", "failed", "group"]);
+export const WebhookKind = z.enum(["feishu", "dingtalk", "wecom", "slack", "webhook"]);
+export const FEISHU_APP = "feishu-app";
+export const WebhookTargetInput = z.object({
   name: ProfileName,
-  kind: z.enum(["feishu", "dingtalk", "wecom", "slack", "webhook"]),
+  kind: WebhookKind,
   url: z.string().url(),
-  on: z.array(NotifyEvent).min(1).default(["succeeded", "failed", "group"]),
+  on: NotifyOn,
 });
+/**
+ * A Feishu self-built app: the daemon holds an outbound long connection to Feishu, answers
+ * read-only commands from paired users and sends them cards.
+ */
+export const FeishuAppTargetInput = z.object({
+  name: ProfileName,
+  kind: z.literal(FEISHU_APP),
+  appId: z.string().regex(/^cli_[0-9a-fA-F]{16}$/, "appId looks like cli_ and 16 hex digits"),
+  appSecret: z.string().min(1),
+  /** open_id of paired users (`orbit notify pair`); kept when the target is replaced. */
+  users: z.array(z.string().min(1)).optional(),
+  on: NotifyOn,
+});
+export const NotifyTargetInput = z.discriminatedUnion("kind", [
+  WebhookTargetInput,
+  FeishuAppTargetInput,
+]);
 export type NotifyTargetInput = z.input<typeof NotifyTargetInput>;
-/** Public view: the URL usually embeds a token, so only its origin is shown. */
-export const NotifyTarget = NotifyTargetInput.omit({ url: true }).extend({ urlHint: z.string() });
+/** Public view: webhook URLs usually embed a token, so only their origin is shown. */
+export const NotifyTarget = z.object({
+  name: ProfileName,
+  kind: z.union([WebhookKind, z.literal(FEISHU_APP)]),
+  on: z.array(NotifyEvent),
+  /** Webhook URL origin, or the app id of a Feishu app. */
+  urlHint: z.string(),
+  /** Feishu app: paired users and the state of its long connection. */
+  users: z.number().int().optional(),
+  connection: z.enum(["connecting", "connected", "failed", "stopped"]).optional(),
+});
 export type NotifyTarget = z.infer<typeof NotifyTarget>;
+export const NotifyPairInput = z.object({ code: z.string().regex(/^\d{6}$/) });
 
 /**
  * A folder for organizing runs and bench jobs: `/`-separated names (letters, digits, `_ . -`), e.g.

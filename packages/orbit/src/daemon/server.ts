@@ -9,9 +9,16 @@ import { BenchService } from "../bench/service.ts";
 import { ClusterService } from "../cluster/service.ts";
 import { removeDaemonInfo, writeDaemonInfo } from "../config/daemon-info.ts";
 import { ensureHome, type OrbitPaths } from "../config/paths.ts";
-import { isTerminal, type NodeProfile, type NodeResources } from "../contracts/index.ts";
+import {
+  API_PREFIX,
+  isTerminal,
+  type NodeProfile,
+  type NodeResources,
+} from "../contracts/index.ts";
+import { FeishuBots } from "../feishu/index.ts";
 import { hostCli } from "../harness/index.ts";
 import { Notifier, NotifyStore } from "../notify/index.ts";
+import { readMetrics } from "../records/index.ts";
 import { probeNode } from "../resources/probe.ts";
 import { AUTH_TEST_GROUP, RunService } from "../runs/service.ts";
 import { Store } from "../store/index.ts";
@@ -132,8 +139,25 @@ export async function startDaemon(
     store: notifyStore,
     groupRuns: (group) => store.listRuns({ group, limit: 10_000 }),
     logTail: (id) => runs.redactor().apply(tail(runs.dirs(id).log, 15)),
+    metrics: (id) => readMetrics(runs.dirs(id).metrics),
     log: (msg) => console.error(`orbit ${msg}`),
     webUrl: () => webUrl,
+  });
+  // Bots answer through the daemon's own API (in process, no socket), like any other client.
+  let app: ReturnType<typeof createApp> | undefined;
+  const feishu = new FeishuBots({
+    store: notifyStore,
+    api: async <T>(path: string): Promise<T> => {
+      if (!app) throw new Error("daemon is starting");
+      const res = await app.request(`${API_PREFIX}${path}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const body = (await res.json()) as T & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      return body;
+    },
+    feishu: (t) => notifier.feishu(t),
+    log: (msg) => console.error(`orbit ${msg}`),
   });
   runs.on("change", ({ run, event }) => {
     // The terminal event is saved once, before cleanup; auth checks stay quiet, and runs sent here
@@ -147,13 +171,14 @@ export async function startDaemon(
       return;
     void notifier.onTerminal(run);
   });
-  const app = createApp({
+  app = createApp({
     token,
     startedAt: new Date().toISOString(),
     runs,
     auth,
     notifyStore,
     notifier,
+    feishu,
     bench,
     benchmarks,
     cluster,
@@ -180,10 +205,12 @@ export async function startDaemon(
   await runs.start();
   await cluster.start();
   bench.start();
+  void feishu.sync();
   writeDaemonInfo(paths, { url, token, pid: process.pid });
 
   const stop = async () => {
     removeDaemonInfo(paths, process.pid);
+    feishu.stop();
     await cluster.stop();
     await runs.stop();
     await new Promise<void>((done) => {

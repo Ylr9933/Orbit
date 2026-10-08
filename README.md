@@ -214,6 +214,20 @@ orbit notify list
 Kinds: `feishu`, `dingtalk`, `wecom`, `slack`, `webhook`. Events: `succeeded`, `failed`, `group` (one
 summary when a group has finished). Failure messages include the reason and the last log lines.
 
+A Feishu self-built app (`feishu-app`) also lets you check on Orbit from your phone. The daemon holds an
+outbound long connection, so no public address is needed. In the Feishu developer console, enable the bot,
+choose "receive events through persistent connection", subscribe to `im.message.receive_v1`, grant
+`im:message` (send as bot), and publish a version. Then:
+
+```bash
+orbit notify add phone --kind feishu-app --app-id cli_xxxxxxxxxxxxxxxx --secret-stdin
+# message the bot in Feishu; it replies with a code
+orbit notify pair phone 123456
+```
+
+Paired users get run and group cards (with metric curves) and can send `/gpu`, `/runs` and
+`/show <run id>`. Commands are read-only; unpaired users only get a pairing code.
+
 ### Benchmarks
 
 ```bash
