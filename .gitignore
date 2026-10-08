@@ -75,6 +75,7 @@ pnpm-debug.log*
 /test-results/
 /playwright-report/
 **/dist/
+/packages/orbit/LICENSE
 
 # Editor and operating-system files; explicitly allow shared VS Code config.
 /.idea/

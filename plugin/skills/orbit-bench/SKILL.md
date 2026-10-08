@@ -8,8 +8,15 @@ description: Integrate a benchmark into Orbit and size its tasks — write an ad
 Orbit runs every benchmark trial as a **solve** run (the method's Agent works on the task) and a
 separate **verify** run (the benchmark's grader), and averages only scores it can trust. A
 benchmark is connected through an **adapter**: a small executable that describes those two runs and
-reads the score. Orbit is not modified or rebuilt. Read the guide in the Orbit repository
-(`docs/guides/bench-adapter.md`); `examples/bench-adapters/researchclawbench/` is a complete example.
+reads the score. Orbit is not modified or rebuilt. Read the
+[adapter guide](https://github.com/zjunlp/Orbit/blob/main/docs/guides/bench-adapter.md);
+[ResearchClawBench](https://github.com/zjunlp/Orbit/tree/main/examples/bench-adapters/researchclawbench)
+is a complete example. In a checkout these are `docs/guides/bench-adapter.md` and
+`examples/bench-adapters/researchclawbench/`.
+
+Use `orbit` when it is on PATH. Otherwise replace `orbit` in the commands below with
+`npx -y @zjunlp/orbit` (requires Node.js 24.18+ in the 24.x line); no source checkout is needed
+to use the CLI. Run `doctor` before the first benchmark job.
 
 ## 1. Study the benchmark first
 

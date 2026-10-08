@@ -27,6 +27,7 @@ import {
   formatRun,
   formatRuns,
 } from "./format.ts";
+import { registerPlugin } from "./plugin.ts";
 
 export interface ProgramDeps {
   /** Run the daemon in the foreground; provided by the composition root (src/bin.ts). */
@@ -623,6 +624,7 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
   registerFeishu(program, client, print);
   registerBench(program, client, print);
   registerCluster(program, client, print);
+  registerPlugin(program);
 
   program
     .command("web [id]")

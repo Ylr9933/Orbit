@@ -11,4 +11,5 @@ if (!existsSync(join(from, "index.html"))) {
 }
 rmSync(to, { recursive: true, force: true });
 cpSync(from, to, { recursive: true });
+cpSync(join(pkg, "../../LICENSE"), join(pkg, "LICENSE"));
 console.log("copy-web: dist/web ready");

@@ -1,5 +1,6 @@
 {
   "name": "orbit",
+  "description": "Orbit skills for running experiments and integrating benchmarks",
   "owner": { "name": "ZJUNLP" },
   "plugins": [
     {

@@ -13,6 +13,12 @@ runs in the Web UI (`orbit web`).
 Use `orbit` instead of running experiments directly on the host, `nohup`, `tmux` or `docker run`.
 Short checks (imports, a unit test, `--help`) can still run on the host.
 
+## CLI availability
+
+Use `orbit` when it is on PATH. Otherwise replace `orbit` in the commands below with
+`npx -y @zjunlp/orbit` (requires Node.js 24.18+ in the 24.x line). No clone, build or global install
+is needed. Run `doctor` before the first experiment and address any failed prerequisites.
+
 ## 1. Estimate resources before submitting
 
 Pick the smallest request that fits; runs that cannot get resources **wait in the queue**, they do not fail.

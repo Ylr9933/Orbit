@@ -44,7 +44,7 @@ Open `docs/ppt/index.html` in a browser to present offline.
 ## Requirements
 
 - Linux.
-- Node.js 24.18 or later (24.x) and pnpm 10 (`corepack enable` provides pnpm).
+- Node.js 24.18 or later (24.x). pnpm 10 is only needed for source development.
 - Docker, usable by your user without `sudo` (e.g. a member of the `docker` group).
 - For GPU runs: the NVIDIA driver and either an NVIDIA CDI spec or the NVIDIA Container Toolkit.
 - git (for code snapshots).
@@ -52,21 +52,25 @@ Open `docs/ppt/index.html` in a browser to present offline.
 
 ## Installation
 
-```bash
-git clone https://github.com/XuehaiWang/orbit.git
-cd orbit
-corepack enable                 # if pnpm is not installed yet
-pnpm install
-pnpm build                      # builds the Web UI and packages/orbit/dist/cli.mjs
+The npm distribution is prepared; the first public release is pending. Once published, try Orbit
+without a source checkout:
 
-# put `orbit` on your PATH (any directory on PATH works)
-mkdir -p ~/.local/bin
-ln -sf "$PWD/packages/orbit/dist/cli.mjs" ~/.local/bin/orbit
-orbit --version
+```bash
+npx -y @zjunlp/orbit doctor
 ```
 
-To update later: `git pull && pnpm install && pnpm build && orbit daemon --stop` (the next command
-starts the new daemon; running containers keep going and are reattached).
+Or install the CLI permanently in one command:
+
+```bash
+npm install -g @zjunlp/orbit
+```
+
+The examples below use `orbit`; without a global install, replace it with `npx -y @zjunlp/orbit`.
+The package includes the CLI, daemon and built Web UI. No pnpm, manual build or symlink is needed.
+To update: `npm install -g @zjunlp/orbit@latest && orbit daemon --stop` (the next command starts the
+new daemon; running containers keep going and are reattached).
+
+For installation from a checkout, see [Development](#development).
 
 ## First use
 
@@ -175,20 +179,20 @@ The daemon listens on `127.0.0.1` only. To view it from another machine, use an 
 
 ### Agent integration
 
-Install the skill from [plugin/](plugin/README.md):
+With Claude Code installed, install both Orbit skills in one command (after the npm release):
 
 ```bash
-# Claude Code
-claude plugin marketplace add /path/to/orbit
-claude plugin install orbit@orbit
-# Codex (or Claude Code without the plugin): copy or symlink the skill
-ln -s /path/to/orbit/plugin/skills/orbit /path/to/orbit/plugin/skills/orbit-bench ~/.agents/skills/   # Codex
-ln -s /path/to/orbit/plugin/skills/orbit /path/to/orbit/plugin/skills/orbit-bench ~/.claude/skills/   # Claude Code
+npx -y @zjunlp/orbit plugin install
 ```
 
-`orbit` must be on the agent's `PATH`. Codex's default sandbox blocks network access, which the CLI
-needs to reach the local daemon; allow it (e.g. `sandbox_workspace_write.network_access = true`).
-Each run records the agent session that submitted it, and the Web UI shows that transcript.
+This registers the `zjunlp/Orbit` GitHub marketplace and installs `orbit@orbit` for your user.
+Restart Claude Code to load `/orbit:orbit` and `/orbit:orbit-bench`. The skills use `npx` when
+`orbit` is not on PATH. A local checkout can be tested with `pnpm orbit plugin install --source .`.
+Manual marketplace installation and Codex skill installation are in [plugin/README.md](plugin/README.md).
+
+The CLI needs network access to reach the local daemon. Each run records the agent session that
+submitted it, and the Web UI shows that transcript. MCP is not implemented yet; this plugin uses
+the existing CLI and HTTP API.
 
 ### Agents inside runs (auth profiles)
 
@@ -331,7 +335,14 @@ space. Folders organize runs and bench jobs without moving files: `orbit run --f
 
 ## Development
 
+Requires pnpm 10 (`corepack enable`). See the [release guide](docs/guides/releasing.md) for publishing.
+
 ```bash
+git clone https://github.com/zjunlp/Orbit.git
+cd Orbit
+pnpm install
+pnpm build
+pnpm orbit doctor
 pnpm --filter @zjunlp/orbit-web dev   # Vite dev server; proxies /api to the daemon
 pnpm orbit <args>                     # run the CLI from source
 pnpm verify                           # lint + typecheck + module boundaries + tests + build

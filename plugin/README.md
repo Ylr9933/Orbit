@@ -3,14 +3,32 @@
 `skills/orbit/SKILL.md` teaches Codex and Claude Code how to estimate resources, submit runs and
 sweeps, follow them and record conclusions with the `orbit` CLI. `skills/orbit-bench/SKILL.md`
 teaches them to connect a new benchmark (adapter executable, per-task resources file) and to revise
-task resources from measured runs. The `orbit` command must be on the agent's `PATH`.
+task resources from measured runs. Both skills use `npx -y @zjunlp/orbit` when `orbit` is not on PATH.
+Node.js 24.18+ (24.x), Git and Docker are required; see the repository README for GPU prerequisites.
 
 ## Claude Code
 
+After the first npm release, with Claude Code already installed:
+
 ```bash
-claude plugin marketplace add /path/to/orbit   # the repository root (.claude-plugin/marketplace.json)
-claude plugin install orbit@orbit
+npx -y @zjunlp/orbit plugin install
 ```
+
+Restart Claude Code to load `/orbit:orbit` and `/orbit:orbit-bench`. This uses Claude Code's own
+marketplace and plugin commands and installs at user scope. It does not change Orbit's daemon,
+credentials, shell profile or your global npm packages. Repeating the command is safe.
+
+Manual installation from GitHub:
+
+```bash
+claude plugin marketplace add zjunlp/Orbit
+claude plugin install orbit@orbit --scope user
+```
+
+For an unpublished local revision, run `pnpm orbit plugin install --source .` from the repository.
+Update with `claude plugin marketplace update orbit && claude plugin update orbit@orbit`;
+uninstall with `claude plugin uninstall orbit@orbit`. The marketplace may be removed separately
+with `claude plugin marketplace remove orbit`.
 
 Or copy/symlink `skills/orbit` and `skills/orbit-bench` to `~/.claude/skills/` (all projects) or
 `<project>/.claude/skills/` (one project).

@@ -36,7 +36,7 @@ Orbit 在隔离的 Docker 容器里、按 GPU / CPU / 内存租约运行它，�
 ## 环境要求
 
 - Linux。
-- Node.js 24.18 及以上（24.x）和 pnpm 10（`corepack enable` 即可获得 pnpm）。
+- Node.js 24.18 及以上（24.x）。仅源码开发需要 pnpm 10。
 - Docker，当前用户无需 `sudo` 即可使用（例如加入 `docker` 组）。
 - GPU 运行：NVIDIA 驱动，以及 NVIDIA CDI spec 或 NVIDIA Container Toolkit 之一。
 - git（用于代码快照）。
@@ -44,21 +44,22 @@ Orbit 在隔离的 Docker 容器里、按 GPU / CPU / 内存租约运行它，�
 
 ## 安装
 
-```bash
-git clone https://github.com/XuehaiWang/orbit.git
-cd orbit
-corepack enable                 # 还没有 pnpm 时
-pnpm install
-pnpm build                      # 构建 Web 界面和 packages/orbit/dist/cli.mjs
+npm 分发已准备好，首次公开发布尚待完成。发布后，无需源码即可试用：
 
-# 把 `orbit` 放到 PATH 上（任意在 PATH 中的目录都可以）
-mkdir -p ~/.local/bin
-ln -sf "$PWD/packages/orbit/dist/cli.mjs" ~/.local/bin/orbit
-orbit --version
+```bash
+npx -y @zjunlp/orbit doctor
 ```
 
-之后更新：`git pull && pnpm install && pnpm build && orbit daemon --stop`（下一条命令会启动新的
-daemon；运行中的容器不受影响，会被重新接管）。
+或者一条命令永久安装 CLI：
+
+```bash
+npm install -g @zjunlp/orbit
+```
+
+下文示例使用 `orbit`；未全局安装时替换为 `npx -y @zjunlp/orbit` 即可。
+包内包含 CLI、daemon 和构建好的 Web 界面，不需要 pnpm、手动构建或软链接。
+更新：`npm install -g @zjunlp/orbit@latest && orbit daemon --stop`（下一条命令启动新版 daemon；
+运行中的容器不受影响，会被重新接管）。从源码使用见[开发](#开发)。
 
 ## 初次使用
 
@@ -162,20 +163,19 @@ daemon 只监听 `127.0.0.1`。从其他机器查看时用 SSH 隧道：
 
 ### Agent 接入
 
-安装 [plugin/](plugin/README.md) 中的 skill：
+已安装 Claude Code 后，一条命令安装两个 Orbit skill（npm 发布后可用）：
 
 ```bash
-# Claude Code
-claude plugin marketplace add /path/to/orbit
-claude plugin install orbit@orbit
-# Codex（或不使用插件的 Claude Code）：复制或软链接 skill
-ln -s /path/to/orbit/plugin/skills/orbit /path/to/orbit/plugin/skills/orbit-bench ~/.agents/skills/   # Codex
-ln -s /path/to/orbit/plugin/skills/orbit /path/to/orbit/plugin/skills/orbit-bench ~/.claude/skills/   # Claude Code
+npx -y @zjunlp/orbit plugin install
 ```
 
-`orbit` 需要在 Agent 的 `PATH` 上。Codex 默认沙箱禁止网络，而 CLI 需要访问本地 daemon，因此要放开
-（例如 `sandbox_workspace_write.network_access = true`）。每个 Run 都会记录发起它的 Agent 会话，
-Web 中可直接查看该会话记录。
+命令会注册 `zjunlp/Orbit` GitHub marketplace，并在用户范围安装 `orbit@orbit`。
+重启 Claude Code 后可使用 `/orbit:orbit` 与 `/orbit:orbit-bench`；未全局安装 `orbit` 时，
+skill 会通过 `npx` 调用。开发时可用 `pnpm orbit plugin install --source .` 安装本地版本。
+手动 marketplace 安装与 Codex skill 安装见 [plugin/README.md](plugin/README.md)。
+
+CLI 需要网络权限访问本地 daemon。每个 Run 都会记录发起它的 Agent 会话，Web 中可直接查看。
+MCP 尚未实现；当前插件通过已有 CLI 和 HTTP API 工作。
 
 ### 在 Run 中运行 Agent（凭据 profile）
 
@@ -303,7 +303,14 @@ daemon 是 Orbit 状态的唯一写者；CLI、Web 和 Agent 都通过它的本�
 
 ## 开发
 
+需要 pnpm 10（`corepack enable`）。包验证与发布见[发布指南](docs/guides/releasing.md)。
+
 ```bash
+git clone https://github.com/zjunlp/Orbit.git
+cd Orbit
+pnpm install
+pnpm build
+pnpm orbit doctor
 pnpm --filter @zjunlp/orbit-web dev   # Vite 开发服务器；/api 代理到 daemon
 pnpm orbit <args>                     # 从源码运行 CLI
 pnpm verify                           # lint + 类型检查 + 模块边界 + 测试 + 构建

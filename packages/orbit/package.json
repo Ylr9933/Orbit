@@ -4,8 +4,15 @@
   "description": "Run, isolate and record experiments for Codex / Claude Code",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zjunlp/Orbit.git",
+    "directory": "packages/orbit"
+  },
+  "homepage": "https://github.com/zjunlp/Orbit#readme",
+  "bugs": "https://github.com/zjunlp/Orbit/issues",
   "engines": {
-    "node": ">=24.18.0"
+    "node": ">=24.18.0 <25"
   },
   "bin": {
     "orbit": "dist/cli.mjs"
@@ -18,10 +25,29 @@
     "./naming": "./src/contracts/naming.ts",
     "./metrics": "./src/contracts/metrics.ts"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "exports": {
+      "./contracts": {
+        "types": "./dist/contracts.d.mts",
+        "import": "./dist/contracts.mjs"
+      },
+      "./naming": {
+        "types": "./dist/naming.d.mts",
+        "import": "./dist/naming.mjs"
+      },
+      "./metrics": {
+        "types": "./dist/metrics.d.mts",
+        "import": "./dist/metrics.mjs"
+      }
+    }
+  },
   "scripts": {
     "typecheck": "tsc -p .",
     "test": "vitest run",
-    "build": "tsdown && node scripts/copy-web.ts"
+    "build": "tsdown && node scripts/copy-web.ts",
+    "prepack": "pnpm -w build"
   },
   "dependencies": {
     "@hono/node-server": "2.1.3",
