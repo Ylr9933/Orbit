@@ -408,6 +408,11 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
    （原生 scorer 否则直接报错），再运行 `ai4sci_bench.cli score`；分数取该实例最新 attempt 的 `final_score / max_score`。
    指标：主指标 `score`（`final_score / max_score` 的 %），另有 `fullMarks`（满分 trial 的 %）。
    ASI checkout 只读：进程 cwd 是 Run 目录，`PYTHONPATH` 指向 checkout，`PYTHONDONTWRITEBYTECODE=1`。
+   solve 显式启用 `--fail-on-agent-error`。Agent 方法在规划时通过 `config.python` 的 AST 解析，
+   检查所选 Codex/Claude 源码是否仍把任意日志中的 `timed out` 放在成功退出判断之前，以及 CLI
+   是否声明失败退出码选项；已知不兼容版本拒绝启动并提示更新注册 checkout，不 monkey-patch 第三方代码。
+   native result 和 score report 分别按 attempt 数值选择最新项；review 的 `attempt_status` 只依赖
+   native 执行状态，评分有效性独立保留。该检查不修改历史 Run 或退出码。
 
 **process 后端**（`RunSpec.backend = "process"`，`runs/process.ts`）：命令直接在宿主以独立进程组运行，
 cwd 默认为代码快照（有快照时），否则 `project`，再否则 Run 目录；HOME 为 Run 私有目录；环境包含 `spec.env`、`passEnv`、`ORBIT_OUTPUT`、

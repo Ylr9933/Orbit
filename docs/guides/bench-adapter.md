@@ -13,6 +13,40 @@
 外部适配器和内置适配器走同一套协议，Orbit 不需要重新构建或重启。适配器文件放在 benchmark 仓库或任意目录。
 示例：[examples/bench-adapters/researchclawbench](../../examples/bench-adapters/researchclawbench/)。
 
+### ASI-Bench 版本兼容
+
+内置 `asi` 使用注册目录中的 ASI runner/scorer，不随 Orbit 捆绑一份 ASI 源码。
+Agent 方法需要完整源码 checkout、支持 `--fail-on-agent-error` 的 CLI，以及已修复的
+Codex/Claude 沙箱状态判定：正常退出不能被后台请求的 `timed out` 日志覆盖。
+Orbit 在生成 Agent solve 命令前，使用 `config.python` 只读解析所选 adapter 与 CLI；
+识别已知的错误条件结构时拒绝启动并提示升级。
+这是已知版本问题的检查，不会改写第三方源码，也不会根据评分有效就改成执行成功。
+oracle/empty 不经过 Agent adapter 检查；所有 solve 都显式启用失败退出码。
+
+如果使用仍有该问题的旧版源码，在 Codex/Claude OS adapter 中将
+`if "timed out" in log: ... elif success: ...` 改为优先检查执行结果。例如，沙箱返回
+`success, log` 且真实超时诊断为下列格式时，等价修复为：
+
+```python
+if success:
+    status = RunStatus.COMPLETED
+elif log == f"OS sandbox agent execution timed out ({eff_timeout}s)":
+    status = RunStatus.TIMEOUT
+else:
+    status = RunStatus.FAILED
+```
+
+保留 adapter 后续已有的原生终止事件失败检查。分别验证正常退出带超时警告、真实沙箱超时、
+其他非零退出；旧 CLI 若不支持 `--fail-on-agent-error`，还需升级到支持该选项的版本。
+
+升级的是 `orbit bench ls` 中显示的**注册路径**。如果此前注册了固定快照，修改主 checkout
+或仅升级 pip 包不会更新快照；为后续实验注册包含修复的新快照，并保留旧批次的源码与版本记录。
+`orbit bench tasks asi` 仍仅列任务，Agent 兼容性检查在规划该方法的 solve 时执行。
+
+trial review 显示最新 attempt 的 `completed` / `execution_timeout` / `execution_failed` /
+`execution_incomplete`，分数是否 valid 由独立评分过程决定。真实超时仍可留下可评分的输出。
+更新 Orbit 不自动重写已结束的 Run、退出码、日志或分数；历史误判需要逐项核验证据后单独纠正。
+
 ## 2. Harbor 路线
 
 ```bash

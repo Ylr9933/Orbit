@@ -256,6 +256,11 @@ Run。每个任务的 solve 资源（GPU、内存、CPU、超时）可由 `orbit
 每个 Run 都记录实测峰值，solve 因内存不足被杀时该 trial 记为 invalid，而不是 0 分。其他 benchmark 只需一个说小型 JSON 协议的适配器可执行文件，不用重新构建 Orbit，见
 [docs/guides/bench-adapter.md](docs/guides/bench-adapter.md)。
 
+ASI 的 Agent 运行需要完整源码 checkout，支持 `--fail-on-agent-error` 且已修复沙箱超时判定。
+Orbit 在启动 Agent 前检查所选 Codex/Claude adapter；发现把后台超时警告当成执行失败的已知旧版逻辑时，
+明确提示升级。需要更新的是**注册的 ASI 源码目录**（包括冻结快照），仅升级 Orbit 不能修复该目录里的代码。
+原生 attempt 状态与评分 valid 分开显示，见 [ASI 版本兼容](docs/guides/bench-adapter.md#asi-bench-版本兼容)。
+
 ### 多机
 
 每台机器都运行 Orbit。Agent 所在的机器（主节点）把 Run 放到已加入的 worker 上，优先使用本机资源。
