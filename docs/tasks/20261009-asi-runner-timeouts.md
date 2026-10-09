@@ -36,6 +36,7 @@ A local ASI repair does not update other users' registered ASI checkouts.
 
 ## Next / open issues
 
-- Implementation and verification complete; upstream integration is pending.
+- Integrated into `origin/main` via PR #1 (`dcfd36f`); local checkout updated.
+- Cross-adapter follow-up: [timeout classification](20261009-bench-timeout-classification.md).
 - Users must install an Orbit revision containing this change and update their
   registered ASI source; this patch does not publish a new npm release.

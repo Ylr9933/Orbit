@@ -4,11 +4,14 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { OrbitClient } from "../src/client/index.ts";
 import { orbitPaths } from "../src/config/paths.ts";
 import { type StartedDaemon, startDaemon } from "../src/daemon/server.ts";
+import * as docker from "../src/executor/docker.ts";
 import { probeNode } from "../src/resources/probe.ts";
+import { UsageSampler } from "../src/runs/usage.ts";
 
 const enabled = process.env.ORBIT_E2E === "1";
 const gpus = process.env.ORBIT_E2E_GPUS === "1" ? 1 : 0;
@@ -42,6 +45,7 @@ describe.runIf(enabled)("docker end-to-end", () => {
     daemon = await startDaemon(paths, {
       port: 0,
       tickMs: 200,
+      self: [process.execPath, fileURLToPath(new URL("../src/bin.ts", import.meta.url))],
       probe: async () => ({
         ...(await probeNode(paths.data, { node: paths.node })),
         cpu: { count: 4, load1: 0, busy: 0 },
@@ -50,6 +54,17 @@ describe.runIf(enabled)("docker end-to-end", () => {
     client = new OrbitClient({ url: daemon.url, token: daemon.token, pid: process.pid });
   });
   afterAll(async () => {
+    if (client)
+      await vi.waitFor(
+        async () => {
+          expect(
+            (await client.list({ limit: 1000 })).every(
+              (r) => r.cleanup !== "pending" && r.sizeBytes !== null,
+            ),
+          ).toBe(true);
+        },
+        { timeout: 10_000 },
+      );
     await daemon?.stop();
     rmSync(home, { recursive: true, force: true });
   });
@@ -112,6 +127,110 @@ describe.runIf(enabled)("docker end-to-end", () => {
     expect(events.some((m) => m.includes("building from the code snapshot"))).toBe(true);
     await finish(blocker.id);
   }, 300_000);
+
+  it.each([0, 7])(
+    "preserves exit %i while Docker artifact collection crosses the deadline",
+    async (code) => {
+      const copy = docker.copyFromContainer;
+      const delayed = vi.spyOn(docker, "copyFromContainer").mockImplementation(async (...args) => {
+        // A controlled collection delay around real Docker IO, not a fake executor.
+        await new Promise((r) => setTimeout(r, 6500));
+        return copy(...args);
+      });
+      try {
+        const run = await finish(
+          (
+            await client.submit({
+              ...spec(code),
+              command: [
+                "sh",
+                "-c",
+                `echo 'background request timed out'; echo ok > /tmp/evidence; exit ${code}`,
+              ],
+              timeoutMin: 0.1,
+              collect: ["/tmp/evidence"],
+            })
+          ).id,
+        );
+        expect(run).toMatchObject({
+          state: code === 0 ? "succeeded" : "failed",
+          exitCode: code,
+          reason: code === 0 ? null : "exit code 7",
+          cleanup: "done",
+        });
+        expect(run.lease?.state).toBe("released");
+        expect(
+          readFileSync(join(home, "runs", run.id, "orbit/output/collected/tmp/evidence"), "utf8"),
+        ).toBe("ok\n");
+        expect((await client.logs(run.id, 0)).text).toContain("background request timed out");
+        expect((await client.events(run.id)).some((e) => e.kind === "timeout")).toBe(false);
+      } finally {
+        delayed.mockRestore();
+      }
+    },
+    120_000,
+  );
+
+  it.each([0, 7])(
+    "preserves exit %i while process usage collection crosses the deadline",
+    async (code) => {
+      const stop = UsageSampler.prototype.stop;
+      const delayed = vi.spyOn(UsageSampler.prototype, "stop").mockImplementation(async function (
+        this: UsageSampler,
+      ) {
+        await new Promise((r) => setTimeout(r, 6500));
+        return stop.call(this);
+      });
+      try {
+        const run = await finish(
+          (
+            await client.submit({
+              backend: "process",
+              command: ["sh", "-c", `echo 'background request timed out'; exit ${code}`],
+              resources: { cpus: 1, memGB: 1 },
+              timeoutMin: 0.1,
+            })
+          ).id,
+        );
+        expect(run).toMatchObject({
+          state: code === 0 ? "succeeded" : "failed",
+          exitCode: code,
+          reason: code === 0 ? null : "exit code 7",
+          cleanup: "done",
+        });
+        expect(run.lease?.state).toBe("released");
+        expect((await client.events(run.id)).some((e) => e.kind === "timeout")).toBe(false);
+      } finally {
+        delayed.mockRestore();
+      }
+    },
+    120_000,
+  );
+
+  it.each(["docker", "process"] as const)(
+    "still terminates a genuinely timed-out %s run",
+    async (backend) => {
+      const run = await finish(
+        (
+          await client.submit({
+            backend,
+            ...(backend === "docker" ? { image: "python:3.12-slim" } : {}),
+            command: ["sleep", "300"],
+            resources: { cpus: 1, memGB: 1 },
+            timeoutMin: 0.02,
+          })
+        ).id,
+      );
+      expect(run).toMatchObject({
+        state: "failed",
+        reason: "timeout after 0.02 min",
+        cleanup: "done",
+      });
+      expect(run.lease?.state).toBe("released");
+      expect((await client.events(run.id)).filter((e) => e.kind === "timeout")).toHaveLength(1);
+    },
+    120_000,
+  );
 
   it("cancels a running container", async () => {
     const run = await client.submit({ ...spec(0), command: ["sleep", "300"] });

@@ -1,7 +1,7 @@
 # Orbit status
 
 - **Updated at:** 2026-10-09
-- **Basis:** `fix/asi-runner-timeouts` (`pnpm verify` passed; awaiting integration)
+- **Basis:** PR #1 integrated; `fix/bench-timeout-classification` verified (including real Docker/process timeout checks)
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none for implementation; first npm publication deferred by the user (publisher authentication still needed).
 
@@ -11,7 +11,7 @@
 - `pnpm verify` (Biome, tsc, boundaries, vitest, builds). Auto-started local daemon (127.0.0.1, token/cookie, sqlite); `orbit run / sweep / ps / show / logs / wait [-g] / cancel / note / resources / doctor / web / auth / notify / bench / node / data`.
 - Resource leases with a queue (with reasons); use outside Orbit is respected (busy GPUs, measured CPU
   use, `MemAvailable`). Docker executor: code snapshot, CDI GPU mapping checked against the lease,
-  timeouts; logs, metrics and outputs collected before cleanup. Process backend for native runners, with a labelling, GPU-limiting docker shim.
+  execution-only timeouts; logs, metrics and outputs collected before cleanup. Process backend for native runners, with a labelling, GPU-limiting docker shim.
 - Session linking; Web UI: runs, run detail, trial page, compare, resources, settings, bench; typed-confirmation deletion.
 - Who holds each GPU (user, command, PID, container/Run, memory, runtime; else unknown) in Web and CLI.
 - Pre-flight `orbit run|sweep --check` (data, output disk, image, placement); `--smoke '<cmd>'` gates submission.
@@ -37,4 +37,4 @@
 ## Records
 
 [design.md](design.md) · [R0](tasks/20260929-ts-rewrite-r0.md) · [R1](tasks/20260930-r1-research-loop.md) · [R2](tasks/20260930-r2-auth-notify.md) · [R3](tasks/20260930-r3-bench.md) · [R4](tasks/20260930-r4-multinode.md) · [review](tasks/20261001-code-review.md) · [cpu](tasks/20261002-cpu-external-load.md) ·
-[adapters](tasks/20261003-bench-adapter-protocol.md) · [resources](tasks/20261003-bench-resources-usage.md) · [validity](tasks/20261004-bench-validity-checks.md) · [web](tasks/20261004-web-jobs-trials-delete.md) · [metrics](tasks/20261005-bench-metrics.md) · [folders](tasks/20261005-data-dir-folders.md) · [gpu-procs](tasks/20261006-gpu-processes.md) · [preflight](tasks/20261008-preflight-smoke.md) · [rescore](tasks/20261008-bench-rescore.md) · [feishu-app](tasks/20261008-feishu-app.md) · [feishu-init](tasks/20261008-feishu-init.md) · [npm](tasks/20261008-npm-plugin-install.md) · [plugins](tasks/20261008-agent-plugins.md) · [ASI compatibility](tasks/20261009-asi-runner-timeouts.md)
+[adapters](tasks/20261003-bench-adapter-protocol.md) · [resources](tasks/20261003-bench-resources-usage.md) · [validity](tasks/20261004-bench-validity-checks.md) · [web](tasks/20261004-web-jobs-trials-delete.md) · [metrics](tasks/20261005-bench-metrics.md) · [folders](tasks/20261005-data-dir-folders.md) · [gpu-procs](tasks/20261006-gpu-processes.md) · [preflight](tasks/20261008-preflight-smoke.md) · [rescore](tasks/20261008-bench-rescore.md) · [feishu-app](tasks/20261008-feishu-app.md) · [feishu-init](tasks/20261008-feishu-init.md) · [npm](tasks/20261008-npm-plugin-install.md) · [plugins](tasks/20261008-agent-plugins.md) · [ASI compatibility](tasks/20261009-asi-runner-timeouts.md) · [timeouts](tasks/20261009-bench-timeout-classification.md)
