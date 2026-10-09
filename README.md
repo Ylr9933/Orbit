@@ -284,6 +284,13 @@ run. Per-task solve resources (GPU, memory, CPU, timeout) come from an optional 
 makes the trial invalid instead of a zero. Any other benchmark needs only an adapter executable that speaks a small JSON protocol (no
 rebuild of Orbit): [docs/guides/bench-adapter.md](docs/guides/bench-adapter.md).
 
+ASI Agent runs require a complete source checkout with `--fail-on-agent-error` support and the
+sandbox timeout fix. Orbit checks the selected Codex/Claude adapter before launching an Agent and
+rejects the known bug that treats a background timeout warning as execution failure. Update the
+**registered ASI checkout**, including any frozen copy; upgrading Orbit alone cannot fix that code.
+The native attempt status is shown separately from score validity. See
+[ASI compatibility](docs/guides/bench-adapter.md#asi-bench-版本兼容).
+
 ### Several machines
 
 Every machine runs Orbit. The machine your agent works on (the primary) places runs on workers it has

@@ -1,6 +1,7 @@
 // ASI-Bench (seed31415) wrapped with its native runner: the solve run is `asibench run` for one
 // instance and prompt level as a process run (its own Docker sandbox goes through Orbit's docker
 // shim), the verify run is `asibench score` against the public references.
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AdapterRequest, BenchTask, Method } from "../contracts/index.ts";
@@ -171,11 +172,76 @@ function asiCli(b: Bench): string[] {
   return [b.config.python ?? "python3", "-m", "ai4sci_bench.cli"];
 }
 
+// Inspect the selected checkout without importing it or changing its files.
+const RUNNER_COMPATIBILITY = `
+import ast
+from pathlib import Path
+import sys
+
+def check():
+    root = Path(sys.argv[1]) / "ai4sci_bench"
+    try:
+        adapter = ast.parse((root / "adapters" / (sys.argv[2] + ".py")).read_text(encoding="utf-8"))
+        cli = ast.parse((root / "cli.py").read_text(encoding="utf-8"))
+    except (OSError, SyntaxError) as error:
+        return "ASI requires a complete, readable Python source checkout: " + str(error)
+    for node in ast.walk(adapter):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        warning_first = (isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Constant) and test.left.value == "timed out"
+            and len(test.ops) == 1 and isinstance(test.ops[0], ast.In)
+            and isinstance(test.comparators[0], ast.Name) and test.comparators[0].id == "log")
+        marks_timeout = any(isinstance(item, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "status" for target in item.targets)
+            and isinstance(item.value, ast.Attribute) and item.value.attr == "TIMEOUT"
+            and isinstance(item.value.value, ast.Name) and item.value.value.id == "RunStatus"
+            for item in node.body)
+        success_after = (node.orelse and isinstance(node.orelse[0], ast.If)
+            and isinstance(node.orelse[0].test, ast.Name) and node.orelse[0].test.id == "success")
+        if warning_first and marks_timeout and success_after:
+            return ("Known ASI false timeout bug: update the registered ASI checkout's "
+                + sys.argv[2] + " adapter to check sandbox success before timeout text. "
+                "This Orbit version refuses to launch an Agent with the affected runner.")
+    has_flag = any(isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute) and node.func.attr == "option"
+        and any(isinstance(arg, ast.Constant) and arg.value == "--fail-on-agent-error" for arg in node.args)
+        for node in ast.walk(cli))
+    if not has_flag:
+        return "Update the registered ASI checkout: its CLI must support --fail-on-agent-error."
+    return ""
+
+print(check())
+`;
+
+function requireCompatibleRunner(b: Bench, method: Method): void {
+  if (method.agent !== "codex" && method.agent !== "claude-code") return;
+  const adapter = method.agent === "codex" ? "codex_cli" : "claude_code_cli";
+  const result = spawnSync(
+    b.config.python ?? "python3",
+    ["-c", RUNNER_COMPATIBILITY, b.path, adapter],
+    {
+      encoding: "utf8",
+      timeout: 10_000,
+      maxBuffer: 64 * 1024,
+    },
+  );
+  if (result.error || result.status !== 0)
+    throw new Error(
+      `Cannot check ASI runner compatibility; check config.python and the registered source checkout: ${
+        result.error?.message ?? result.stderr?.trim().slice(-2000) ?? "Python probe failed"
+      }`,
+    );
+  if (result.stdout.trim()) throw new Error(result.stdout.trim());
+}
+
 export function asiSolveSpec(b: Bench, ctx: Trial): RunDescription {
   const meta = taskMeta(b, ctx.task);
   const level = ctx.options.promptLevel ?? "b1";
   if (!PROMPT_LEVELS.includes(level)) throw new Error(`unknown ASI prompt level: ${level}`);
   const m = ctx.method;
+  requireCompatibleRunner(b, m);
   const argv = [
     ...asiCli(b),
     "run",
@@ -191,6 +257,7 @@ export function asiSolveSpec(b: Bench, ctx: Trial): RunDescription {
     "1",
     "--retries",
     "1",
+    "--fail-on-agent-error",
   ];
   if (ctx.timeoutMin) argv.push("--timeout", String(Math.round(ctx.timeoutMin * 60)));
   if (m.agent === "oracle")
@@ -249,8 +316,9 @@ export function asiVerifySpec(b: Bench, solveOutput: string): RunDescription {
 interface NativeResult {
   instance_id?: string;
   prompt_level?: string;
+  attempt?: number;
   status?: string;
-  agent_output?: { error_message?: unknown };
+  agent_output?: { status?: string; error_message?: unknown };
 }
 
 /** Result JSONs written by `asibench run` (`<native>/<task>/<instance>__<level>.json`). */
@@ -279,6 +347,27 @@ export function nativeResults(nativeDir: string): NativeResult[] {
     }
   }
   return out;
+}
+
+function latestNativeResult(ctx: Trial, solveOutput: string): NativeResult | undefined {
+  return nativeResults(join(solveOutput, "native"))
+    .filter(
+      (r) =>
+        r.instance_id === `${ctx.task}${ASI_SEED_SUFFIX}` &&
+        r.prompt_level === (ctx.options.promptLevel ?? "b1"),
+    )
+    .sort((a, b) => (b.attempt ?? 1) - (a.attempt ?? 1))[0];
+}
+
+function attemptStatus(result: NativeResult | undefined): string {
+  const statuses = [result?.status, result?.agent_output?.status].filter(
+    (s): s is string => typeof s === "string",
+  );
+  if (statuses.includes("timeout")) return "execution_timeout";
+  if (statuses.includes("failed")) return "execution_failed";
+  if (statuses.length && statuses.every((s) => s === "success" || s === "completed"))
+    return "completed";
+  return "execution_incomplete";
 }
 
 /**
@@ -355,10 +444,8 @@ export function asiScore(ctx: Trial, solveOutput: string, verifyOutput: string):
     issues: [issue],
     invalid: true,
   });
-  const native = nativeResults(join(solveOutput, "native")).filter(
-    (r) => r.instance_id === instance && r.prompt_level === level,
-  );
-  if (native.length === 0) return bad("runner wrote no result for the instance");
+  const native = latestNativeResult(ctx, solveOutput);
+  if (!native) return bad("runner wrote no result for the instance");
   const reportFile = join(verifyOutput, "score.json");
   if (!existsSync(reportFile)) return bad("scorer wrote no report");
   let items: ScoreItem[];
@@ -383,9 +470,9 @@ export function asiScore(ctx: Trial, solveOutput: string, verifyOutput: string):
     issues.push(`judge unavailable: ${hidden.judgeUnavailable.join(", ")}`);
   if (hidden.missingFile.length)
     issues.push(`scorer could not find a file: ${hidden.missingFile.join(", ")}`);
-  const err = modelError(native.at(-1)?.agent_output?.error_message);
+  const err = modelError(native.agent_output?.error_message);
   if (err && item.final_score === 0) issues.push(err);
-  const status = native.at(-1)?.status;
+  const status = native.status;
   if (status && status !== "success" && status !== "completed")
     issues.push(`runner status ${status}`);
   const invalid =
@@ -419,7 +506,15 @@ export function asiReview(
     });
   if (existsSync(join(verifyOutput, "score.json")))
     files.push({ label: "Score report", phase: "verify", kind: "json", path: "score.json" });
-  return { files, items: [], details: { "prompt level": level } };
+  return {
+    files,
+    items: [],
+    details: {
+      "prompt level": level,
+      attempt_status: attemptStatus(latestNativeResult(ctx, solveOutput)),
+      score_scope: "non-official seed31415",
+    },
+  };
 }
 
 export const asiAdapter: AdapterHandlers = {
