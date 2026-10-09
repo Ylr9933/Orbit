@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import type { TrialRequest } from "../src/bench/adapter.ts";
-import { asiReview, asiScore, asiSolveSpec } from "../src/bench/asi.ts";
+import { asiAdapter, asiReview, asiScore, asiSolveSpec } from "../src/bench/asi.ts";
+import type { Run } from "../src/contracts/index.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "orbit-asi-status-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -115,6 +116,28 @@ describe("ASI runner compatibility", () => {
       expect(spec.command).toContain("--fail-on-agent-error");
     },
   );
+});
+
+describe("ASI verification budgets", () => {
+  it.each([
+    ["computer_science.euclidean_tsp_tour_optimization", 90],
+    ["computer_science.max3sat_assignment_optimization", 60],
+    ["math.example", 30],
+  ])("covers the native solver budget for %s", async (task, timeout) => {
+    const b = checkout();
+    const result = await asiAdapter.verify({
+      protocol: 1,
+      op: "verify",
+      benchmark: b,
+      trial: { ...ctx, task: String(task) },
+      solve: { run: { id: "unused-fixture-run" } as Run, output: join(tmp, "saved-solve") },
+    });
+    expect(result.spec.timeoutMin).toBe(timeout);
+    expect(result.spec.resources).toEqual({ gpus: 0, cpus: 1, memGB: 4 });
+    expect(result.spec.command).toContain("score");
+    expect(result.spec.command).toContain(join(tmp, "saved-solve", "native"));
+    expect(result.spec.command).not.toContain("--timeout");
+  });
 });
 
 describe("ASI execution and evaluation remain independent", () => {

@@ -289,7 +289,12 @@ const PREPARE_RESULTS =
   '[ -e "$f" ] && mkdir -p "${f%.json}.outputs"; done; ' +
   'exec "$@" --results-dir "$r" --output "$ORBIT_OUTPUT/score.json"';
 
-export function asiVerifySpec(b: Bench, solveOutput: string): RunDescription {
+const VERIFY_TIMEOUT_MIN: Record<string, number> = {
+  "computer_science.euclidean_tsp_tour_optimization": 90,
+  "computer_science.max3sat_assignment_optimization": 60,
+};
+
+export function asiVerifySpec(b: Bench, solveOutput: string, task = ""): RunDescription {
   return {
     backend: "process",
     command: [
@@ -309,7 +314,8 @@ export function asiVerifySpec(b: Bench, solveOutput: string): RunDescription {
     ],
     resources: { gpus: 0, cpus: 1, memGB: 4 },
     env: baseEnv(b),
-    timeoutMin: 30,
+    // Native solver budgets are 60/30 minutes; startup and collection need headroom.
+    timeoutMin: VERIFY_TIMEOUT_MIN[task] ?? 30,
   };
 }
 
@@ -530,7 +536,9 @@ export const asiAdapter: AdapterHandlers = {
   ],
   tasks: (req) => listTasks(req.benchmark),
   solve: ({ benchmark, trial }) => ({ spec: asiSolveSpec(benchmark, trial) }),
-  verify: ({ benchmark, solve }) => ({ spec: asiVerifySpec(benchmark, solve.output) }),
+  verify: ({ benchmark, solve, trial }) => ({
+    spec: asiVerifySpec(benchmark, solve.output, trial.task),
+  }),
   score: ({ trial, solve, verify }) => ({
     ...asiScore(trial, solve.output, verify.output),
     review: asiReview(trial, solve.output, verify.output),

@@ -1,7 +1,7 @@
 # Orbit status
 
 - **Updated at:** 2026-10-09
-- **Basis:** PR #1 integrated; `fix/bench-timeout-classification` verified (including real Docker/process timeout checks)
+- **Basis:** PRs #1/#2 integrated; ASI verifier budgets cover native TSP/Max3SAT runtime contracts.
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none for implementation; first npm publication deferred by the user (publisher authentication still needed).
 

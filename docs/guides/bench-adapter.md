@@ -23,6 +23,11 @@ Orbit 在生成 Agent solve 命令前，使用 `config.python` 只读解析所�
 这是已知版本问题的检查，不会改写第三方源码，也不会根据评分有效就改成执行成功。
 oracle/empty 不经过 Agent adapter 检查；所有 solve 都显式启用失败退出码。
 
+评分阶段请求 1 CPU、4 GiB 内存、0 GPU。TSP 任务的 native scorer 规定运行 3600 秒，
+Max3SAT 为 1800 秒；Orbit 外层上限分别为 90 和 60 分钟，为启动、收尾和评分留出时间。
+其他 ASI 任务维持 30 分钟。这不改变 task 的 solver 预算，也不改变求解阶段的资源配置。
+修复后可用 `orbit bench rescore <job> -t <task>` 在原 job 中重评保存的产物，旧评分保留在 history。
+
 如果使用仍有该问题的旧版源码，在 Codex/Claude OS adapter 中将
 `if "timed out" in log: ... elif success: ...` 改为优先检查执行结果。例如，沙箱返回
 `success, log` 且真实超时诊断为下列格式时，等价修复为：

@@ -416,6 +416,8 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
    是否声明失败退出码选项；已知不兼容版本拒绝启动并提示更新注册 checkout，不 monkey-patch 第三方代码。
    native result 和 score report 分别按 attempt 数值选择最新项；review 的 `attempt_status` 只依赖
    native 执行状态，评分有效性独立保留。该检查不修改历史 Run 或退出码。
+   verify 默认 30 分钟，TSP 为 90、Max3SAT 为 60 分钟，以覆盖其 native solver 的
+   3600/1800 秒固定预算及启动收尾；仍请求 1 CPU、4 GiB、0 GPU，内部 task 预算不变。
 
 **process 后端**（`RunSpec.backend = "process"`，`runs/process.ts`）：命令直接在宿主以独立进程组运行，
 cwd 默认为代码快照（有快照时），否则 `project`，再否则 Run 目录；HOME 为 Run 私有目录；环境包含 `spec.env`、`passEnv`、`ORBIT_OUTPUT`、
