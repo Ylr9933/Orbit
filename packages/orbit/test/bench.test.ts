@@ -540,6 +540,17 @@ const run = (p: Partial<Run>): Run =>
 describe("outcome classification", () => {
   const score = { score: 1, maxScore: 1, issues: [], invalid: false };
 
+  it.each([
+    "upstream request timeout",
+    "image timeout while pulling",
+    "timeout after 5 min\nbackground warning",
+  ])("does not infer a run deadline from unrelated error text: %s", (reason) => {
+    const failed = run({ state: "failed", reason });
+    expect(classify(failed, run({}), score).issues).not.toContain("solve timed out");
+    expect(classify(run({}), failed, score)).toMatchObject({ evaluation: "valid", score: 1 });
+    expect(usageRow("task", {}, [failed]).timeouts).toBe(0);
+  });
+
   it("verifies failed and timed-out solves but not cancelled, lost or unstarted ones", () => {
     expect(solveVerdict(run({ state: "failed", reason: "timeout after 5 min" })).verify).toBe(true);
     expect(solveVerdict(run({ state: "cancelled" }))).toMatchObject({

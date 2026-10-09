@@ -16,7 +16,9 @@ const cleanupOf = (...runs: (Run | null)[]): Outcome["cleanup"] => {
 const oomIssue = (r: Run) =>
   `ran out of memory (limit ${r.spec.resources.memGB} GB, peak ${r.usage?.peakMemGB ?? "?"} GB)`;
 
-const timedOut = (r: Run) => r.state === "failed" && (r.reason ?? "").includes("timeout");
+/** Only the Run scheduler's deadline reason denotes an execution timeout. */
+export const timedOut = (r: Run): boolean =>
+  r.state === "failed" && /^timeout after \d+(?:\.\d+)?(?:e[+-]?\d+)? min$/.test(r.reason ?? "");
 
 /** Whether the solve run got far enough that its result should be verified. */
 export function solveVerdict(solve: Run): {

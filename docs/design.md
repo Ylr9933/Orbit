@@ -190,6 +190,9 @@ submitterError, agent }`；Web Session 页两种都有时左右两栏（左提�
 （带提示列表与侧栏）。远端 Run 的 Agent 会话留在 worker 上，主节点不显示。
 
 **失败也要保留证据**：任何终态都先采集日志与 `$ORBIT_OUTPUT`，再清理容器；日志读到 EOF，截断必须标记。
+执行超时计时在确认容器 / 进程退出后立即停止，日志排空、产物采集与用量收尾不计入执行时限；
+daemon 重启时仅对仍在运行的任务重新计时。bench 的超时 issue 与用量统计只识别调度器的完整超时原因，
+不匹配日志或其他错误文本中的 timeout 字样。
 
 **实测用量**（`Run.usage`，`runs/usage.ts`）：执行节点每 5 s 采样一次运行中的 Run：docker Run 读容器的
 cgroup v2（`memory.peak`/`memory.current`、`cpu.stat`、`memory.events` 的 `oom_kill`）；process Run 读其进程组

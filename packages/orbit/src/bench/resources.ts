@@ -9,6 +9,7 @@ import {
   type Run,
   type RunSpecInput,
 } from "../contracts/index.ts";
+import { timedOut } from "./classify.ts";
 
 /** Read and validate a resources file; errors name the file and the offending field. */
 export function loadResources(file: string): BenchResources {
@@ -88,7 +89,7 @@ export function usageRow(task: string, requested: ResourceOverride, runs: Run[])
   const minutes = runs
     .filter((r) => r.startedAt && r.endedAt)
     .map((r) => (Date.parse(r.endedAt as string) - Date.parse(r.startedAt as string)) / 60_000);
-  const timedOut = runs.filter((r) => r.state === "failed" && /timeout/.test(r.reason ?? ""));
+  const timeouts = runs.filter(timedOut);
   const row: BenchUsageRow = {
     task,
     runs: measured.length,
@@ -100,7 +101,7 @@ export function usageRow(task: string, requested: ResourceOverride, runs: Run[])
     maxMinutes: max(minutes) === null ? null : Math.round((max(minutes) as number) * 10) / 10,
     oomKilled: measured.filter((r) => r.usage?.oomKilled).length,
     oomKills: measured.filter((r) => (r.usage?.oomKills ?? 0) > 0).length,
-    timeouts: timedOut.length,
+    timeouts: timeouts.length,
     suggest: {},
     notes: [],
   };

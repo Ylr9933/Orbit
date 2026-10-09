@@ -186,7 +186,10 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     await this.ticking;
-    for (const a of this.active.values()) a.logs?.kill();
+    for (const a of this.active.values()) {
+      a.logs?.kill();
+      clearTimeout(a.timeout);
+    }
     for (const u of this.samplers.values()) u.halt();
   }
 
@@ -1030,14 +1033,24 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
 
   /** Stop the run when its timeout is reached (from `startedAt`, so also after a restart). */
   private armTimeout(run: Run): void {
-    if (!run.spec.timeoutMin) return;
+    if (!run.spec.timeoutMin || this.stopped) return;
+    this.disarmTimeout(run.id);
+    const ctl = this.control(run.id);
     const started = run.startedAt ? Date.parse(run.startedAt) : Date.now();
     const left = Math.max(0, started + run.spec.timeoutMin * 60_000 - Date.now());
     const t = setTimeout(() => {
       const now = this.store.getRun(run.id);
       if (now && !isTerminal(now.state)) this.requestStop(now, "timeout");
     }, left);
+    ctl.timeout = t;
     t.unref();
+  }
+
+  private disarmTimeout(id: string): void {
+    const ctl = this.active.get(id);
+    if (!ctl) return;
+    clearTimeout(ctl.timeout);
+    ctl.timeout = undefined;
   }
 
   /** Copy `spec.collect` paths out of the stopped container into `output/collected/`. */
@@ -1169,6 +1182,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
         await sleep(PROC_POLL_MS);
       }
     }
+    this.disarmTimeout(id);
     const run = this.mustGet(id);
     await this.stopUsage(run, false);
     code = readExitFile(join(this.dirs(id).root, "exit-code")) ?? code;
@@ -1227,7 +1241,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       alive ? "reattached to process after daemon restart" : "collected after daemon restart",
     );
     this.control(run.id);
-    this.armTimeout(run);
+    if (alive) this.armTimeout(run);
     void this.watchProcess(run.id, null)
       .catch((e) => console.error(`orbit: run ${run.id}:`, (e as Error).message))
       .finally(() => this.active.delete(run.id));
@@ -1411,6 +1425,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       await sleep(DOCKER_RETRY_MS);
       exitCode = await docker.waitContainer(containerId);
     }
+    this.disarmTimeout(id);
     // Evidence first: let the log follower reach EOF before the container is removed.
     const complete = await Promise.race([drained, sleep(LOG_DRAIN_TIMEOUT_MS).then(() => false)]);
     if (!complete) {
@@ -1446,6 +1461,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     exitCode: number | null,
     reason: string | null,
   ): Promise<Run> {
+    this.disarmTimeout(run.id);
     // Already ended (e.g. a later step of the same watcher threw): only retry its cleanup.
     const now = this.mustGet(run.id);
     if (isTerminal(now.state)) {
@@ -1587,7 +1603,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
         st.running ? "reattached after daemon restart" : "collected after daemon restart",
       );
       this.control(run.id);
-      this.armTimeout(run);
+      if (st.running) this.armTimeout(run);
       const id = st.id;
       void this.watch(run.id, id, true)
         .catch((e) => console.error(`orbit: run ${run.id}:`, (e as Error).message))
@@ -1708,6 +1724,7 @@ export function installBundle(bundle: string, agentDir: string, harness: "codex"
 }
 
 interface Control {
+  timeout?: NodeJS.Timeout;
   cancel?: "cancel" | "timeout";
   /** A failure found by Orbit while the container runs (it is stopped, then collected). */
   fail?: string;
