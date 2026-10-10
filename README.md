@@ -33,9 +33,11 @@ Open `docs/ppt/index.html` in a browser to present offline.
 - **Notifications**: Feishu, DingTalk, WeCom, Slack or a generic webhook when runs or groups finish.
 - **On your phone**: `orbit feishu init` sets up a Feishu bot from one QR scan; it sends result cards with
   metric curves and answers `/gpu` and `/runs`.
-- **Benchmarks**: task × method × seed jobs; each trial is a solve run plus a separate verify run, and
-  only valid scores enter means. Adapters for Harbor task directories (e.g. Terminal-Bench Science)
-  and ASI-Bench.
+- **Benchmarks**: task × method × seed jobs; each trial is a solve run plus its verification, and
+  only valid scores enter means. A built-in reader for the [Harbor](https://github.com/harbor-framework/harbor)
+  task format (separate and shared verifiers, docker-compose services, collect hooks), so
+  [Terminal-Bench-Science](https://github.com/harbor-framework/terminal-bench-science), Terminal-Bench and
+  other Harbor datasets run under Orbit's resource rules; plus ASI-Bench and external adapters.
 - **Several machines**: one machine places runs on worker machines; code travels by content hash,
   datasets are registered by name on each node, logs and metrics flow back. No Ray needed.
 - **Agent skill**: a skill for Claude Code and Codex that teaches them to estimate resources, submit,
@@ -260,6 +262,9 @@ then run `orbit feishu check phone` to reconnect and test.
 
 ```bash
 orbit bench add tbs ../terminal-bench-science --adapter harbor
+# datasets published on Harbor Hub: download them with Harbor's CLI, then register the directory
+harbor download terminal-bench/terminal-bench@latest -o ~/datasets
+orbit bench add tb ~/datasets/terminal-bench --adapter harbor
 orbit bench add asi ../ASI-Bench --adapter asi -c python=/path/to/venv/bin/python --pass-env JUDGE_KEY
 orbit bench add rcb ../ResearchClawBench --adapter ./examples/bench-adapters/researchclawbench/adapter.py \
   --pass-env OPENAI_API_KEY --pass-env OPENAI_BASE_URL
@@ -367,6 +372,13 @@ docs/             design.md, status.md, tasks/, guides/, ppt/
 ```
 
 Contributors and coding agents: read [AGENTS.md](AGENTS.md) first.
+
+## Acknowledgements
+
+Orbit's `harbor` adapter reads the task format defined by [Harbor](https://github.com/harbor-framework/harbor)
+(Apache-2.0) from the Terminal-Bench team; it is an independent implementation, not an official Harbor
+runner and not endorsed by its authors. Scores from Orbit are comparable to Harbor's only where they have
+been checked against it; see `docs/tasks/` for what was checked.
 
 ## License
 

@@ -27,8 +27,10 @@ Orbit 在隔离的 Docker 容器里、按 GPU / CPU / 内存租约运行它，�
   profile；密钥不出现在命令行，日志中自动脱敏。
 - **通知**：Run 或分组结束时发送到飞书、钉钉、企业微信、Slack 或通用 webhook。
 - **手机上查看**：`orbit feishu init` 扫码即建好飞书机器人，收带指标曲线的结果卡片，随时发 `/gpu`、`/runs` 查看状态。
-- **刷榜**：任务 × 方法 × 种子的 job；每个 trial 是一个 solve Run 加一个独立的 verify Run，只有有效
-  分数计入均值。内置 Harbor 任务目录（如 Terminal-Bench Science）与 ASI-Bench 适配器。
+- **刷榜**：任务 × 方法 × 种子的 job；每个 trial 是一个 solve Run 加上它的验证，只有有效分数计入均值。
+  内置 [Harbor](https://github.com/harbor-framework/harbor) 任务格式的读取器（separate / shared verifier、
+  docker-compose 服务、collect hooks），[Terminal-Bench-Science](https://github.com/harbor-framework/terminal-bench-science)、
+  Terminal-Bench 等 Harbor 数据集都按 Orbit 的资源规则运行；另有 ASI-Bench 与外部适配器。
 - **多机**：一台机器把 Run 放到已加入的 worker 上；代码按内容哈希传输，数据集在各节点按名字登记，
   日志与指标回传。不需要 Ray。
 - **Agent skill**：给 Claude Code 和 Codex 的 skill，教它们用 `orbit` 估算资源、提交、等待并记录结论。
@@ -234,6 +236,9 @@ daemon 主动向飞书建立长连接，不需要公网地址，daemon 仍只监
 
 ```bash
 orbit bench add tbs ../terminal-bench-science --adapter harbor
+# 发布在 Harbor Hub 上的数据集：用 Harbor 自己的 CLI 下载，再登记目录
+harbor download terminal-bench/terminal-bench@latest -o ~/datasets
+orbit bench add tb ~/datasets/terminal-bench --adapter harbor
 orbit bench add asi ../ASI-Bench --adapter asi -c python=/path/to/venv/bin/python --pass-env JUDGE_KEY
 orbit bench add rcb ../ResearchClawBench --adapter ./examples/bench-adapters/researchclawbench/adapter.py \
   --pass-env OPENAI_API_KEY --pass-env OPENAI_BASE_URL
@@ -332,6 +337,12 @@ docs/             design.md、status.md、tasks/、guides/、ppt/
 ```
 
 贡献者与编程 Agent 请先阅读 [AGENTS.md](AGENTS.md)。
+
+## 致谢
+
+Orbit 的 `harbor` 适配器读取由 Terminal-Bench 团队的 [Harbor](https://github.com/harbor-framework/harbor)（Apache-2.0）
+定义的任务格式；它是独立实现，不是 Harbor 官方运行器，也未获其作者背书。只有经过对照的部分，Orbit 的分数才与
+Harbor 的可比；对照情况见 `docs/tasks/`。
 
 ## 许可
 
