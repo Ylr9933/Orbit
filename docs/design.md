@@ -140,7 +140,8 @@ unknown。纯粹用于展示：准入只看显存占用。
 { name?, project?(repo path), image | dockerfile, command(argv), resources,
   mounts[{ source | dataset, target, mode: ro|rw }], env, passEnv[], network(default true),
   snapshot(default true when project set), auth?(profile name), collect[], tags, parentId?,
-  services[], networks[{ name, internal }], runNetworks[], dependsOn[], after? }
+  services[], networks[{ name, internal }], runNetworks[], dependsOn[], after?, mkdirs[],
+  hooks[{ service?, command, timeoutSec }] }
 ```
 
 **Run**：`{ id, spec, state, exitCode?, node, remote, origin?, leaseId?, containerId?, code{commit, dirty, diffRef},
@@ -150,7 +151,7 @@ createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage? }`
 - 执行结果（state/exitCode）、清理状态（cleanup）、评测有效性（bench 中）是三个独立字段。
 - `remote`：主节点上的镜像记录，Run 实际在 `node` 上执行；`origin`：worker 上替主节点执行的 Run 的主节点名（§8）。
 - mount 二选一：`source`（本机绝对路径）或 `dataset`（命名数据集，在执行节点解析为本地路径）；
-  `target` 为绝对路径、互不重复、不含 `..`，且不能落在 `/orbit`、`/workspace` 下。`collect` 路径同样不含 `..`。
+  `target` 为绝对路径、互不重复、不含 `..`，且不能落在 `/orbit` 下（有 project 时也不能落在 `/workspace` 下）。`collect` 路径同样不含 `..`。
 - `env` 的值随 Run 记录保存，只放非密钥配置；密钥用 `passEnv`（只记变量名，启动时从 daemon 环境读取，
   值按名字规则在日志中脱敏）。CLI：`-e KEY=VALUE` / `--pass-env VAR`。
 
@@ -177,6 +178,10 @@ network?, collect }`，在 `command` 结束（或到时被停）后于**同一�
   failed | timeout | skipped | error, exitCode, reason, startedAt, endedAt }`；其输出在容器日志排空后接到 Run 日志。
 - 状态都在文件里，daemon 重启后接着等命令或 after 阶段。Run 的 state / exitCode 只反映 `command`。
   after 阶段的用量计入同一容器的 usage。
+
+**hooks**（Harbor `[[verifier.collect]]`）：命令结束后、采集前执行的 shell 命令（同样靠保留容器的阶段脚本）：
+先在 Run 容器里执行，没有 after 阶段时随后停掉 Run 容器，再在服务容器里执行（同 Harbor 顺序）；各自有时限，失败只记事件。
+`mkdirs`：容器命令前先建目录（尽力而为），Harbor 任务用它建 `/logs/{agent,verifier,artifacts}`。
 
 **容器内约定**（skill 告诉 Agent；实验代码直接用环境变量）：
 
@@ -449,12 +454,13 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
    `environment/docker-compose.yaml`（`bench/compose.ts`）翻译成服务容器：`main` 取 `environment`、`working_dir`、
    `depends_on`、`networks`（其 `command` 是 Harbor 的保活命令，忽略；task 的 `[environment.env]` 覆盖 compose 的值），
    其他服务取 build/image、command、environment、working_dir、cpus、mem_limit、healthcheck、depends_on（started /
-   healthy）、networks、init、read_only、tmpfs、cap_add/drop、security_opt、pids_limit；顶层 networks 只认 `internal`。
+   healthy）、networks、init、read_only、tmpfs、cap_add/drop、security_opt、pids_limit、shm_size；`main` 的 `image`
+   只接受与 `[environment] docker_image` 相同的值；`[[verifier.collect]]` 变成 hooks；顶层 networks 只认 `internal`。
    插值同 Compose（`${VAR}`、`${VAR:-d}`、`${VAR-d}`、`$$`），变量为 CONTEXT_DIR、CPUS、MEMORY、PREBUILT_IMAGE_NAME 与
    任务变量；未知变量、其他键（volumes、ports 等）都列为不支持。`service = "<名>"` 的 artifacts 从该服务采集。
    未实现的设置一律标为不支持而不是忽略（否则分数不再对应任务条件）：compose 中未实现的键、
    复用 compose 环境的 separate verifier、`allowlist` 网络、非 linux、`gpu_types`/`tpu`、`mcp_servers`、`skills_dir`、`healthcheck`、`[agent]`/`[verifier]`
-   `user`、`[[verifier.collect]]`、`[[steps]]`、`${VAR}` 变量模板；Harbor 也忽略的未知字段照样忽略。
+   `user`、`[[verifier.collect]]` 的 `user`、`[[steps]]`、`${VAR}` 变量模板；Harbor 也忽略的未知字段照样忽略。
    指标：主指标 `resolved`（reward ≥ 1 的 trial，%，即 Terminal-Bench 的 resolution rate），`score` 标为 Reward（平均 reward）。
 2. **原生包装**（`bench/asi.ts`，ASI-Bench seed31415）：solve Run 以 **process 后端**运行
    `config.python -m ai4sci_bench.cli run`（单实例、单 prompt level，`--output-dir $ORBIT_OUTPUT/native`）；Agent 方法走

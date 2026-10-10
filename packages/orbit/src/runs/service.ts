@@ -984,7 +984,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
         return void (await this.finalize(run, "cancelled", null, "cancelled before start"));
 
       const spec = this.containerSpec(run, dirs, image);
-      if (run.spec.after) writePhaseScript(join(dirs.orbit, "phases"));
+      if (keepsContainer(run.spec)) writePhaseScript(join(dirs.orbit, "phases"));
       if (usesRunNetworks(run.spec)) {
         // Before the run's container: a failure here is the environment's, not the method's.
         await this.startServices(id, dirs, ctl);
@@ -1206,6 +1206,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       user: null,
       init: s.init,
       shm: false,
+      ...(s.shmGB ? { shmGB: s.shmGB } : {}),
       ...(s.healthcheck ? { healthcheck: s.healthcheck } : {}),
       readOnly: s.readOnly,
       tmpfs: s.tmpfs,
@@ -1649,18 +1650,30 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     const drained = logs.done.then(() => true);
     let exitCode: number;
     let collected = false;
-    if (this.mustGet(id).spec.after) {
+    const spec = this.mustGet(id).spec;
+    if (keepsContainer(spec)) {
       const main = await this.waitMain(id, containerId);
       exitCode = main.exitCode;
       this.disarmTimeout(id);
       if (main.running) {
+        // As Harbor: hooks in the run's container first; without an after phase it is stopped
+        // before the services' hooks run.
+        const go = () => ctl.cancel !== "cancel";
+        if (go()) await this.runHooks(id, containerId, "main");
+        if (!spec.after) {
+          await docker.stopContainer(containerId);
+          await this.waitStopped(containerId);
+        }
+        if (go()) await this.runHooks(id, containerId, "services");
         // Artifacts are taken as the command left them, before the after phase can change them.
         await this.collect(this.mustGet(id), containerId);
         collected = true;
-        await this.runAfter(id, containerId, ctl);
-        await docker.stopContainer(containerId);
-        await this.waitStopped(containerId);
-      } else this.skipAfter(id, "the container stopped with the command");
+        if (spec.after) {
+          await this.runAfter(id, containerId, ctl);
+          await docker.stopContainer(containerId);
+          await this.waitStopped(containerId);
+        }
+      } else if (spec.after) this.skipAfter(id, "the container stopped with the command");
     } else exitCode = await this.waitStopped(containerId);
     this.disarmTimeout(id);
     // Evidence first: let the log follower reach EOF before the container is removed.
@@ -1745,6 +1758,28 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     await kill("TERM");
     await sleep(10_000);
     await kill("KILL");
+  }
+
+  /** `spec.hooks`, in order, each in its container with its time limit; failures are noted only. */
+  private async runHooks(id: string, containerId: string, which: "main" | "services") {
+    const run = this.mustGet(id);
+    for (const [i, h] of run.spec.hooks.entries()) {
+      if (Boolean(h.service) !== (which === "services")) continue;
+      const target = h.service
+        ? run.services.find((s) => s.name === h.service)?.containerId
+        : containerId;
+      const where = h.service ?? "main";
+      if (!target) {
+        this.store.addEvent(id, "hook", `hook ${i + 1} (${where}): service not running`);
+        continue;
+      }
+      const code = await docker.execWait(target, ["sh", "-c", h.command], h.timeoutSec * 1000);
+      this.store.addEvent(
+        id,
+        "hook",
+        `hook ${i + 1} (${where}): ${code === 0 ? "done" : code === 124 ? `exit 124 (or no exit within ${h.timeoutSec} s)` : `exit code ${code}`}`,
+      );
+    }
   }
 
   private setAfter(id: string, status: AfterStatus, message: string): void {
@@ -1886,7 +1921,8 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     else this.stopIntent.set(run.id, why);
     this.store.addEvent(run.id, why, why === "cancel" ? "cancel requested" : "timeout reached");
     // At its timeout, a run with an after phase stops only the command; the phase still runs.
-    if (run.containerId && why === "timeout" && run.spec.after) void this.stopMain(run.containerId);
+    if (run.containerId && why === "timeout" && keepsContainer(run.spec))
+      void this.stopMain(run.containerId);
     else if (run.containerId) void docker.stopContainer(run.containerId);
     if (run.proc) void this.stopProcess(run);
   }
@@ -2131,7 +2167,7 @@ const containerName = (runId: string) => `orbit-${runId}`;
  * which keeps the container once the command has exited.
  */
 function runCommand(s: RunSpec): string[] {
-  let cmd = s.after ? ["/bin/sh", "/orbit/phases/run.sh", ...s.command] : s.command;
+  let cmd = keepsContainer(s) ? ["/bin/sh", "/orbit/phases/run.sh", ...s.command] : s.command;
   if (s.mkdirs.length)
     cmd = [
       "/bin/sh",
@@ -2142,6 +2178,9 @@ function runCommand(s: RunSpec): string[] {
     ];
   return cmd;
 }
+
+/** Runs whose container stays once the command exits: for hooks and an after phase. */
+const keepsContainer = (s: RunSpec) => Boolean(s.after) || s.hooks.length > 0;
 
 /** Per-run networks: for services, or for an after phase that has network when the run has none. */
 const usesRunNetworks = (s: RunSpec) =>

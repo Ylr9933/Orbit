@@ -19,7 +19,8 @@ describe("RunSpec validation", () => {
     expect(ok({ mounts: [{ source: "/a", target: "/data" }] })).toBe(true);
     expect(ok({ mounts: [{ source: "/a", target: "data" }] })).toBe(false);
     expect(ok({ mounts: [{ source: "/a", target: "/orbit/x" }] })).toBe(false);
-    expect(ok({ mounts: [{ source: "/a", target: "/workspace" }] })).toBe(false);
+    expect(ok({ mounts: [{ source: "/a", target: "/workspace" }], project: "/p" })).toBe(false);
+    expect(ok({ mounts: [{ source: "/a", target: "/workspace" }] })).toBe(true);
     expect(ok({ mounts: [{ source: "/a", target: "/d/../orbit" }] })).toBe(false);
     expect(
       ok({

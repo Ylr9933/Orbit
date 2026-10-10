@@ -99,8 +99,9 @@ export const ResourceRequest = z.object({
 export type ResourceRequest = z.infer<typeof ResourceRequest>;
 
 const hasDotDot = (p: string) => p.split("/").includes("..");
-/** Container paths Orbit mounts itself (run directory and code snapshot). */
-const RESERVED_TARGET = /^\/(orbit|workspace)?(\/|$)/;
+/** Container paths Orbit mounts itself: the run directory, and the code at /workspace. */
+const RESERVED_TARGET = /^\/(orbit)?(\/|$)/;
+const WORKSPACE_TARGET = /^\/workspace(\/|$)/;
 
 /** A bind mount: a host path (`source`, this node only) or a named dataset (any node that has it). */
 export const Mount = z
@@ -279,6 +280,8 @@ export const ServiceSpec = z
     networks: z.array(ServiceName).default(["default"]),
     init: z.boolean().default(false),
     readOnly: z.boolean().default(false),
+    /** Size of /dev/shm in GB (Docker's default otherwise). */
+    shmGB: z.number().positive().optional(),
     tmpfs: z.array(z.string()).default([]),
     capAdd: z.array(z.string()).default([]),
     capDrop: z.array(z.string()).default([]),
@@ -294,6 +297,14 @@ export const ServiceSpec = z
     message: "service collect paths must be absolute container paths without `..`",
   });
 export type ServiceSpec = z.infer<typeof ServiceSpec>;
+
+export const Hook = z.object({
+  /** Default: the run's own container. */
+  service: ServiceName.optional(),
+  command: z.string().min(1),
+  timeoutSec: z.number().positive().default(60),
+});
+export type Hook = z.infer<typeof Hook>;
 
 /** A per-run network; `internal` ones have no route out. `default` exists unless declared. */
 export const NetworkSpec = z.object({ name: ServiceName, internal: z.boolean().default(false) });
@@ -404,6 +415,11 @@ export const RunSpec = z
     after: AfterPhase.optional(),
     /** Absolute directories created in the container before `command` (e.g. Harbor's /logs/*). */
     mkdirs: z.array(z.string()).default([]),
+    /**
+     * Shell commands run once `command` has exited, in the run's container (kept for them) or in a
+     * service, before anything is collected (e.g. Harbor's `[[verifier.collect]]` snapshots).
+     */
+    hooks: z.array(Hook).default([]),
   })
   .refine(
     (s) =>
@@ -425,20 +441,29 @@ export const RunSpec = z
     (s) => {
       const targets = s.mounts.map((m) => m.target.replace(/\/+$/, "") || "/");
       return (
-        targets.every((t) => t.startsWith("/") && !hasDotDot(t) && !RESERVED_TARGET.test(t)) &&
-        new Set(targets).size === targets.length
+        targets.every(
+          (t) =>
+            t.startsWith("/") &&
+            !hasDotDot(t) &&
+            !RESERVED_TARGET.test(t) &&
+            // /workspace is taken only when the run has code (a project) there.
+            !(s.project && WORKSPACE_TARGET.test(t)),
+        ) && new Set(targets).size === targets.length
       );
     },
     {
       message:
-        "mount targets must be distinct absolute paths without `..`, outside /orbit and /workspace",
+        "mount targets must be distinct absolute paths without `..`, outside /orbit (and /workspace with a project)",
     },
   )
   .superRefine((s, ctx) => {
     const problem = servicesProblem(s);
     if (problem) ctx.addIssue({ code: "custom", message: problem });
-    if (s.after && s.backend !== "docker")
-      ctx.addIssue({ code: "custom", message: "an after phase needs the docker backend" });
+    if ((s.after || s.hooks.length) && s.backend !== "docker")
+      ctx.addIssue({ code: "custom", message: "after phases and hooks need the docker backend" });
+    for (const h of s.hooks)
+      if (h.service && !s.services.some((x) => x.name === h.service))
+        ctx.addIssue({ code: "custom", message: `hook for unknown service ${h.service}` });
   });
 export type RunSpec = z.infer<typeof RunSpec>;
 export type RunSpecInput = z.input<typeof RunSpec>;

@@ -45,6 +45,8 @@ export interface HarborTask {
   artifacts: Artifact[];
   /** Service containers from environment/docker-compose.yaml. */
   compose: ComposePlan | null;
+  /** `[[verifier.collect]]`: commands run before artifacts are collected. */
+  hooks: { service?: string; command: string; timeoutSec: number }[];
   agentTimeoutSec: number | null;
   verifierTimeoutSec: number | null;
   env: Resources & {
@@ -148,6 +150,29 @@ function networkMode(phase: Table, env: Table, problems: string[], label: string
   return true;
 }
 
+/** `[[verifier.collect]]` entries as run hooks (in `main` or a compose service). */
+function collectHooks(v: unknown, compose: ComposePlan | null, problems: string[]) {
+  const out: HarborTask["hooks"] = [];
+  for (const raw of Array.isArray(v) ? v : []) {
+    const t = table(raw);
+    const command = str(t.command);
+    const service = str(t.service) ?? "main";
+    if (!command) {
+      problems.push("[[verifier.collect]] without a command");
+      continue;
+    }
+    if (nonEmpty(t.user)) problems.push("[[verifier.collect]] user is not supported");
+    if (service !== "main" && !compose?.services.some((x) => x.name === service))
+      problems.push(`[[verifier.collect]] names unknown service ${service}`);
+    out.push({
+      ...(service !== "main" ? { service } : {}),
+      command,
+      timeoutSec: num(t.timeout_sec) ?? 60,
+    });
+  }
+  return out;
+}
+
 function workdir(env: Table, problems: string[]): string | null {
   const w = str(env.workdir);
   if (w && !w.startsWith("/")) problems.push(`workdir "${w}" is not an absolute path`);
@@ -172,7 +197,6 @@ function unsupportedSettings(toml: Table): string[] {
   }
   check(nonEmpty(agent.user), "[agent] user");
   check(nonEmpty(verifier.user), "[verifier] user");
-  check(nonEmpty(verifier.collect), "[[verifier.collect]]");
   check(nonEmpty(toml.steps), "[[steps]] (multi-step tasks)");
   const tables: [string, unknown][] = [
     ["[environment.env]", environment.env],
@@ -251,6 +275,7 @@ export function parseHarborTask(dir: string, id: string): HarborTask {
         composePath,
         envDir,
         image && "dockerfile" in image ? image.dockerfile : null,
+        image && "image" in image ? image.image : null,
         {
           ...vars(environment.env),
           CONTEXT_DIR: envDir,
@@ -265,6 +290,7 @@ export function parseHarborTask(dir: string, id: string): HarborTask {
   for (const a of artifacts)
     if (a.service && !compose?.services.some((x) => x.name === a.service))
       problems.push(`artifact ${a.source} names unknown service ${a.service}`);
+  const hooks = collectHooks(verifier.collect, compose, problems);
   const mode = verifierMode(verifier);
   let verify: ReturnType<typeof verifierImage> = { image: null, bundledTests: true };
   if (mode === "separate") {
@@ -291,6 +317,7 @@ export function parseHarborTask(dir: string, id: string): HarborTask {
     reason: problems.length ? [...new Set(problems)].join("; ") : null,
     artifacts,
     compose,
+    hooks,
     agentTimeoutSec: num(agent.timeout_sec),
     verifierTimeoutSec: num(verifier.timeout_sec),
     env: {
@@ -359,6 +386,7 @@ function brokenTask(dir: string, id: string, reason: string): HarborTask {
     reason,
     artifacts: [],
     compose: null,
+    hooks: [],
     agentTimeoutSec: null,
     verifierTimeoutSec: null,
     env: r,
@@ -408,6 +436,7 @@ export function harborSolveSpec(
     collect: t.artifacts.filter((a) => !a.service).map((a) => a.source),
     // Harbor mounts these into the Agent's environment; tasks may expect them to exist.
     mkdirs: ["/logs/agent", "/logs/verifier", "/logs/artifacts"],
+    ...(t.hooks.length ? { hooks: t.hooks } : {}),
     ...(c?.services.length
       ? {
           services: c.services.map((s) => ({

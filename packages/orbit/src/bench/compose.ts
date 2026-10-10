@@ -27,6 +27,7 @@ const NAME = /^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$/;
 /** Keys Orbit maps; `expose` and `pull_policy` change nothing for containers on a private network. */
 const MAIN_KEYS = new Set([
   "build",
+  "image",
   "command",
   "environment",
   "working_dir",
@@ -54,6 +55,7 @@ const SERVICE_KEYS = new Set([
   "cap_drop",
   "security_opt",
   "pids_limit",
+  "shm_size",
 ]);
 
 export function composeFile(envDir: string): string | null {
@@ -198,6 +200,7 @@ export function parseCompose(
   file: string,
   envDir: string,
   mainDockerfile: string | null,
+  mainImage: string | null,
   vars: Record<string, string>,
   problems: string[],
 ): ComposePlan {
@@ -240,6 +243,9 @@ export function parseCompose(
         if (!mainDockerfile || b.dockerfile !== resolve(mainDockerfile))
           problems.push(`${label}: a build other than environment/Dockerfile is not supported`);
       }
+      // Harbor tasks repeat their prebuilt [environment] docker_image here.
+      if (s.image !== undefined && s.image !== mainImage)
+        problems.push(`${label}: an image other than [environment] docker_image is not supported`);
       plan.env = envOf(s.environment, problems, label);
       plan.workdir = typeof s.working_dir === "string" ? s.working_dir : null;
       plan.dependsOn = dependsOn(s.depends_on, problems, label);
@@ -287,6 +293,11 @@ export function parseCompose(
     const h = healthcheck(s.healthcheck, problems, label);
     if (h) svc.healthcheck = h;
     if (typeof s.pids_limit === "number") svc.pidsLimit = s.pids_limit;
+    if (s.shm_size !== undefined) {
+      const gb = sizeGB(s.shm_size);
+      if (gb) svc.shmGB = gb;
+      else problems.push(`${label}: shm_size ${String(s.shm_size)} is not a size`);
+    }
     plan.services.push(svc);
   }
   // Compose refuses to wait for the health of a service without a health check.

@@ -1,5 +1,5 @@
 # Service containers for Harbor docker-compose tasks
-branch: feat/harbor-sidecars (on fix/harbor-verifier-modes) · status: in_progress · updated: 2026-10-10
+branch: feat/harbor-sidecars (on fix/harbor-verifier-modes) · status: completed · updated: 2026-10-10
 
 ## Goal
 Run the 5 TB-Science tasks whose environment has a docker-compose file (tamp-skill-planning,
@@ -29,8 +29,7 @@ Run, lease and cleanup rules.
 | Real Docker: unhealthy service / service exiting mid-run | working tree | passed | `failed (service bad is unhealthy)` before start; `services[].failure = exited with code 3` recorded; cleanup done, nothing left |
 | Real Docker: TB-Science longitudinal-clinical-agent (oracle, empty) | working tree | passed | oracle 1, empty 0; broker artifacts collected from `output/services/broker/` |
 | Real Docker: TB-Science protein-active-learning (oracle, empty) | working tree | passed | oracle 1, empty 0 (two internal-network services, submission depends on assay) |
-| Real Docker: TB-Science inverse-lithography empty | working tree | passed | 0; oracle still running at commit time |
-| Real Docker: tamp-skill-planning, noisy-blackbox-optimization | working tree | not_run | images still building at commit time (Docker Hub / apt slow through the proxy); first attempt failed on Docker Hub timeouts |
+| Real Docker: TB-Science inverse-lithography, noisy-blackbox-optimization, tamp-skill-planning (oracle, empty) | f8466ca | passed | oracle 1, empty 0 for all three (tamp's oracle probes the `sim` service; builds took ~40 min through the slow mirror; a first attempt failed on Docker Hub timeouts) |
 
 ## Next / open issues
 - Compose `service_started` on a service with a health check waits for healthy here (stricter, start-up only).

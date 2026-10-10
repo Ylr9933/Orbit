@@ -397,6 +397,35 @@ command = "true"
     ]);
   });
 
+  it("runs [[verifier.collect]] hooks before artifacts are collected", () => {
+    const d = task(
+      "hooks",
+      `artifacts = ["/tmp/agent.patch"]
+[verifier]
+environment_mode = "separate"
+[[verifier.collect]]
+command = "cd /app && git diff > /tmp/agent.patch"
+[[verifier.collect]]
+service = "db"
+command = "pg_dump > /tmp/db.sql"
+timeout_sec = 120
+`,
+    );
+    write(
+      join(d, "environment", "docker-compose.yaml"),
+      "services:\n  db:\n    image: postgres:16\n",
+    );
+    const t = findHarborTasks(root).find((x) => x.id === "hooks");
+    expect(t?.reason).toBeNull();
+    const spec = harborSolveSpec(t as never, { name: "e", agent: "empty" }, join(tmp, "hk"));
+    expect(spec.hooks).toEqual([
+      { command: "cd /app && git diff > /tmp/agent.patch", timeoutSec: 60 },
+      { service: "db", command: "pg_dump > /tmp/db.sql", timeoutSec: 120 },
+    ]);
+    expect(RunSpec.safeParse(spec).success).toBe(true);
+    expect(RunSpec.safeParse({ ...spec, services: [] }).success).toBe(false);
+  });
+
   it("reads the Compose subset: interpolation, durations, sizes, conditions", () => {
     const p: string[] = [];
     expect(interpolate("${A}-${B:-x}-${C-y}-$$-$A", { A: "1", B: "" }, p)).toBe("1-x-y-$-1");
@@ -431,7 +460,7 @@ command = "true"
 `,
     );
     const problems: string[] = [];
-    parseCompose(join(d, "docker-compose.yaml"), d, null, {}, problems);
+    parseCompose(join(d, "docker-compose.yaml"), d, null, null, {}, problems);
     expect(problems).toEqual([
       "compose service a: depends_on b condition service_completed_successfully is not supported",
       "compose service c: ports is not supported",
@@ -481,7 +510,6 @@ command = "true"
       /\[environment\] mcp_servers/,
       /\[environment\.env\] \$\{VAR\} template/,
       /\[agent\] user/,
-      /\[\[verifier\.collect\]\]/,
     ])
       expect(reason).toMatch(m);
   });

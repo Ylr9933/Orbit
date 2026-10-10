@@ -69,6 +69,8 @@ export interface ContainerSpec {
   init?: boolean;
   /** A /dev/shm sized from the memory limit (runs); else Docker's default. */
   shm?: boolean;
+  /** An explicit /dev/shm size. */
+  shmGB?: number;
   healthcheck?: {
     command: string[];
     intervalSec: number;
@@ -127,6 +129,7 @@ export function runArgs(s: ContainerSpec): string[] {
   }
   for (const [k, v] of Object.entries(s.env)) args.push("-e", `${k}=${v}`);
   if (s.envFile) args.push("--env-file", s.envFile);
+  if (s.shmGB) args.push("--shm-size", `${Math.ceil(s.shmGB * 1024)}m`);
   if (s.networks)
     for (const n of s.networks)
       args.push("--network", [`name=${n.name}`, ...n.aliases.map((a) => `alias=${a}`)].join(","));

@@ -146,5 +146,9 @@ describe("run specs with services", () => {
     expect(msg({ services: [svc], hostNetwork: true })).toMatch(/host networking/);
     expect(msg({ dependsOn: ["sim"] })).toMatch(/need services/);
     expect(msg({ services: [{ name: "Sim", image: "x" }] })).toMatch(/DNS labels/);
+    // /workspace is Orbit's only when the run has a project there (Harbor tasks use it).
+    const ws = { mounts: [{ source: "/tmp", target: "/workspace/data", mode: "ro" }] };
+    expect(ok(ws).success).toBe(true);
+    expect(msg({ ...ws, project: "/p" })).toMatch(/outside \/orbit/);
   });
 });
