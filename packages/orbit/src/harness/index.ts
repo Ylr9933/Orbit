@@ -201,12 +201,18 @@ export async function prepareHarness(entry: AuthEntry, agentDir: string): Promis
     const home = join(agentDir, "claude");
     mkdirSync(home, { recursive: true });
     env.CLAUDE_CONFIG_DIR = `${AGENT_HOME}/claude`;
+    // As Harbor's claude-code agent: root containers (Harbor tasks run as root) refuse to skip
+    // permissions without IS_SANDBOX, and no telemetry or update traffic.
+    env.IS_SANDBOX = "1";
+    env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
     if (p.model) env.ANTHROPIC_MODEL = p.model;
     if (p.kind === "login") secretEnv.CLAUDE_CODE_OAUTH_TOKEN = entry.secret;
     else if (p.kind === "api-key") secretEnv.ANTHROPIC_API_KEY = entry.secret;
     else {
       env.ANTHROPIC_BASE_URL = p.baseUrl ?? "";
       secretEnv.ANTHROPIC_AUTH_TOKEN = entry.secret;
+      // A relay serves one model: Claude Code's tier aliases and subagents use it too (as Harbor).
+      if (p.model) for (const k of RELAY_MODEL_VARS) if (!(k in (p.env ?? {}))) env[k] = p.model;
     }
   }
   return {
@@ -217,6 +223,13 @@ export async function prepareHarness(entry: AuthEntry, agentDir: string): Promis
     cli,
   };
 }
+
+const RELAY_MODEL_VARS = [
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+];
 
 function writePrivate(file: string, text: string): void {
   writeFileSync(file, text, { mode: 0o600 });
@@ -270,6 +283,7 @@ export function agentCommand(method: Method, instruction: string): string[] {
   if (method.agent === "claude-code") {
     const cmd = ["claude", "-p", "--dangerously-skip-permissions"];
     if (method.model) cmd.push("--model", method.model);
+    if (method.effort) cmd.push("--effort", method.effort);
     return [...cmd, instruction];
   }
   throw new Error(`${method.agent} is not an Agent CLI`);

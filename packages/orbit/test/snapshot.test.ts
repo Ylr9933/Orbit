@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { snapshotProject } from "../src/workspace/snapshot.ts";
+import { gitSource, snapshotProject } from "../src/workspace/snapshot.ts";
 
 function repo(): string {
   const d = mkdtempSync(join(tmpdir(), "orbit-repo-"));
@@ -50,5 +50,20 @@ describe("snapshotProject", () => {
     await expect(snapshotProject(tmpdir(), join(out, "x"), join(out, "y"))).rejects.toThrow(
       /not inside a git/,
     );
+  });
+});
+
+describe("gitSource", () => {
+  it("records the commit, tag and tracked changes of a benchmark checkout", async () => {
+    const d = repo();
+    execFileSync("git", ["-C", d, "tag", "v0.1"]);
+    const clean = await gitSource(join(d, "src"));
+    expect(clean).toMatchObject({ describe: "v0.1", dirty: false });
+    expect(clean?.commit).toMatch(/^[0-9a-f]{40}$/);
+    writeFileSync(join(d, "untracked.txt"), "x\n");
+    expect((await gitSource(d))?.dirty).toBe(false);
+    writeFileSync(join(d, "src/a.py"), "print(3)\n");
+    expect(await gitSource(d)).toMatchObject({ describe: "v0.1-dirty", dirty: true });
+    expect(await gitSource(mkdtempSync(join(tmpdir(), "orbit-nogit-")))).toBeNull();
   });
 });

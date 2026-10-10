@@ -47,6 +47,7 @@ import { dirBytes } from "../records/index.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { runAgentFailure } from "../sessions/index.ts";
 import type { Store } from "../store/index.ts";
+import { gitSource } from "../workspace/snapshot.ts";
 import { classify, solveVerdict } from "./classify.ts";
 import { AdapterClient, type TrialInput, toRunSpec } from "./protocol.ts";
 import type { BenchmarkRegistry } from "./registry.ts";
@@ -273,6 +274,7 @@ export class BenchService {
       resources,
       folder: folder.data,
       metrics: resolveMetrics(info.metrics),
+      source: await gitSource(b.path),
       state: "running",
       createdAt: nowIso(),
       endedAt: null,

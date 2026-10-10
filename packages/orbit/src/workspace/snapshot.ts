@@ -20,6 +20,20 @@ async function gitOut(cwd: string, args: string[]): Promise<string | null> {
 }
 
 /**
+ * Which version of a directory's repository is checked out: commit, the tag `git describe` gives,
+ * and whether tracked files changed. Null outside a git repository.
+ */
+export async function gitSource(
+  dir: string,
+): Promise<{ commit: string; describe: string | null; dirty: boolean } | null> {
+  const commit = await gitOut(dir, ["rev-parse", "--verify", "-q", "HEAD"]);
+  if (!commit) return null;
+  const describe = await gitOut(dir, ["describe", "--tags", "--always", "--dirty"]);
+  const status = await gitOut(dir, ["status", "--porcelain", "--untracked-files=no", "--", "."]);
+  return { commit, describe, dirty: Boolean(status) };
+}
+
+/**
  * Copy the working tree of `project`'s repository (tracked + untracked, respecting .gitignore)
  * into `dest`, and write the full change set relative to HEAD to `diffFile`.
  * The original repository, its index and its refs are not modified.

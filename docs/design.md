@@ -298,6 +298,17 @@ Agent 的 home 放在 `/orbit/agent/{codex,claude}`（`CODEX_HOME`、`CLAUDE_CON
 容器本身就是沙箱：容器内 codex 用 `--dangerously-bypass-approvals-and-sandbox`，claude 用
 `--dangerously-skip-permissions`。profile 设置 `hostNetwork` 时 Run 使用宿主网络（例如代理只监听 127.0.0.1）。
 
+与 Harbor 内置 Agent 的对照（本地 harbor `09f5b964`）：
+- claude-code：方法的 `effort` → `--effort`；设 `IS_SANDBOX=1`（Harbor 任务以 root 运行，否则 Claude Code 拒绝跳过权限）
+  与 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`；relay profile 有 `model` 时，`ANTHROPIC_DEFAULT_{SONNET,OPUS,HAIKU}_MODEL`
+  与 `CLAUDE_CODE_SUBAGENT_MODEL` 缺省都设为它（与 Harbor 自定义 base URL 时一致）。指令走 argv（Harbor 走 stdin），
+  输出为文本（Harbor 为 stream-json），二者不改变 Agent 行为。
+- codex：参数同 Harbor（`--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --model`，effort 为
+  `model_reasoning_effort`）；Harbor 另加 `--enable unified_exec` 与 `--json`。Orbit 不默认开启 `unified_exec`，以免改变
+  已有实验的条件；与 Harbor 对齐的跑分要记下这一差异。
+- 版本：Agent CLI 用宿主机版本（事件记录版本）；bench job 记录 benchmark checkout 的 `source`（commit、`git describe`、
+  是否有改动），`orbit bench show` 显示。
+
 **通知**：`~/.orbit/notify.json`（0600）中的目标：webhook `{ name, kind: feishu | dingtalk | wecom | slack | webhook, url, on[] }`，或飞书自建应用
 `{ name, kind: feishu-app, appId, appSecret, users[], on[] }`，
 `on` ⊆ `succeeded | failed | group`。单个 Run（无 group）结束时按状态通知；group 中的 Run 不单独通知，

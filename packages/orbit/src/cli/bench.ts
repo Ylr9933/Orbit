@@ -102,6 +102,11 @@ function formatJob(d: BenchJobDetail): string {
   const metrics = resolveMetrics(job.metrics);
   const lines = [
     `${job.id}  ${job.state}  ${job.spec.benchmark}${job.spec.name ? `  (${job.spec.name})` : ""}`,
+    ...(job.source
+      ? [
+          `benchmark at ${job.source.describe ?? job.source.commit.slice(0, 12)}${job.source.dirty && !job.source.describe?.endsWith("-dirty") ? " (dirty)" : ""}`,
+        ]
+      : []),
     "",
     table([
       ["METHOD", "VALID", ...metrics.map((m) => m.label.toUpperCase())],

@@ -1053,6 +1053,11 @@ export const BenchJob = z.object({
   folder: Folder.default(""),
   /** Metrics declared by the adapter at submit, `score` first (only `score` for older jobs). */
   metrics: z.array(MetricSpec).default([]),
+  /** The benchmark checkout at submit (null outside git, or for older jobs). */
+  source: z
+    .object({ commit: z.string(), describe: z.string().nullable(), dirty: z.boolean() })
+    .nullable()
+    .default(null),
   state: z.enum(["running", "done", "cancelled"]),
   createdAt: z.string(),
   endedAt: z.string().nullable(),

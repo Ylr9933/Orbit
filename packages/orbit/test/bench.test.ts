@@ -1064,6 +1064,9 @@ describe("methods", () => {
     expect(
       agentCommand({ name: "c", agent: "claude-code", auth: "p", model: "opus" }, "do"),
     ).toEqual(["claude", "-p", "--dangerously-skip-permissions", "--model", "opus", "do"]);
+    expect(
+      agentCommand({ name: "c", agent: "claude-code", auth: "p", effort: "max" }, "do"),
+    ).toEqual(["claude", "-p", "--dangerously-skip-permissions", "--effort", "max", "do"]);
   });
 });
 
