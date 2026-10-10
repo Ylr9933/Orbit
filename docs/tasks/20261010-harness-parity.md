@@ -19,7 +19,8 @@ scores can be compared with the public board), and record which benchmark versio
 | --- | --- | --- | --- |
 | Claude Code as root in a container (host binary 2.1.289) | working tree | passed | without `IS_SANDBOX`: "cannot be used with root/sudo privileges"; with it: reaches auth ("Not logged in") |
 | `pnpm verify` | working tree | passed | 183 tests |
+| Official `harbor run -a oracle -e docker` (harbor `09f5b964`) vs Orbit oracle on TB-Science compose tasks | b85707f | passed | protein-active-learning, inverse-lithography, longitudinal-clinical-agent: reward 1.0 under both |
 
 ## Next / open issues
-- A paired real Agent run (Orbit vs official `harbor run`, same model) needs API credits; not run.
+- Oracle-level parity only. A paired real Agent run (Orbit vs official `harbor run`, same model) needs API credits; not run.
 - Whether to enable codex `unified_exec` for Harbor-parity jobs is the user's call.
