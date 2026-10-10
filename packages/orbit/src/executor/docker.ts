@@ -46,12 +46,14 @@ export function detectGpuMode(dirs = CDI_DIRS): GpuMode {
 export interface ContainerSpec {
   name: string;
   image: string;
+  /** Empty keeps the image's command. */
   command: string[];
   labels: Record<string, string>;
   gpuIds: string[];
   gpuMode: GpuMode;
-  cpus: number;
-  memGB: number;
+  /** Null: no limit (service containers without one). */
+  cpus: number | null;
+  memGB: number | null;
   mounts: { source: string; target: string; mode: "ro" | "rw" }[];
   env: Record<string, string>;
   /** Null keeps the image's WORKDIR. */
@@ -61,6 +63,25 @@ export interface ContainerSpec {
   user: string | null;
   /** Private `KEY=VALUE` file for secret variables, so they never appear in argv. */
   envFile?: string;
+  /** Per-run networks with this container's aliases; replaces `network`. */
+  networks?: { name: string; aliases: string[] }[];
+  /** Default true for runs; services follow their own setting. */
+  init?: boolean;
+  /** A /dev/shm sized from the memory limit (runs); else Docker's default. */
+  shm?: boolean;
+  healthcheck?: {
+    command: string[];
+    intervalSec: number;
+    timeoutSec: number;
+    startPeriodSec: number;
+    retries: number;
+  };
+  readOnly?: boolean;
+  tmpfs?: string[];
+  capAdd?: string[];
+  capDrop?: string[];
+  securityOpt?: string[];
+  pidsLimit?: number;
 }
 
 export interface ContainerStatus {
@@ -68,6 +89,8 @@ export interface ContainerStatus {
   running: boolean;
   exitCode: number;
   oomKilled: boolean;
+  /** `starting`, `healthy` or `unhealthy`; null without a health check. */
+  health: string | null;
   gpuIds: string[];
   /** Host pid of the container's init process (0 when stopped). */
   pid: number;
@@ -75,7 +98,7 @@ export interface ContainerStatus {
 
 /** Build the `docker run` argument list. Pure, for testing. */
 export function runArgs(s: ContainerSpec): string[] {
-  const args = ["run", "-d", "--init", "--name", s.name];
+  const args = ["run", "-d", ...(s.init === false ? [] : ["--init"]), "--name", s.name];
   for (const [k, v] of Object.entries(s.labels)) args.push("--label", `${k}=${v}`);
   if (s.gpuIds.length > 0 && s.gpuMode === "cdi") {
     for (const id of s.gpuIds) args.push("--device", `nvidia.com/gpu=${id}`);
@@ -85,8 +108,12 @@ export function runArgs(s: ContainerSpec): string[] {
     // Hosts whose default runtime is nvidia would otherwise expose every GPU to CUDA images.
     args.push("-e", "NVIDIA_VISIBLE_DEVICES=void");
   }
-  args.push("--cpus", String(s.cpus), "--memory", `${Math.ceil(s.memGB * 1024)}m`);
-  args.push("--shm-size", `${Math.max(1, Math.min(16, Math.floor(s.memGB / 2)))}g`);
+  if (s.cpus !== null) args.push("--cpus", String(s.cpus));
+  if (s.memGB !== null) {
+    args.push("--memory", `${Math.ceil(s.memGB * 1024)}m`);
+    if (s.shm !== false)
+      args.push("--shm-size", `${Math.max(1, Math.min(16, Math.floor(s.memGB / 2)))}g`);
+  }
   for (const m of s.mounts) {
     args.push(
       "--mount",
@@ -100,12 +127,39 @@ export function runArgs(s: ContainerSpec): string[] {
   }
   for (const [k, v] of Object.entries(s.env)) args.push("-e", `${k}=${v}`);
   if (s.envFile) args.push("--env-file", s.envFile);
-  if (s.network !== "bridge") args.push("--network", s.network);
+  if (s.networks)
+    for (const n of s.networks)
+      args.push("--network", [`name=${n.name}`, ...n.aliases.map((a) => `alias=${a}`)].join(","));
+  else if (s.network !== "bridge") args.push("--network", s.network);
+  const h = s.healthcheck;
+  if (h)
+    args.push(
+      "--health-cmd",
+      shellJoin(h.command),
+      "--health-interval",
+      `${h.intervalSec}s`,
+      "--health-timeout",
+      `${h.timeoutSec}s`,
+      "--health-start-period",
+      `${h.startPeriodSec}s`,
+      "--health-retries",
+      String(h.retries),
+    );
+  if (s.readOnly) args.push("--read-only");
+  for (const t of s.tmpfs ?? []) args.push("--tmpfs", t);
+  for (const c of s.capAdd ?? []) args.push("--cap-add", c);
+  for (const c of s.capDrop ?? []) args.push("--cap-drop", c);
+  for (const o of s.securityOpt ?? []) args.push("--security-opt", o);
+  if (s.pidsLimit) args.push("--pids-limit", String(s.pidsLimit));
   if (s.user) args.push("--user", s.user);
   if (s.workdir) args.push("-w", s.workdir);
   args.push(s.image, ...s.command);
   return args;
 }
+
+/** POSIX shell words for `--health-cmd`, which Docker runs with `/bin/sh -c`. */
+export const shellJoin = (argv: string[]) =>
+  argv.map((a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`)).join(" ");
 
 /** `--mount` is parsed as CSV: quote a field holding a comma or a quote. */
 const csvField = (f: string) => (/[",]/.test(f) ? `"${f.replace(/"/g, '""')}"` : f);
@@ -235,7 +289,13 @@ export async function inspectContainer(idOrName: string): Promise<ContainerStatu
   }
   const [c] = JSON.parse(r.stdout) as {
     Id: string;
-    State: { Running: boolean; ExitCode: number; OOMKilled: boolean; Pid: number };
+    State: {
+      Running: boolean;
+      ExitCode: number;
+      OOMKilled: boolean;
+      Pid: number;
+      Health?: { Status: string } | null;
+    };
     HostConfig: { DeviceRequests: { DeviceIDs: string[] | null }[] | null };
   }[];
   if (!c) return null;
@@ -244,6 +304,7 @@ export async function inspectContainer(idOrName: string): Promise<ContainerStatu
     running: c.State.Running,
     exitCode: c.State.ExitCode,
     oomKilled: c.State.OOMKilled,
+    health: c.State.Health?.Status ?? null,
     pid: c.State.Pid ?? 0,
     // CDI ids look like `nvidia.com/gpu=<UUID>`; `--gpus` ids are bare UUIDs.
     gpuIds: (c.HostConfig.DeviceRequests ?? [])
@@ -312,6 +373,39 @@ export async function copyFromContainer(
   mkdirSync(dirname(dest), { recursive: true });
   const r = await docker(["cp", `${id}:${src}`, dest], 600_000);
   return r.code === 0 ? null : (r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`);
+}
+
+/** Create a per-run network; returns an error line or null. */
+export async function createNetwork(
+  name: string,
+  internal: boolean,
+  labels: Record<string, string>,
+): Promise<string | null> {
+  const args = ["network", "create", ...(internal ? ["--internal"] : [])];
+  for (const [k, v] of Object.entries(labels)) args.push("--label", `${k}=${v}`);
+  const r = await docker([...args, name]);
+  return r.code === 0 ? null : (r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`);
+}
+
+/** Names of networks with this label, or null when docker fails. */
+export async function networksWithLabel(label: string, value: string): Promise<string[] | null> {
+  const r = await docker([
+    "network",
+    "ls",
+    "--filter",
+    `label=${label}=${value}`,
+    "--format",
+    "{{.Name}}",
+  ]);
+  if (r.code !== 0) return null;
+  return r.stdout.split("\n").filter(Boolean);
+}
+
+/** Remove a network; resolves true when it is gone. */
+export async function removeNetwork(name: string): Promise<boolean> {
+  const r = await docker(["network", "rm", name]);
+  if (r.code === 0) return true;
+  return /not found|no such network/i.test(r.stderr);
 }
 
 /** Ids of containers (running or not) with this label. */

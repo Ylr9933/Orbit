@@ -7,6 +7,7 @@ import { basename, dirname, join, relative } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import type { BenchTask, Method } from "../contracts/index.ts";
 import type { AdapterHandlers, RunDescription, ScoreReply } from "./adapter.ts";
+import { type ComposePlan, composeFile, parseCompose } from "./compose.ts";
 
 export interface Artifact {
   /** Absolute path in the solve container. */
@@ -15,6 +16,8 @@ export interface Artifact {
   destination: string;
   /** Harbor's convention directory: always carried across, empty when nothing was written. */
   optional?: boolean;
+  /** A compose service other than `main` the file comes from. */
+  service?: string;
 }
 
 /** Harbor copies this directory from the solve to the verifier environment without a declaration. */
@@ -40,6 +43,8 @@ export interface HarborTask {
   supported: boolean;
   reason: string | null;
   artifacts: Artifact[];
+  /** Service containers from environment/docker-compose.yaml. */
+  compose: ComposePlan | null;
   agentTimeoutSec: number | null;
   verifierTimeoutSec: number | null;
   env: Resources & {
@@ -102,8 +107,8 @@ export function parseArtifacts(v: unknown): { artifacts: Artifact[]; skipped: st
     if (!source) continue;
     const exclude = Array.isArray(t.exclude) ? t.exclude : [];
     const service = str(t.service);
-    // `exclude = ["*"]` placeholders carry nothing; other services only exist with compose.
-    if (exclude.includes("*") || (service && service !== "main")) {
+    // `exclude = ["*"]` placeholders carry nothing.
+    if (exclude.includes("*")) {
       skipped.push(source);
       continue;
     }
@@ -111,6 +116,7 @@ export function parseArtifacts(v: unknown): { artifacts: Artifact[]; skipped: st
     artifacts.push({
       source: trimSlash(source),
       destination: trimSlash(dest?.startsWith("/") ? dest : source),
+      ...(service && service !== "main" ? { service } : {}),
     });
   }
   return { artifacts, skipped };
@@ -185,13 +191,12 @@ function unsupportedSettings(toml: Table): string[] {
 /** The solve image: `docker_image` (Harbor prefers it), else environment/Dockerfile. */
 function solveImage(dir: string, environment: Table, problems: string[]): HarborImage | null {
   const envDir = join(dir, "environment");
-  if (hasCompose(envDir)) problems.push("docker-compose environments are not supported");
   const image = str(environment.docker_image);
   const dockerfile = join(envDir, "Dockerfile");
   if (image) {
     // Harbor uploads the environment directory into prebuilt images that have no build spec.
     const files = existsSync(envDir) ? readdirSync(envDir) : [];
-    if (!existsSync(dockerfile) && files.length > 0)
+    if (!existsSync(dockerfile) && !hasCompose(envDir) && files.length > 0)
       problems.push("docker_image with environment files but no Dockerfile is not supported");
     return { image };
   }
@@ -238,11 +243,35 @@ export function parseHarborTask(dir: string, id: string): HarborTask {
   const problems: string[] = [];
   const image = solveImage(dir, environment, problems);
   if (!existsSync(join(dir, "instruction.md"))) problems.push("instruction.md missing");
+  const envDir = join(dir, "environment");
+  const composePath = composeFile(envDir);
+  const memMb = num(environment.memory_mb);
+  const compose = composePath
+    ? parseCompose(
+        composePath,
+        envDir,
+        image && "dockerfile" in image ? image.dockerfile : null,
+        {
+          ...vars(environment.env),
+          CONTEXT_DIR: envDir,
+          ...(num(environment.cpus) !== null ? { CPUS: String(environment.cpus) } : {}),
+          ...(memMb !== null ? { MEMORY: `${memMb}M` } : {}),
+          ...(image && "image" in image ? { PREBUILT_IMAGE_NAME: image.image } : {}),
+        },
+        problems,
+      )
+    : null;
+  const artifacts = withConvention(parseArtifacts(toml.artifacts).artifacts);
+  for (const a of artifacts)
+    if (a.service && !compose?.services.some((x) => x.name === a.service))
+      problems.push(`artifact ${a.source} names unknown service ${a.service}`);
   const mode = verifierMode(verifier);
   let verify: ReturnType<typeof verifierImage> = { image: null, bundledTests: true };
-  if (mode === "separate")
+  if (mode === "separate") {
     verify = verifierImage(dir, table(verifier.environment), image, problems);
-  else problems.push(`verifier environment_mode "${mode}" is not supported`);
+    if (compose && !verify.bundledTests)
+      problems.push("a separate verifier copying a docker-compose environment is not supported");
+  } else problems.push(`verifier environment_mode "${mode}" is not supported`);
   problems.push(...unsupportedSettings(toml));
   const envNetwork = networkMode(agent, environment, problems, "agent");
   const verifierNetwork = networkMode(verifier, verifierEnv, problems, "verifier");
@@ -257,7 +286,8 @@ export function parseHarborTask(dir: string, id: string): HarborTask {
     title: str(task.description) ?? str(task.name),
     supported: problems.length === 0,
     reason: problems.length ? [...new Set(problems)].join("; ") : null,
-    artifacts: withConvention(parseArtifacts(toml.artifacts).artifacts),
+    artifacts,
+    compose,
     agentTimeoutSec: num(agent.timeout_sec),
     verifierTimeoutSec: num(verifier.timeout_sec),
     env: {
@@ -325,6 +355,7 @@ function brokenTask(dir: string, id: string, reason: string): HarborTask {
     supported: false,
     reason,
     artifacts: [],
+    compose: null,
     agentTimeoutSec: null,
     verifierTimeoutSec: null,
     env: r,
@@ -355,7 +386,10 @@ export function harborSolveSpec(
   timeoutMin?: number,
 ): RunDescription {
   const mounts: RunDescription["mounts"] = [];
-  const env = method.agent === "oracle" ? { ...t.env.vars, ...t.solutionEnv } : t.env.vars;
+  // Harbor layers the task's variables over those of the compose file's `main`.
+  const base = { ...t.compose?.env, ...t.env.vars };
+  const env = method.agent === "oracle" ? { ...base, ...t.solutionEnv } : base;
+  const c = t.compose;
   const run = {
     ...imageFields(t.env.image),
     resources: { gpus: t.env.gpus, cpus: t.env.cpus, memGB: t.env.memGB },
@@ -363,9 +397,20 @@ export function harborSolveSpec(
     env,
     network: t.env.network,
     root: true,
-    workdir: t.env.workdir ?? "image",
+    workdir: t.env.workdir ?? c?.workdir ?? "image",
     timeoutMin: timeoutMin ?? (t.agentTimeoutSec ? t.agentTimeoutSec / 60 : undefined),
-    collect: t.artifacts.map((a) => a.source),
+    collect: t.artifacts.filter((a) => !a.service).map((a) => a.source),
+    ...(c?.services.length
+      ? {
+          services: c.services.map((s) => ({
+            ...s,
+            collect: t.artifacts.filter((a) => a.service === s.name).map((a) => a.source),
+          })),
+          networks: c.networks,
+          runNetworks: c.runNetworks,
+          dependsOn: c.dependsOn,
+        }
+      : {}),
   };
   if (method.agent === "oracle") {
     const sol = join(staging, "solution");
@@ -394,7 +439,9 @@ export function harborVerifySpec(
   const mounts: RunDescription["mounts"] = [];
   const missing: string[] = [];
   for (const a of t.artifacts) {
-    const src = join(solveOutput, "collected", a.source);
+    const src = a.service
+      ? join(solveOutput, "services", a.service, a.source)
+      : join(solveOutput, "collected", a.source);
     const copy = join(staging, "artifacts", a.source);
     if (!existsSync(src)) {
       if (!a.optional) {

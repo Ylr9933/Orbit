@@ -72,11 +72,11 @@ Orbit 读取的 `task.toml` 字段：
 | `[solution.env]` | oracle 运行 `solution/solve.sh` 时的环境变量 |
 | `[metadata] domain / field / subfield` | 任务标签 |
 
-`orbit bench tasks` 会列出不支持的设置（如 shared 模式、docker-compose、`allowlist` 网络、`mcp_servers`、`${VAR}` 模板），
+`orbit bench tasks` 会列出不支持的设置（如 shared 模式、compose 中未实现的键、`allowlist` 网络、`mcp_servers`、`${VAR}` 模板），
 这些任务不会运行，以免在不同条件下打分。
 
 verifier 必须把分数写到 `/logs/verifier/reward.txt`（一个数）或 `reward.json`（`reward` 键或唯一键），满分为 1。
-不支持：docker-compose 环境、`environment_mode = "shared"`、非 main service 的 artifacts。
+`environment/docker-compose.yaml` 中的其他服务作为服务容器与 solve Run 一起启动（就绪后才启动 Agent），`service = "<名>"` 的 artifacts 从该服务采集；服务日志在 solve Run 的 `output/services/<名>/log`。不支持：`environment_mode = "shared"`。
 
 ## 3. 写一个外部适配器
 

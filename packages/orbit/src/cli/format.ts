@@ -68,7 +68,19 @@ export function formatRun(r: Run, summary?: Record<string, number>): string {
     `  request  ${r.spec.resources.gpus} GPU, ${r.spec.resources.cpus} CPU, ${r.spec.resources.memGB} GB`,
     `  node     ${r.node}${r.remote ? " (remote; outputs stay there)" : ""}${r.origin ? ` (from ${r.origin})` : ""}`,
   ];
-  if (r.lease) lines.push(`  lease    ${r.lease.state} ${r.lease.gpuIds.join(", ") || "no GPUs"}`);
+  if (r.spec.services.length) {
+    const status = (name: string) => r.services.find((s) => s.name === name);
+    const svc = r.spec.services.map((s) => {
+      const st = status(s.name);
+      const lim = s.cpus || s.memGB ? ` ${s.cpus ?? "-"} CPU/${s.memGB ?? "-"} GB` : "";
+      return `${s.name}${lim}${st?.failure ? ` (failed: ${st.failure})` : st ? "" : " (not started)"}`;
+    });
+    lines.push(`  services ${svc.join(", ")}  (logs in output/services/)`);
+  }
+  if (r.lease)
+    lines.push(
+      `  lease    ${r.lease.state} ${r.lease.gpuIds.join(", ") || "no GPUs"}${r.spec.services.length ? `, ${r.lease.cpus} CPU, ${r.lease.memGB} GB with services` : ""}`,
+    );
   if (r.usage) lines.push(`  usage    ${formatUsage(r)}`);
   if (r.sizeBytes !== null) lines.push(`  disk     ${fmtBytes(r.sizeBytes)}`);
   if (r.code) {

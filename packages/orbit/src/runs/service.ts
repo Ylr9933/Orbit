@@ -30,6 +30,7 @@ import {
   Folder,
   isTerminal,
   type Lease,
+  leaseRequest,
   type NodeResources,
   type RemoteSubmit,
   type Run,
@@ -38,6 +39,8 @@ import {
   RunSpec,
   type RunSpecInput,
   type RunState,
+  type ServiceSpec,
+  serviceOrder,
 } from "../contracts/index.ts";
 import * as docker from "../executor/docker.ts";
 import {
@@ -311,6 +314,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       note: "",
       folder: folder.data,
       usage: null,
+      services: [],
       sizeBytes: null,
       createdAt: nowIso(),
       startedAt: null,
@@ -496,6 +500,11 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       if (!existsSync(df)) return `dockerfile not found: ${df}`;
       spec.dockerfile = df;
     }
+    for (const s of spec.services) {
+      for (const p of [s.dockerfile, s.context])
+        if (p && (!isAbsolute(p) || !existsSync(p)))
+          return `service ${s.name}: ${p} not found (absolute paths only)`;
+    }
     // A node's own auth profile decides host networking; a worker applies its own on arrival.
     if (spec.auth && this.deps.auth?.get(spec.auth)?.profile.hostNetwork) spec.hostNetwork = true;
     if (spec.hostNetwork && !spec.network) return "host network conflicts with network disabled";
@@ -579,7 +588,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     const ahead = this.store.queuedRuns().length;
     const queue = ahead ? `; ${ahead} run(s) already queued may go first` : "";
     if (here) {
-      const a = allocate(spec.resources, await this.resources(true), this.store.activeLeases());
+      const a = allocate(leaseRequest(spec), await this.resources(true), this.store.activeLeases());
       if (a.ok)
         return {
           name: "placement",
@@ -596,7 +605,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
         continue;
       }
       const r = n.resources as NodeResources;
-      const a = allocate(spec.resources, r, nodeLeases(n, mirrors));
+      const a = allocate(leaseRequest(spec), r, nodeLeases(n, mirrors));
       if (!a.ok) {
         waits.push([n.name, a.reason]);
         continue;
@@ -625,7 +634,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       if (!(await hostCli(entry.profile.harness)))
         return `${entry.profile.harness} CLI not found on this node`;
     }
-    return infeasible(spec.resources, await this.resources());
+    return infeasible(leaseRequest(spec), await this.resources());
   }
 
   /**
@@ -648,10 +657,10 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       if (run?.state !== "queued") continue;
       if (blocked) reasons.push([this.node, blocked]);
       else {
-        const a = allocate(run.spec.resources, res, this.store.activeLeases());
+        const a = allocate(leaseRequest(run.spec), res, this.store.activeLeases());
         if (a.ok) {
           this.leaseLocal(run, a.gpuIds);
-          res.memory.availableGB -= run.spec.resources.memGB;
+          res.memory.availableGB -= leaseRequest(run.spec).memGB;
           continue;
         }
         reasons.push([this.node, a.reason]);
@@ -667,7 +676,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
           continue;
         }
         const a = allocate(
-          run.spec.resources,
+          leaseRequest(run.spec),
           n.resources as NodeResources,
           nodeLeases(n, mirrors),
         );
@@ -701,8 +710,8 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       runId: run.id,
       node: this.node,
       gpuIds,
-      cpus: run.spec.resources.cpus,
-      memGB: run.spec.resources.memGB,
+      cpus: leaseRequest(run.spec).cpus,
+      memGB: leaseRequest(run.spec).memGB,
       state: "active",
       createdAt: nowIso(),
       releasedAt: null,
@@ -742,8 +751,8 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       runId: run.id,
       node,
       gpuIds,
-      cpus: run.spec.resources.cpus,
-      memGB: run.spec.resources.memGB,
+      cpus: leaseRequest(run.spec).cpus,
+      memGB: leaseRequest(run.spec).memGB,
       state: "active",
       createdAt: nowIso(),
       releasedAt: null,
@@ -945,6 +954,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       note: "",
       folder: "",
       usage: null,
+      services: [],
       sizeBytes: null,
       createdAt: nowIso(),
       startedAt: null,
@@ -970,6 +980,21 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
         return void (await this.finalize(run, "cancelled", null, "cancelled before start"));
 
       const spec = this.containerSpec(run, dirs, image);
+      if (run.spec.services.length) {
+        // Before the run's container: a failure here is the environment's, not the method's.
+        await this.startServices(id, dirs, ctl);
+        if (ctl.cancel)
+          return void (await this.finalize(
+            this.mustGet(id),
+            "cancelled",
+            null,
+            "cancelled before start",
+          ));
+        run = this.mustGet(id);
+        spec.networks = this.networkNames(run)
+          .filter((n) => run.spec.runNetworks.includes(n.short))
+          .map((n) => ({ name: n.name, aliases: ["main"] }));
+      }
       const secretEnv = this.passEnv(run);
       if (run.spec.auth) {
         const h = await this.prepareAuth(run, dirs);
@@ -1051,6 +1076,189 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     if (!ctl) return;
     clearTimeout(ctl.timeout);
     ctl.timeout = undefined;
+  }
+
+  /** A run's networks: `default` (internal when the run has no network) plus declared ones. */
+  private networkNames(run: Run): { short: string; name: string; internal: boolean }[] {
+    const declared = run.spec.networks.some((n) => n.name === "default")
+      ? run.spec.networks
+      : [{ name: "default", internal: !run.spec.network }, ...run.spec.networks];
+    return declared.map((n) => ({
+      short: n.name,
+      name: `orbit-${run.id}-${n.name}`,
+      internal: n.internal,
+    }));
+  }
+
+  /**
+   * Build or pull the service images, create the run's networks, then start the services in
+   * dependency order, each once its dependencies are ready, and wait for the run's own dependencies.
+   * Throws on any failure; `cleanup` removes whatever was created.
+   */
+  private async startServices(id: string, dirs: RunDirs, ctl: Control): Promise<void> {
+    let run = this.mustGet(id);
+    const images = new Map<string, string>();
+    for (const s of run.spec.services) {
+      if (ctl.cancel) return;
+      images.set(s.name, await this.serviceImage(run, dirs, s));
+    }
+    const labels = { [docker.LABEL_PARENT]: id, [docker.LABEL_HOME]: this.homeLabel };
+    for (const n of this.networkNames(run)) {
+      const err = await docker.createNetwork(n.name, n.internal, labels);
+      if (err) throw new Error(`network ${n.short}: ${err}`);
+    }
+    for (const s of serviceOrder(run.spec.services) ?? []) {
+      if (ctl.cancel) return;
+      await this.waitServices(id, s.dependsOn, ctl);
+      const spec = this.serviceContainer(run, s, images.get(s.name) as string);
+      let containerId: string;
+      try {
+        containerId = await docker.startContainer(spec);
+      } catch (e) {
+        throw new Error(`service ${s.name}: ${(e as Error).message}`);
+      }
+      run = this.mustGet(id);
+      run.services.push({ name: s.name, containerId, failure: null });
+      this.save(run, "service", `${s.name} started (${containerId.slice(0, 12)})`);
+    }
+    await this.waitServices(id, run.spec.dependsOn, ctl);
+  }
+
+  /** Wait until each service is healthy (with a health check) or running (without one). */
+  private async waitServices(id: string, names: string[], ctl: Control): Promise<void> {
+    for (const name of names) {
+      const s = this.mustGet(id).spec.services.find((x) => x.name === name) as ServiceSpec;
+      const containerId = this.mustGet(id).services.find((x) => x.name === name)?.containerId;
+      if (!containerId) throw new Error(`service ${name} was not started`);
+      // Docker gives up on its own after start period + retries × interval; the cap is a fallback.
+      const h = s.healthcheck;
+      const capMs = h
+        ? (h.startPeriodSec + (h.retries + 1) * (h.intervalSec + h.timeoutSec)) * 1000 + 60_000
+        : 60_000;
+      const deadline = Date.now() + capMs;
+      for (;;) {
+        if (ctl.cancel) return;
+        const st = await docker.inspectContainer(containerId);
+        if (!st || !st.running) {
+          const why = st
+            ? `exited with code ${st.exitCode}${st.oomKilled ? " (out of memory)" : ""}`
+            : "is gone";
+          throw new Error(`service ${name} ${why}`);
+        }
+        if (!h || st.health === "healthy") break;
+        if (st.health === "unhealthy") throw new Error(`service ${name} is unhealthy`);
+        if (Date.now() > deadline) throw new Error(`service ${name} did not become healthy`);
+        await sleep(1000);
+      }
+      this.store.addEvent(id, "service", `${name} ${h ? "healthy" : "running"}`);
+    }
+  }
+
+  private async serviceImage(run: Run, dirs: RunDirs, s: ServiceSpec): Promise<string> {
+    if (s.image) {
+      if (await docker.imageExists(s.image)) return s.image;
+      this.store.addEvent(run.id, "pull", `service ${s.name}: pulling ${s.image}`);
+      const code = await docker.pullImage(s.image, dirs.log);
+      if (code !== 0) throw new Error(`service ${s.name}: docker pull ${s.image} failed`);
+      return s.image;
+    }
+    const df = s.dockerfile as string;
+    const context = s.context ?? dirname(df);
+    const tag = docker.dockerfileTag(df, context, `${basename(context)}-${s.name}`);
+    if (await docker.imageExists(tag)) {
+      this.store.addEvent(run.id, "image", `service ${s.name}: reusing ${tag}`);
+      return tag;
+    }
+    this.store.addEvent(run.id, "build", `service ${s.name}: building ${tag}`);
+    appendFileSync(
+      dirs.log,
+      `[orbit] service ${s.name}: docker build -f ${df} -t ${tag} ${context}\n`,
+    );
+    const code = await docker.buildImage(df, context, tag, dirs.log);
+    if (code !== 0)
+      throw new Error(`service ${s.name}: docker build failed with exit code ${code}`);
+    return tag;
+  }
+
+  private serviceContainer(run: Run, s: ServiceSpec, image: string): docker.ContainerSpec {
+    const nets = this.networkNames(run);
+    return {
+      name: `${containerName(run.id)}-${s.name}`,
+      image,
+      command: s.command ?? [],
+      labels: { [docker.LABEL_PARENT]: run.id, [docker.LABEL_HOME]: this.homeLabel },
+      gpuIds: [],
+      gpuMode: this.gpuMode,
+      cpus: s.cpus ?? null,
+      memGB: s.memGB ?? null,
+      mounts: [],
+      env: s.env,
+      workdir: s.workdir ?? null,
+      network: "bridge",
+      networks: nets
+        .filter((n) => s.networks.includes(n.short))
+        .map((n) => ({ name: n.name, aliases: [s.name] })),
+      user: null,
+      init: s.init,
+      shm: false,
+      ...(s.healthcheck ? { healthcheck: s.healthcheck } : {}),
+      readOnly: s.readOnly,
+      tmpfs: s.tmpfs,
+      capAdd: s.capAdd,
+      capDrop: s.capDrop,
+      securityOpt: s.securityOpt,
+      ...(s.pidsLimit ? { pidsLimit: s.pidsLimit } : {}),
+    };
+  }
+
+  /**
+   * After the run's container stopped: note services that broke during the run, stop them, then
+   * keep their logs and `collect` paths in `output/services/<name>/`.
+   */
+  private async stopServices(id: string): Promise<void> {
+    if (this.mustGet(id).services.length === 0) return;
+    const base = join(this.dirs(id).output, "services");
+    const failures = new Map<string, string>();
+    for (const svc of this.mustGet(id).services) {
+      if (!svc.containerId) continue;
+      const st = await docker.inspectContainer(svc.containerId).catch(() => null);
+      if (!st) failures.set(svc.name, "container disappeared");
+      else if (!st.running && (st.exitCode !== 0 || st.oomKilled))
+        failures.set(
+          svc.name,
+          `exited with code ${st.exitCode}${st.oomKilled ? " (out of memory)" : ""}`,
+        );
+      else if (st.health === "unhealthy") failures.set(svc.name, "unhealthy");
+    }
+    const run = this.mustGet(id);
+    for (const svc of run.services) svc.failure = failures.get(svc.name) ?? svc.failure;
+    this.save(run, "service", "stopping services");
+    await Promise.all(
+      run.services.map((s) => (s.containerId ? docker.stopContainer(s.containerId) : null)),
+    );
+    for (const svc of run.services) {
+      const spec = run.spec.services.find((x) => x.name === svc.name);
+      if (!svc.containerId || !spec) continue;
+      const dir = join(base, svc.name);
+      mkdirSync(dir, { recursive: true });
+      const logs = docker.followLogs(svc.containerId, join(dir, "log"), this.redactor(run));
+      await Promise.race([logs.done, sleep(LOG_DRAIN_TIMEOUT_MS)]);
+      logs.proc.kill();
+      const missing: string[] = [];
+      for (const p of spec.collect) {
+        const dest = safeJoin(dir, `.${p}`);
+        const err = dest
+          ? await docker.copyFromContainer(svc.containerId, p, dest)
+          : "path leaves the output directory";
+        if (err) missing.push(`${p} (${err})`);
+      }
+      const what = `${svc.name}: ${svc.failure ? `failed during the run (${svc.failure}); ` : ""}${spec.collect.length - missing.length}/${spec.collect.length} collected`;
+      this.store.addEvent(
+        id,
+        "service",
+        `${what}${missing.length ? `; missing ${missing.join("; ")}` : ""}`,
+      );
+    }
   }
 
   /** Copy `spec.collect` paths out of the stopped container into `output/collected/`. */
@@ -1229,6 +1437,24 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     return ok;
   }
 
+  /** Remove a run's service containers, then its networks; true once all are gone. */
+  private async cleanupServices(run: Run): Promise<boolean> {
+    const children = await docker.containersWithLabel(docker.LABEL_PARENT, run.id);
+    if (children === null) return false;
+    const removed = await Promise.all(children.map((c) => docker.removeContainer(c)));
+    if (!removed.every(Boolean)) return false;
+    const nets = await docker.networksWithLabel(docker.LABEL_PARENT, run.id);
+    if (nets === null) return false;
+    const gone = await Promise.all(nets.map((n) => docker.removeNetwork(n)));
+    if (children.length + nets.length > 0)
+      this.store.addEvent(
+        run.id,
+        "cleanup",
+        `removed ${children.length} service container(s) and ${nets.length} network(s)`,
+      );
+    return gone.every(Boolean);
+  }
+
   private async recoverProcess(run: Run): Promise<void> {
     if (!run.proc) {
       await this.finalize(run, "lost", null, "process never started before daemon restart");
@@ -1401,7 +1627,10 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     const ctl = this.control(id);
     const dirs = this.dirs(id);
     this.startUsage(id, async () => ({
-      cgroups: await this.containerCgroups([containerId]),
+      cgroups: await this.containerCgroups([
+        containerId,
+        ...this.mustGet(id).services.flatMap((s) => (s.containerId ? [s.containerId] : [])),
+      ]),
       group: null,
       gpus: (this.mustGet(id).lease?.gpuIds.length ?? 0) > 0,
     }));
@@ -1434,8 +1663,10 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       this.store.addEvent(id, "log", "log collection timed out; log may be truncated");
     }
     const st = await docker.inspectContainer(containerId).catch(() => null);
-    const run = this.mustGet(id);
+    let run = this.mustGet(id);
     await this.collect(run, containerId);
+    await this.stopServices(id);
+    run = this.mustGet(id);
     // Docker flags any OOM kill in the container; only a failed exit means the run itself died of it.
     const oom = Boolean(st?.oomKilled) && exitCode !== 0;
     await this.stopUsage(run, oom);
@@ -1510,7 +1741,8 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     const removed =
       run.spec.backend === "process"
         ? await this.cleanupProcess(run)
-        : await docker.removeContainer(run.containerId ?? containerName(run.id));
+        : (await docker.removeContainer(run.containerId ?? containerName(run.id))) &&
+          (run.spec.services.length === 0 || (await this.cleanupServices(run)));
     const fresh = this.mustGet(run.id);
     if (!removed) {
       if (fresh.cleanup !== "failed") {

@@ -139,7 +139,8 @@ unknown。纯粹用于展示：准入只看显存占用。
 ```
 { name?, project?(repo path), image | dockerfile, command(argv), resources,
   mounts[{ source | dataset, target, mode: ro|rw }], env, passEnv[], network(default true),
-  snapshot(default true when project set), auth?(profile name), collect[], tags, parentId? }
+  snapshot(default true when project set), auth?(profile name), collect[], tags, parentId?,
+  services[], networks[{ name, internal }], runNetworks[], dependsOn[] }
 ```
 
 **Run**：`{ id, spec, state, exitCode?, node, remote, origin?, leaseId?, containerId?, code{commit, dirty, diffRef},
@@ -152,6 +153,19 @@ createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage? }`
   `target` 为绝对路径、互不重复、不含 `..`，且不能落在 `/orbit`、`/workspace` 下。`collect` 路径同样不含 `..`。
 - `env` 的值随 Run 记录保存，只放非密钥配置；密钥用 `passEnv`（只记变量名，启动时从 daemon 环境读取，
   值按名字规则在日志中脱敏）。CLI：`-e KEY=VALUE` / `--pass-env VAR`。
+
+**服务容器**（`RunSpec.services`，Harbor 的 docker-compose 环境用）：Run 容器旁边的附属容器（如模拟器、评测服务），
+`{ name, image | dockerfile + context, command?, env, workdir?, cpus?, memGB?, healthcheck?, dependsOn, networks,
+init, readOnly, tmpfs, capAdd, capDrop, securityOpt, pidsLimit?, collect }`，同一 Run 的一部分，不是另一条执行路径：
+- 租约 = Run 自身资源 + 各服务的 `cpus`/`memGB`（没有限额的服务不设限，按 1 CPU / 1 GB 计入租约）；GPU 只给 Run 容器。
+  有服务的 Run 只在提交节点运行，只用 docker 后端，不能用 host 网络。
+- 启动：构建 / 拉取服务镜像 → 创建 per-run 网络 `orbit-<run>-<name>`（`default` 总是存在，Run 无网络时它是
+  internal）→ 按依赖顺序启动服务（别名 = 服务名，标签 `orbit.parent=<run>`），依赖项有 healthcheck 等到 healthy、
+  否则等到 running → 等 `dependsOn` 后启动 Run 容器（别名 `main`）。这些都在 `startedAt` 之前，失败即环境失败。
+  执行时限从 Run 容器启动开始计。
+- 结束：Run 容器退出并采集后，先记下运行中坏掉的服务（非 0 退出、OOM、unhealthy → `Run.services[].failure`，
+  bench 记为 invalid），再停止服务，把日志与 `collect` 路径存到 `output/services/<name>/`。
+- 清理：删除 Run 容器、`orbit.parent` 服务容器和网络，全部确认后才释放租约；daemon 重启后同样按标签清理。
 
 **容器内约定**（skill 告诉 Agent；实验代码直接用环境变量）：
 
@@ -406,8 +420,14 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
    → 任务环境的新副本（继承其资源、网络、变量，`tests/` 挂到 /tests）。verify Run 把采集到的产物复制挂载到目标路径，
    运行 `bash /tests/test.sh`，采集 `/logs/verifier`，读取 `reward.json`（`reward` 键或唯一键）或 `reward.txt`。
    网络按阶段解析：`[agent]` / `[verifier]` 的 `network_mode`，否则所在环境的（缺省 public）。
-   未实现的设置一律标为不支持而不是忽略（否则分数不再对应任务条件）：shared 模式、docker-compose、其他 service 的
-   artifacts、`allowlist` 网络、非 linux、`gpu_types`/`tpu`、`mcp_servers`、`skills_dir`、`healthcheck`、`[agent]`/`[verifier]`
+   `environment/docker-compose.yaml`（`bench/compose.ts`）翻译成服务容器：`main` 取 `environment`、`working_dir`、
+   `depends_on`、`networks`（其 `command` 是 Harbor 的保活命令，忽略；task 的 `[environment.env]` 覆盖 compose 的值），
+   其他服务取 build/image、command、environment、working_dir、cpus、mem_limit、healthcheck、depends_on（started /
+   healthy）、networks、init、read_only、tmpfs、cap_add/drop、security_opt、pids_limit；顶层 networks 只认 `internal`。
+   插值同 Compose（`${VAR}`、`${VAR:-d}`、`${VAR-d}`、`$$`），变量为 CONTEXT_DIR、CPUS、MEMORY、PREBUILT_IMAGE_NAME 与
+   任务变量；未知变量、其他键（volumes、ports 等）都列为不支持。`service = "<名>"` 的 artifacts 从该服务采集。
+   未实现的设置一律标为不支持而不是忽略（否则分数不再对应任务条件）：shared 模式、compose 中未实现的键、
+   复用 compose 环境的 separate verifier、`allowlist` 网络、非 linux、`gpu_types`/`tpu`、`mcp_servers`、`skills_dir`、`healthcheck`、`[agent]`/`[verifier]`
    `user`、`[[verifier.collect]]`、`[[steps]]`、`${VAR}` 变量模板；Harbor 也忽略的未知字段照样忽略。
    指标：主指标 `resolved`（reward ≥ 1 的 trial，%，即 Terminal-Bench 的 resolution rate），`score` 标为 Reward（平均 reward）。
 2. **原生包装**（`bench/asi.ts`，ASI-Bench seed31415）：solve Run 以 **process 后端**运行

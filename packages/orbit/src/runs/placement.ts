@@ -1,7 +1,14 @@
 // Placement across nodes. The run service owns the decision; the cluster module implements
 // `RemotePlacement` (heartbeats, code transfer, mirroring) and is injected at startup, so `runs`
 // does not depend on `cluster`.
-import type { Lease, NodeProfile, NodeResources, Run, RunSpec } from "../contracts/index.ts";
+import {
+  type Lease,
+  leaseRequest,
+  type NodeProfile,
+  type NodeResources,
+  type Run,
+  type RunSpec,
+} from "../contracts/index.ts";
 import { infeasible } from "../resources/allocate.ts";
 
 /** A worker node as last reported by its heartbeat. */
@@ -41,6 +48,7 @@ export function remoteBlocker(spec: RunSpec, node: RemoteNode): string | null {
     return `pinned to ${spec.resources.node}`;
   if (!node.resources) return "not reachable yet";
   if (spec.backend === "process") return "process runs stay on the submitting node";
+  if (spec.services.length) return "runs with services stay on the submitting node";
   const host = spec.mounts.find((m) => m.source);
   if (host) return `host path mount ${host.source} stays on the submitting node`;
   if (spec.project && !spec.snapshot)
@@ -54,7 +62,7 @@ export function remoteBlocker(spec: RunSpec, node: RemoteNode): string | null {
     if (!p) return `auth profile ${spec.auth} not configured there`;
     if (!p.cli) return `${p.harness} CLI not installed there`;
   }
-  return infeasible(spec.resources, node.resources);
+  return infeasible(leaseRequest(spec), node.resources);
 }
 
 /**
