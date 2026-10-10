@@ -1,6 +1,7 @@
-// Harbor task format: <task>/{task.toml, instruction.md, environment/Dockerfile, tests/, solution/}.
-// Orbit runs the solve phase in the task environment and the verifier in a separate container built
-// from tests/Dockerfile, with the declared artifacts copied across (environment_mode = "separate").
+// Harbor task format: <task>/{task.toml, instruction.md, environment/, tests/, solution/}.
+// Orbit runs the solve phase in the task environment and the verifier in a separate container
+// (environment_mode = "separate"), with the declared artifacts copied across. Settings Orbit cannot
+// honour mark the task unsupported instead of being ignored, so scores keep the task's conditions.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -12,7 +13,25 @@ export interface Artifact {
   source: string;
   /** Absolute path in the verifier container. */
   destination: string;
+  /** Harbor's convention directory: always carried across, empty when nothing was written. */
+  optional?: boolean;
 }
+
+/** Harbor copies this directory from the solve to the verifier environment without a declaration. */
+export const CONVENTION_ARTIFACTS = "/logs/artifacts";
+
+function withConvention(artifacts: Artifact[]): Artifact[] {
+  if (artifacts.some((a) => a.source === CONVENTION_ARTIFACTS)) return artifacts;
+  const convention = {
+    source: CONVENTION_ARTIFACTS,
+    destination: CONVENTION_ARTIFACTS,
+    optional: true,
+  };
+  return [...artifacts, convention];
+}
+
+/** A prebuilt image, or a Dockerfile built with its directory as context. */
+export type HarborImage = { image: string } | { dockerfile: string };
 
 export interface HarborTask {
   id: string;
@@ -23,9 +42,22 @@ export interface HarborTask {
   artifacts: Artifact[];
   agentTimeoutSec: number | null;
   verifierTimeoutSec: number | null;
-  env: Resources & { network: boolean; vars: Record<string, string> };
+  env: Resources & {
+    network: boolean;
+    vars: Record<string, string>;
+    image: HarborImage | null;
+    workdir: string | null;
+  };
   solutionEnv: Record<string, string>;
-  verifier: Resources & { network: boolean; vars: Record<string, string> };
+  verifier: Resources & {
+    network: boolean;
+    vars: Record<string, string>;
+    mode: "separate" | "shared";
+    image: HarborImage | null;
+    /** The verifier image has /tests itself (tests/Dockerfile or its own image); else tests/ is mounted. */
+    bundledTests: boolean;
+    workdir: string | null;
+  };
   tags: Record<string, string>;
 }
 
@@ -84,27 +116,136 @@ export function parseArtifacts(v: unknown): { artifacts: Artifact[]; skipped: st
   return { artifacts, skipped };
 }
 
+const hasCompose = (d: string) =>
+  existsSync(join(d, "docker-compose.yaml")) || existsSync(join(d, "docker-compose.yml"));
+const nonEmpty = (v: unknown) =>
+  v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0) && v !== "";
+
+/**
+ * Harbor's verifier mode: explicit `environment_mode`, else `separate` when `[verifier.environment]`
+ * is given, else `shared`.
+ */
+export function verifierMode(verifier: Table): string {
+  return str(verifier.environment_mode) ?? ("environment" in verifier ? "separate" : "shared");
+}
+
+/**
+ * Harbor's network policy for a phase: the phase's own `network_mode`, else its environment's
+ * (`allow_internet = false` is the deprecated spelling of `no-network`), defaulting to public.
+ */
+function networkMode(phase: Table, env: Table, problems: string[], label: string): boolean {
+  const legacy = env.allow_internet === false ? "no-network" : "public";
+  const mode = str(phase.network_mode) ?? str(env.network_mode) ?? legacy;
+  if (mode === "public") return true;
+  if (mode === "no-network") return false;
+  problems.push(`${label}-phase network_mode "${mode}" is not supported`);
+  return true;
+}
+
+function workdir(env: Table, problems: string[]): string | null {
+  const w = str(env.workdir);
+  if (w && !w.startsWith("/")) problems.push(`workdir "${w}" is not an absolute path`);
+  return w?.startsWith("/") ? w : null;
+}
+
+/** Settings Orbit does not implement; running without them would change the task's conditions. */
+function unsupportedSettings(toml: Table): string[] {
+  const environment = table(toml.environment);
+  const agent = table(toml.agent);
+  const verifier = table(toml.verifier);
+  const verifierEnv = table(verifier.environment);
+  const out: string[] = [];
+  const check = (cond: boolean, what: string) => cond && out.push(`${what} is not supported`);
+  for (const [label, env] of [
+    ["[environment]", environment],
+    ["[verifier.environment]", verifierEnv],
+  ] as const) {
+    check((str(env.os) ?? "linux").toLowerCase() !== "linux", `${label} os "${str(env.os)}"`);
+    for (const k of ["gpu_types", "tpu", "mcp_servers", "skills_dir", "healthcheck"])
+      check(nonEmpty(env[k]), `${label} ${k}`);
+  }
+  check(nonEmpty(agent.user), "[agent] user");
+  check(nonEmpty(verifier.user), "[verifier] user");
+  check(nonEmpty(verifier.collect), "[[verifier.collect]]");
+  check(nonEmpty(toml.steps), "[[steps]] (multi-step tasks)");
+  const tables: [string, unknown][] = [
+    ["[environment.env]", environment.env],
+    ["[verifier.env]", verifier.env],
+    ["[verifier.environment.env]", verifierEnv.env],
+    ["[solution.env]", table(toml.solution).env],
+  ];
+  for (const [label, v] of tables)
+    check(
+      Object.values(table(v)).some((x) => String(x).includes("${")),
+      `${label} \${VAR} template`,
+    );
+  return out;
+}
+
+/** The solve image: `docker_image` (Harbor prefers it), else environment/Dockerfile. */
+function solveImage(dir: string, environment: Table, problems: string[]): HarborImage | null {
+  const envDir = join(dir, "environment");
+  if (hasCompose(envDir)) problems.push("docker-compose environments are not supported");
+  const image = str(environment.docker_image);
+  const dockerfile = join(envDir, "Dockerfile");
+  if (image) {
+    // Harbor uploads the environment directory into prebuilt images that have no build spec.
+    const files = existsSync(envDir) ? readdirSync(envDir) : [];
+    if (!existsSync(dockerfile) && files.length > 0)
+      problems.push("docker_image with environment files but no Dockerfile is not supported");
+    return { image };
+  }
+  if (existsSync(dockerfile)) return { dockerfile };
+  problems.push("environment/Dockerfile missing");
+  return null;
+}
+
+/**
+ * The separate verifier image, in Harbor's order: `[verifier.environment] docker_image`,
+ * tests/Dockerfile (both own /tests), tests/docker-compose.yaml, then a fresh copy of the task
+ * environment with tests/ mounted at /tests.
+ */
+function verifierImage(
+  dir: string,
+  verifierEnv: Table,
+  solve: HarborImage | null,
+  problems: string[],
+): { image: HarborImage | null; bundledTests: boolean } {
+  const tests = join(dir, "tests");
+  const image = str(verifierEnv.docker_image);
+  if (image) return { image: { image }, bundledTests: true };
+  if (existsSync(join(tests, "Dockerfile")))
+    return { image: { dockerfile: join(tests, "Dockerfile") }, bundledTests: true };
+  if (hasCompose(tests)) {
+    problems.push("docker-compose verifier environments are not supported");
+    return { image: null, bundledTests: true };
+  }
+  if (!existsSync(join(tests, "test.sh"))) problems.push("tests/test.sh missing");
+  return { image: solve, bundledTests: false };
+}
+
 export function parseHarborTask(dir: string, id: string): HarborTask {
   const toml = table(parseToml(readFileSync(join(dir, "task.toml"), "utf8")));
   const task = table(toml.task);
   const meta = table(toml.metadata);
   const environment = table(toml.environment);
+  const agent = table(toml.agent);
   const verifier = table(toml.verifier);
-  const verifierEnv = table(verifier.environment);
+  const ownVerifierEnv = "environment" in verifier;
+  // A separate verifier without its own environment runs in a fresh copy of the task environment.
+  const verifierEnv = ownVerifierEnv ? table(verifier.environment) : environment;
   const envRes = resources(environment);
   const problems: string[] = [];
-  if (
-    existsSync(join(dir, "environment", "docker-compose.yaml")) ||
-    existsSync(join(dir, "environment", "docker-compose.yml"))
-  )
-    problems.push("docker-compose environments are not supported");
-  if (!existsSync(join(dir, "environment", "Dockerfile")))
-    problems.push("environment/Dockerfile missing");
+  const image = solveImage(dir, environment, problems);
   if (!existsSync(join(dir, "instruction.md"))) problems.push("instruction.md missing");
-  const mode = str(verifier.environment_mode) ?? "shared";
-  if (mode === "separate" && !existsSync(join(dir, "tests", "Dockerfile")))
-    problems.push("tests/Dockerfile missing");
-  if (mode !== "separate") problems.push(`verifier environment_mode "${mode}" is not supported`);
+  const mode = verifierMode(verifier);
+  let verify: ReturnType<typeof verifierImage> = { image: null, bundledTests: true };
+  if (mode === "separate")
+    verify = verifierImage(dir, table(verifier.environment), image, problems);
+  else problems.push(`verifier environment_mode "${mode}" is not supported`);
+  problems.push(...unsupportedSettings(toml));
+  const envNetwork = networkMode(agent, environment, problems, "agent");
+  const verifierNetwork = networkMode(verifier, verifierEnv, problems, "verifier");
   const tags: Record<string, string> = {};
   for (const k of ["domain", "field", "subfield"]) {
     const v = str(meta[k]);
@@ -115,20 +256,26 @@ export function parseHarborTask(dir: string, id: string): HarborTask {
     dir,
     title: str(task.description) ?? str(task.name),
     supported: problems.length === 0,
-    reason: problems.length ? problems.join("; ") : null,
-    artifacts: parseArtifacts(toml.artifacts).artifacts,
-    agentTimeoutSec: num(table(toml.agent).timeout_sec),
+    reason: problems.length ? [...new Set(problems)].join("; ") : null,
+    artifacts: withConvention(parseArtifacts(toml.artifacts).artifacts),
+    agentTimeoutSec: num(agent.timeout_sec),
     verifierTimeoutSec: num(verifier.timeout_sec),
     env: {
       ...envRes,
-      network: (str(environment.network_mode) ?? "public") !== "no-network",
+      network: envNetwork,
       vars: vars(environment.env),
+      image,
+      workdir: workdir(environment, problems),
     },
     solutionEnv: vars(table(toml.solution).env),
     verifier: {
       ...resources(verifierEnv, envRes),
-      network: (str(verifierEnv.network_mode) ?? "no-network") !== "no-network",
-      vars: vars(verifier.env),
+      network: verifierNetwork,
+      vars: { ...vars(verifierEnv.env), ...vars(verifier.env) },
+      mode: mode === "shared" ? "shared" : "separate",
+      image: verify.image,
+      bundledTests: verify.bundledTests,
+      workdir: workdir(verifierEnv, problems),
     },
     tags,
   };
@@ -170,7 +317,7 @@ export function findHarborTasks(root: string): HarborTask[] {
 }
 
 function brokenTask(dir: string, id: string, reason: string): HarborTask {
-  const r = { cpus: 1, memGB: 1, gpus: 0, network: false, vars: {} };
+  const r = { cpus: 1, memGB: 1, gpus: 0, network: false, vars: {}, image: null, workdir: null };
   return {
     id,
     dir,
@@ -182,7 +329,7 @@ function brokenTask(dir: string, id: string, reason: string): HarborTask {
     verifierTimeoutSec: null,
     env: r,
     solutionEnv: {},
-    verifier: r,
+    verifier: { ...r, mode: "separate", bundledTests: true },
     tags: {},
   };
 }
@@ -195,6 +342,11 @@ export const toBenchTask = (t: HarborTask): BenchTask => ({
   tags: t.tags,
 });
 
+function imageFields(img: HarborImage | null): { image: string } | { dockerfile: string } {
+  if (!img) throw new Error("task has no environment image");
+  return img;
+}
+
 /** Solve run: the Agent (or the oracle solution) in the task environment, as the image's user. */
 export function harborSolveSpec(
   t: HarborTask,
@@ -205,13 +357,13 @@ export function harborSolveSpec(
   const mounts: RunDescription["mounts"] = [];
   const env = method.agent === "oracle" ? { ...t.env.vars, ...t.solutionEnv } : t.env.vars;
   const run = {
-    dockerfile: join(t.dir, "environment", "Dockerfile"),
+    ...imageFields(t.env.image),
     resources: { gpus: t.env.gpus, cpus: t.env.cpus, memGB: t.env.memGB },
     mounts,
     env,
     network: t.env.network,
     root: true,
-    workdir: "image",
+    workdir: t.env.workdir ?? "image",
     timeoutMin: timeoutMin ?? (t.agentTimeoutSec ? t.agentTimeoutSec / 60 : undefined),
     collect: t.artifacts.map((a) => a.source),
   };
@@ -230,8 +382,9 @@ export function harborSolveSpec(
 }
 
 /**
- * Verify run: tests/Dockerfile with the collected artifacts copied in; `/logs/verifier` (reward) is
- * collected back. Missing artifacts are left out, so the tests see what the Agent actually produced.
+ * Verify run: the verifier image with the collected artifacts copied in (and tests/ at /tests unless
+ * the image has its own); `/logs/verifier` (reward) is collected back. Missing artifacts are left
+ * out, so the tests see what the Agent actually produced.
  */
 export function harborVerifySpec(
   t: HarborTask,
@@ -242,25 +395,34 @@ export function harborVerifySpec(
   const missing: string[] = [];
   for (const a of t.artifacts) {
     const src = join(solveOutput, "collected", a.source);
-    if (!existsSync(src)) {
-      missing.push(a.source);
-      continue;
-    }
     const copy = join(staging, "artifacts", a.source);
-    mkdirSync(dirname(copy), { recursive: true });
-    cpSync(src, copy, { recursive: true });
+    if (!existsSync(src)) {
+      if (!a.optional) {
+        missing.push(a.source);
+        continue;
+      }
+      mkdirSync(copy, { recursive: true });
+    } else {
+      mkdirSync(dirname(copy), { recursive: true });
+      cpSync(src, copy, { recursive: true });
+    }
     mounts.push({ source: copy, target: a.destination, mode: "rw" });
+  }
+  if (!t.verifier.bundledTests) {
+    const tests = join(staging, "tests");
+    cpSync(join(t.dir, "tests"), tests, { recursive: true });
+    mounts.push({ source: tests, target: "/tests", mode: "rw" });
   }
   return {
     spec: {
-      dockerfile: join(t.dir, "tests", "Dockerfile"),
+      ...imageFields(t.verifier.image),
       command: ["sh", "-c", "mkdir -p /logs/verifier /logs/agent && exec bash /tests/test.sh"],
       resources: { gpus: t.verifier.gpus, cpus: t.verifier.cpus, memGB: t.verifier.memGB },
       mounts,
       env: t.verifier.vars,
       network: t.verifier.network,
       root: true,
-      workdir: "image",
+      workdir: t.verifier.workdir ?? "image",
       timeoutMin: t.verifierTimeoutSec ? t.verifierTimeoutSec / 60 : 10,
       collect: ["/logs/verifier"],
     },

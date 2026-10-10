@@ -6,7 +6,7 @@
 
 | benchmark 的形态 | 路线 | 要改 Orbit 吗 |
 | --- | --- | --- |
-| Harbor 任务目录（`task.toml` + `instruction.md` + `environment/` + `tests/` + `solution/`），verifier 为 `environment_mode = "separate"` | 内置 `harbor` 适配器 | 否 |
+| Harbor 任务目录（`task.toml` + `instruction.md` + `environment/` + `tests/` + `solution/`），verifier 为 separate 模式 | 内置 `harbor` 适配器 | 否 |
 | ASI-Bench seed31415 | 内置 `asi` 适配器 | 否 |
 | 其他任何形态 | 写一个外部适配器（任意语言的可执行文件），登记时 `--adapter /path/to/adapter` | 否 |
 
@@ -66,11 +66,14 @@ Orbit 读取的 `task.toml` 字段：
 | 字段 | 用途 |
 | --- | --- |
 | 顶层 `artifacts` | solve 结束时采集，复制挂载进 verifier 的同一路径（表形式可写 `destination`） |
-| `[environment] cpus / memory_mb / gpus / network_mode / env` | solve Run 的资源、网络与环境变量 |
-| `[agent] timeout_sec` | solve 超时（`orbit bench run --timeout` 覆盖） |
-| `[verifier] environment_mode / timeout_sec / env`，`[verifier.environment]` | verify Run（默认无网络） |
+| `[environment] docker_image / cpus / memory_mb / gpus / network_mode / env / workdir` | solve Run 的镜像（缺省 `environment/Dockerfile`）、资源、网络、环境变量与工作目录 |
+| `[agent] timeout_sec / network_mode` | solve 超时（`orbit bench run --timeout` 覆盖）与网络 |
+| `[verifier] environment_mode / timeout_sec / env / network_mode`，`[verifier.environment]` | verify Run；模式、镜像与网络的缺省规则同 Harbor（见 design §7），没有 `tests/Dockerfile` 时复用任务环境并把 `tests/` 挂到 /tests |
 | `[solution.env]` | oracle 运行 `solution/solve.sh` 时的环境变量 |
 | `[metadata] domain / field / subfield` | 任务标签 |
+
+`orbit bench tasks` 会列出不支持的设置（如 shared 模式、docker-compose、`allowlist` 网络、`mcp_servers`、`${VAR}` 模板），
+这些任务不会运行，以免在不同条件下打分。
 
 verifier 必须把分数写到 `/logs/verifier/reward.txt`（一个数）或 `reward.json`（`reward` 键或唯一键），满分为 1。
 不支持：docker-compose 环境、`environment_mode = "shared"`、非 main service 的 artifacts。

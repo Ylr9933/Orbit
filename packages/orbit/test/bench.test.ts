@@ -151,6 +151,48 @@ SEED = 1
     "environment/docker-compose.yaml",
   ]);
   write(join(root, "tasks", "broken", "task.toml"), "not = [toml");
+  // No mode and no [verifier.environment]: Harbor's default is shared.
+  task("implicit-shared", `[verifier]\ntimeout_sec = 60\n`);
+  // [verifier.environment] implies separate; its network defaults to public like any environment.
+  task("implicit-separate", `[verifier.environment]\ncpus = 1\n`);
+  // Separate without tests/Dockerfile: a fresh copy of the (prebuilt) task image, tests mounted.
+  const fallback = join(root, "tasks", "fallback");
+  write(
+    join(fallback, "task.toml"),
+    `[environment]
+docker_image = "ghcr.io/x/env:1"
+workdir = "/repo"
+network_mode = "no-network"
+[environment.env]
+A = "1"
+[verifier]
+environment_mode = "separate"
+[verifier.env]
+B = "2"
+`,
+  );
+  for (const f of ["instruction.md", "tests/test.sh"]) write(join(fallback, f), "x\n");
+  task(
+    "conditions",
+    `[environment]
+network_mode = "allowlist"
+allowed_hosts = ["api.example.com"]
+gpu_types = ["H100"]
+mcp_servers = [{ name = "m", url = "http://m" }]
+[environment.env]
+KEY = "\${OPENAI_API_KEY}"
+[agent]
+user = "agent"
+[verifier]
+environment_mode = "separate"
+[[verifier.collect]]
+command = "true"
+`,
+  );
+  task(
+    "empty-lists",
+    `mcp_servers = []\n[environment]\nmcp_servers = []\n[verifier.environment]\n`,
+  );
 
   it("parses artifacts: strings, tables, and skips placeholders and other services", () => {
     const r = parseArtifacts([
@@ -169,7 +211,17 @@ SEED = 1
   it("lists tasks and explains the unsupported ones", () => {
     const ts = findHarborTasks(root);
     const by = Object.fromEntries(ts.map((t) => [t.id, t]));
-    expect(Object.keys(by).sort()).toEqual(["broken", "compose", "shared", "sr"]);
+    expect(Object.keys(by).sort()).toEqual([
+      "broken",
+      "compose",
+      "conditions",
+      "empty-lists",
+      "fallback",
+      "implicit-separate",
+      "implicit-shared",
+      "shared",
+      "sr",
+    ]);
     expect(by.sr?.supported).toBe(true);
     expect(by.sr?.env).toMatchObject({ cpus: 4, memGB: 8, network: false });
     expect(by.sr?.tags).toEqual({ domain: "physics" });
@@ -191,6 +243,52 @@ SEED = 1
     ).toThrow(/solve request without trial/);
   });
 
+  it("resolves verifier modes, images and networks like Harbor", () => {
+    const by = Object.fromEntries(findHarborTasks(root).map((t) => [t.id, t]));
+    expect(by["implicit-shared"]?.reason).toMatch(/environment_mode "shared"/);
+    const sep = by["implicit-separate"];
+    expect(sep?.supported).toBe(true);
+    expect(sep?.verifier).toMatchObject({ mode: "separate", network: true, bundledTests: true });
+    expect(sep?.verifier.image).toEqual({
+      dockerfile: join(root, "tasks", "implicit-separate", "tests", "Dockerfile"),
+    });
+    expect(by["empty-lists"]?.supported).toBe(true);
+
+    const fb = by.fallback;
+    if (!fb) throw new Error("task missing");
+    expect(fb.supported).toBe(true);
+    expect(fb.env).toMatchObject({ image: { image: "ghcr.io/x/env:1" }, workdir: "/repo" });
+    // The copied environment keeps its network policy and variables; [verifier.env] adds to them.
+    expect(fb.verifier).toMatchObject({
+      image: { image: "ghcr.io/x/env:1" },
+      bundledTests: false,
+      network: false,
+      vars: { A: "1", B: "2" },
+      workdir: "/repo",
+    });
+    const solve = harborSolveSpec(fb, { name: "e", agent: "empty" }, join(tmp, "fb-solve"));
+    expect(solve).toMatchObject({ image: "ghcr.io/x/env:1", workdir: "/repo" });
+    expect(solve.dockerfile).toBeUndefined();
+    const { spec } = harborVerifySpec(fb, join(tmp, "fb-out"), join(tmp, "fb-verify"));
+    expect(spec.image).toBe("ghcr.io/x/env:1");
+    expect(spec.mounts).toContainEqual({
+      source: join(tmp, "fb-verify", "tests"),
+      target: "/tests",
+      mode: "rw",
+    });
+
+    const reason = by.conditions?.reason ?? "";
+    for (const m of [
+      /agent-phase network_mode "allowlist"/,
+      /\[environment\] gpu_types/,
+      /\[environment\] mcp_servers/,
+      /\[environment\.env\] \$\{VAR\} template/,
+      /\[agent\] user/,
+      /\[\[verifier\.collect\]\]/,
+    ])
+      expect(reason).toMatch(m);
+  });
+
   it("builds oracle, empty and agent solve runs, and a verify run with copied artifacts", () => {
     const t = findHarborTasks(root).find((x) => x.id === "sr");
     if (!t) throw new Error("task missing");
@@ -198,7 +296,8 @@ SEED = 1
     const oracle = harborSolveSpec(t, { name: "oracle", agent: "oracle" }, staging);
     expect(oracle.command).toEqual(["bash", "/solution/solve.sh"]);
     expect(oracle.env).toMatchObject({ SEED: "1" });
-    expect(oracle.collect).toEqual(["/app/out"]);
+    // Harbor's /logs/artifacts convention directory travels without a declaration.
+    expect(oracle.collect).toEqual(["/app/out", "/logs/artifacts"]);
     expect(oracle.network).toBe(false);
     expect(oracle.timeoutMin).toBe(10);
     const empty = harborSolveSpec(t, { name: "empty", agent: "empty" }, staging);
@@ -223,6 +322,12 @@ SEED = 1
     expect(plan.spec.timeoutMin).toBe(2);
     expect(plan.spec.collect).toEqual(["/logs/verifier"]);
     expect(JSON.stringify(plan.spec.mounts)).toContain("/app/out");
+    // Not written by the solve run: still mounted (empty), and not reported as missing.
+    expect(plan.spec.mounts).toContainEqual({
+      source: join(staging, "artifacts", "logs", "artifacts"),
+      target: "/logs/artifacts",
+      mode: "rw",
+    });
   });
 
   it("lets Orbit add the Agent command, auth, env and grader secrets", () => {

@@ -396,13 +396,19 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 
 内置适配器：
 
-1. **Harbor 格式**（`bench/harbor.ts`，TB-Science）：任务目录含 `task.toml`、`instruction.md`、`environment/Dockerfile`、
-   `tests/`、`solution/`。solve Run 从 `environment/Dockerfile` 构建，以镜像的 WORKDIR 与 root 运行（与 Harbor 一致），
-   资源、网络、超时来自 `task.toml`；Agent 方法给出 `agentTask`（`instruction.md`），oracle 把 `solution/` 挂到
-   `/solution` 执行 `solve.sh`。顶层 `artifacts` 声明的路径在 solve 结束时采集（`RunSpec.collect`，
-   写入 `output/collected/<abs path>`），verify Run 从 `tests/Dockerfile` 构建，把采集到的产物复制挂载到目标路径，
+1. **Harbor 格式**（`bench/harbor.ts`，TB-Science）：任务目录含 `task.toml`、`instruction.md`、`environment/`、
+   `tests/`、`solution/`。solve Run 用 `[environment] docker_image`（Harbor 优先用它），否则从 `environment/Dockerfile`
+   构建，以 root 与 `workdir`（缺省为镜像 WORKDIR）运行；资源、超时来自 `task.toml`；Agent 方法给出 `agentTask`
+   （`instruction.md`），oracle 把 `solution/` 挂到 `/solution` 执行 `solve.sh`。顶层 `artifacts` 声明的路径在 solve
+   结束时采集（`RunSpec.collect`，写入 `output/collected/<abs path>`）。verifier 模式按 Harbor 规则解析：显式
+   `environment_mode`，否则有 `[verifier.environment]` 即 separate，否则 shared。separate 的镜像顺序同 Harbor：
+   `[verifier.environment] docker_image` → `tests/Dockerfile`（二者自带 /tests）→ `tests/docker-compose.yaml`（不支持）
+   → 任务环境的新副本（继承其资源、网络、变量，`tests/` 挂到 /tests）。verify Run 把采集到的产物复制挂载到目标路径，
    运行 `bash /tests/test.sh`，采集 `/logs/verifier`，读取 `reward.json`（`reward` 键或唯一键）或 `reward.txt`。
-   只支持 `environment_mode = "separate"`；docker-compose 环境、其他 service 的 artifacts 标为不支持。
+   网络按阶段解析：`[agent]` / `[verifier]` 的 `network_mode`，否则所在环境的（缺省 public）。
+   未实现的设置一律标为不支持而不是忽略（否则分数不再对应任务条件）：shared 模式、docker-compose、其他 service 的
+   artifacts、`allowlist` 网络、非 linux、`gpu_types`/`tpu`、`mcp_servers`、`skills_dir`、`healthcheck`、`[agent]`/`[verifier]`
+   `user`、`[[verifier.collect]]`、`[[steps]]`、`${VAR}` 变量模板；Harbor 也忽略的未知字段照样忽略。
    指标：主指标 `resolved`（reward ≥ 1 的 trial，%，即 Terminal-Bench 的 resolution rate），`score` 标为 Reward（平均 reward）。
 2. **原生包装**（`bench/asi.ts`，ASI-Bench seed31415）：solve Run 以 **process 后端**运行
    `config.python -m ai4sci_bench.cli run`（单实例、单 prompt level，`--output-dir $ORBIT_OUTPUT/native`）；Agent 方法走
