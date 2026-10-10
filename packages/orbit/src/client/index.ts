@@ -8,6 +8,8 @@ import {
   type AuthProfileInput,
   AuthTestResult,
   BenchCompare,
+  type BenchConsolidateInput,
+  BenchConsolidateResult,
   BenchJob,
   BenchJobDetail,
   BenchJobList,
@@ -178,6 +180,12 @@ export class OrbitClient {
     this.call(BenchJob, `/bench/jobs${folderQuery(folder)}`, {
       method: "POST",
       body: spec,
+      timeoutMs: 600_000,
+    });
+  benchConsolidate = (id: string, body: BenchConsolidateInput) =>
+    this.call(BenchConsolidateResult, `/bench/jobs/${enc(id)}/consolidate`, {
+      method: "POST",
+      body,
       timeoutMs: 600_000,
     });
   benchRescore = (id: string, body: BenchRescoreInput) =>

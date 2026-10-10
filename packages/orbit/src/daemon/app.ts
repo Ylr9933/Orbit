@@ -382,6 +382,9 @@ export function createApp(deps: AppDeps): Hono {
   );
   api.get("/bench/jobs/:id", (c) => c.json(bench.job(c.req.param("id"))));
   api.post("/bench/jobs/:id/cancel", async (c) => c.json(await bench.cancel(c.req.param("id"))));
+  api.post("/bench/jobs/:id/consolidate", async (c) =>
+    c.json(await bench.consolidate(c.req.param("id"), await c.req.json())),
+  );
   api.post("/bench/jobs/:id/rescore", async (c) =>
     c.json(bench.rescore(c.req.param("id"), await c.req.json().catch(() => ({})))),
   );

@@ -5,6 +5,8 @@ import type {
   AuthProfile,
   AuthTestResult,
   BenchCompare,
+  BenchConsolidateInput,
+  BenchConsolidateResult,
   BenchJob,
   BenchJobDetail,
   BenchJobList,
@@ -126,6 +128,11 @@ export const api = {
   benchJobs: () => req<BenchJobList>("/bench/jobs").then((r) => r.jobs),
   benchJob: (id: string) => req<BenchJobDetail>(`/bench/jobs/${enc(id)}`),
   benchCancel: (id: string) => req<BenchJob>(`/bench/jobs/${enc(id)}/cancel`, { method: "POST" }),
+  benchConsolidate: (id: string, body: BenchConsolidateInput) =>
+    req<BenchConsolidateResult>(`/bench/jobs/${enc(id)}/consolidate`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   benchRescore: (id: string, body: BenchRescoreInput = {}) =>
     req<BenchRescoreResult>(`/bench/jobs/${enc(id)}/rescore`, {
       method: "POST",

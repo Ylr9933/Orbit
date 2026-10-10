@@ -848,6 +848,29 @@ export function trialRunIds(t: Trial): string[] {
   );
 }
 
+/** Merge valid retries into invalid slots, optionally removing invalid run artifacts. */
+export const BenchConsolidate = z.strictObject({
+  sources: z.array(z.string().min(1)).default([]),
+  pruneInvalid: z.boolean().default(false),
+  dryRun: z.boolean().default(true),
+});
+export type BenchConsolidateInput = z.input<typeof BenchConsolidate>;
+export const BenchConsolidateResult = z.object({
+  dryRun: z.boolean(),
+  adopted: z.array(
+    z.object({
+      task: z.string(),
+      sourceJob: z.string(),
+      sourceTrial: z.string(),
+      trial: z.string(),
+    }),
+  ),
+  removedJobs: z.array(z.string()),
+  removedRuns: z.array(z.string()),
+  leftovers: z.array(z.string()),
+});
+export type BenchConsolidateResult = z.infer<typeof BenchConsolidateResult>;
+
 /** Which finished trials of a job to score again (all of them when nothing is given). */
 export const BenchRescore = z.object({
   tasks: z.array(z.string()).default([]),

@@ -4,11 +4,15 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { cp } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { AuthStore } from "../auth/index.ts";
 import type { OrbitPaths } from "../config/paths.ts";
 import {
   type AdapterTasksResponse,
   type BenchCompare,
+  BenchConsolidate,
+  type BenchConsolidateInput,
+  type BenchConsolidateResult,
   type BenchJob,
   type BenchJobDetail,
   type BenchJobList,
@@ -479,6 +483,123 @@ export class BenchService {
       );
     });
     return { jobs: ids, rows };
+  }
+
+  /** Valid retries replace invalid slots; scores of valid trials are never selected or overwritten. */
+  async consolidate(id: string, input: BenchConsolidateInput): Promise<BenchConsolidateResult> {
+    const f = BenchConsolidate.parse(input);
+    const target = this.job(id);
+    const sources = [...new Set(f.sources)];
+    if (sources.includes(id)) throw new UserError("target cannot also be a source");
+    const donors = sources.map((source) => this.job(source));
+    const all = [target, ...donors];
+    const oldRuns = new Map<string, Run>();
+    for (const d of all) {
+      if (d.trials.some((t) => t.state !== "done" || this.busy.has(t.id)))
+        throw new UserError(`job ${d.job.id} has active trials`);
+      for (const t of d.trials)
+        for (const rid of trialRunIds(t)) {
+          const run = this.deps.runs.get(rid);
+          if (!run) throw new UserError(`missing run ${rid}`);
+          const blocker = this.deps.runs.deleteBlocker(run, true);
+          if (blocker) throw new UserError(blocker);
+          if (this.deps.store.trialByRun(rid)?.id !== t.id)
+            throw new UserError(`inconsistent run ownership: ${rid}`);
+          oldRuns.set(rid, run);
+        }
+    }
+    const key = (t: Trial) => JSON.stringify([t.task, t.method, t.seed]);
+    const trials = new Map(target.trials.map((t) => [key(t), structuredClone(t)]));
+    const adopted: BenchConsolidateResult["adopted"] = [];
+    for (const d of donors) {
+      if (
+        d.job.spec.benchmark !== target.job.spec.benchmark ||
+        !isDeepStrictEqual(d.job.spec.methods, target.job.spec.methods) ||
+        !isDeepStrictEqual(d.job.spec.options, target.job.spec.options) ||
+        !isDeepStrictEqual(d.job.metrics, target.job.metrics)
+      )
+        throw new UserError(`incompatible source job ${d.job.id}`);
+      for (const t of d.trials) {
+        const prev = trials.get(key(t));
+        if (!prev) throw new UserError(`source trial ${t.id} is not in the target matrix`);
+        if (isValid(t)) {
+          if (isValid(prev) || prev.history.some((h) => h.outcome.evaluation === "valid"))
+            throw new UserError(`refusing to replace valid trial ${prev.id}`);
+          trials.set(key(t), { ...t, id: prev.id, jobId: id, createdAt: prev.createdAt });
+          adopted.push({ task: t.task, sourceJob: d.job.id, sourceTrial: t.id, trial: prev.id });
+        } else if (
+          !f.pruneInvalid ||
+          t.outcome?.evaluation !== "invalid" ||
+          t.history.some((h) => h.outcome.evaluation === "valid")
+        ) {
+          throw new UserError(`source trial ${t.id} has no valid result to adopt`);
+        }
+      }
+    }
+    if (f.pruneInvalid)
+      for (const t of trials.values()) {
+        t.history = t.history.filter((h) => h.outcome.evaluation !== "invalid");
+        if (t.outcome?.evaluation === "invalid") {
+          t.verifyRunId = null;
+          if (!t.history.length) t.solveRunId = null;
+        }
+      }
+    const retained = new Set([...trials.values()].flatMap(trialRunIds));
+    const removedRuns = [...oldRuns.keys()].filter((rid) => !retained.has(rid));
+    const out: BenchConsolidateResult = {
+      dryRun: f.dryRun,
+      adopted,
+      removedJobs: sources,
+      removedRuns,
+      leftovers: [],
+    };
+    if (f.dryRun) return out;
+    // No await between validation and this transaction: concurrent HTTP mutations cannot interleave.
+    const moved: Run[] = [];
+    for (const a of adopted) {
+      const t = [...trials.values()].find((t) => t.id === a.trial) as Trial;
+      for (const rid of trialRunIds(t)) {
+        const r = structuredClone(oldRuns.get(rid) as Run);
+        r.folder = target.job.folder;
+        r.spec.group = benchGroup(id);
+        r.spec.tags = {
+          ...r.spec.tags,
+          job: id,
+          trial: t.id,
+          source_job: a.sourceJob,
+          source_trial: a.sourceTrial,
+        };
+        r.note = [
+          r.note,
+          `Consolidated from ${a.sourceJob} / ${a.sourceTrial}; run ID and artifacts retained.`,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        moved.push(r);
+      }
+    }
+    const job = {
+      ...target.job,
+      state: "done" as const,
+      endedAt:
+        [...trials.values()]
+          .map((t) => t.endedAt)
+          .filter((x): x is string => !!x)
+          .sort()
+          .at(-1) ?? target.job.endedAt,
+    };
+    this.deps.store.consolidateJob(job, [...trials.values()], sources, moved);
+    const deleted = await this.deps.runs.delete(removedRuns);
+    out.leftovers = deleted.leftovers;
+    for (const source of sources) {
+      const path = join(this.deps.paths.bench, source);
+      try {
+        rmSync(path, { recursive: true, force: true });
+      } catch {
+        out.leftovers.push(path);
+      }
+    }
+    return out;
   }
 
   /**

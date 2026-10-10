@@ -408,6 +408,34 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
     });
 
   bench
+    .command("consolidate <job> [sources...]")
+    .description("merge valid retries into invalid slots and remove consumed source jobs")
+    .option("--prune-invalid", "delete invalid run artifacts, keeping task outcomes")
+    .option("--apply", "apply the plan (default: preview only)")
+    .option("--yes", "confirm permanent deletion")
+    .option("--json", "print JSON")
+    .action(
+      async (
+        id: string,
+        sources: string[],
+        o: { pruneInvalid?: boolean; apply?: boolean; yes?: boolean; json?: boolean },
+      ) => {
+        const c = await client();
+        const body = { sources, pruneInvalid: !!o.pruneInvalid, dryRun: true };
+        const plan = await c.benchConsolidate(id, body);
+        if (o.apply) {
+          await confirmTyped(
+            `merge ${plan.adopted.length} trials and delete ${plan.removedRuns.length} runs and ${plan.removedJobs.length} source jobs`,
+            id,
+            o.yes,
+          );
+        }
+        const result = o.apply ? await c.benchConsolidate(id, { ...body, dryRun: false }) : plan;
+        print(o.json, result, () => JSON.stringify(result, null, 2));
+      },
+    );
+
+  bench
     .command("rescore <job>")
     .description(
       "score finished trials again from their saved solve output (no Agent rerun); earlier scores are kept",

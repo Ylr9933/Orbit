@@ -377,6 +377,32 @@ export class Store {
     });
   }
 
+  /** Atomically replace a finished job's trial records and remove consumed source jobs. */
+  consolidateJob(job: BenchJob, trials: Trial[], sources: string[], runs: Run[]): void {
+    this.tx(() => {
+      for (const id of [job.id, ...sources]) {
+        this.db
+          .prepare(
+            "DELETE FROM trial_runs WHERE trial_id IN (SELECT id FROM trials WHERE job_id = ?)",
+          )
+          .run(id);
+        this.db.prepare("DELETE FROM trials WHERE job_id = ?").run(id);
+      }
+      for (const id of sources) this.db.prepare("DELETE FROM bench_jobs WHERE id = ?").run(id);
+      for (const t of trials) {
+        this.db
+          .prepare(
+            "INSERT INTO trials (id, job_id, state, solve_run, verify_run, doc) VALUES (?, ?, ?, ?, ?, ?)",
+          )
+          .run(t.id, t.jobId, t.state, t.solveRunId, t.verifyRunId, JSON.stringify(t));
+        for (const id of trialRunIds(t))
+          this.db.prepare("INSERT INTO trial_runs (run_id, trial_id) VALUES (?, ?)").run(id, t.id);
+      }
+      for (const run of runs) this.putRun(run);
+      this.putJob(job);
+    });
+  }
+
   putTrial(t: Trial): void {
     this.tx(() => {
       this.db

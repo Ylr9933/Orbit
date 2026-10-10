@@ -347,6 +347,12 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 | 其余 | valid |
 
   只有 `valid` 的分数进入均分；无效或未知单独列出，不静默计入。清理状态汇总两个 Run 的 `cleanup`。
+- **重试归并**：`POST /bench/jobs/:id/consolidate` / `orbit bench consolidate <job> [sources...]`
+  默认只预览；`--apply` 才执行。只接收全部 trial 已完成、Run 已清理且无后台更新的任务；同 benchmark、methods、options、metrics，
+  按 task × method × seed 对齐。有效重试只替换无效位置，拒绝覆盖有效成绩（包括 0 分）或从多份有效成绩里挑选。
+  保留目标 trial ID、来源 Run ID、原产物与 source_job/source_trial 标签；daemon 在单事务内更新归属并移除来源 job，
+  再调用已有 RunService 删除废弃 Run。`--prune-invalid` 清除无效 Run 与无效评分历史，保留任务位置及失败原因。
+  不碰镜像与下载缓存；文件删除失败通过 leftovers 返回。Web job 页的 Merge retries 提供预览和确认。
 - **指标**（`contracts.MetricSpec`，规则只在 `contracts/metrics.ts`，daemon、CLI、Web 共用）：适配器在 `tasks` 回复里声明
   `metrics[{ name, label, description?, unit?, range?, higherIsBetter, primary, reference? }]`（至多 20 个，至多一个 primary），
   `score` 回复的 `metrics{ name: number }` 给出每个 trial 的值。内置指标 `score` = `100 · score / maxScore`（%，0–100）始终存在，

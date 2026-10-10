@@ -319,6 +319,30 @@ export function BenchJobDetail({ id }: { id: string }) {
       toast((e as Error).message);
     }
   };
+  const consolidate = async () => {
+    const input = prompt(
+      "Source job IDs, separated by spaces. Valid retries replace invalid trials. Consumed source jobs are deleted.",
+    );
+    if (input === null) return;
+    const sources = input.trim().split(/\s+/).filter(Boolean);
+    try {
+      const body = { sources, pruneInvalid: false, dryRun: true };
+      const plan = await api.benchConsolidate(job.id, body);
+      if (
+        prompt(
+          `Merge ${plan.adopted.length} trials, delete ${plan.removedRuns.length} obsolete runs and ${plan.removedJobs.length} source jobs? Type ${job.id} to confirm.`,
+        ) !== job.id
+      )
+        return;
+      const result = await api.benchConsolidate(job.id, { ...body, dryRun: false });
+      toast(
+        `Merged ${result.adopted.length} trials; ${result.leftovers.length} folders left on disk`,
+      );
+      d.reload();
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  };
   const end = job.endedAt ? Date.parse(job.endedAt) : Date.now();
 
   return (
@@ -343,6 +367,9 @@ export function BenchJobDetail({ id }: { id: string }) {
               title="Verify and score again from the saved solve outputs"
             >
               Rescore
+            </button>
+            <button type="button" className="btn sm" onClick={consolidate}>
+              Merge retries
             </button>
             <button type="button" className="btn sm danger" onClick={() => setDeleting(true)}>
               Delete job
