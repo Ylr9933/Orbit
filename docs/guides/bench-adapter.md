@@ -6,7 +6,7 @@
 
 | benchmark 的形态 | 路线 | 要改 Orbit 吗 |
 | --- | --- | --- |
-| Harbor 任务目录（`task.toml` + `instruction.md` + `environment/` + `tests/` + `solution/`），verifier 为 separate 模式 | 内置 `harbor` 适配器 | 否 |
+| Harbor 任务目录（`task.toml` + `instruction.md` + `environment/` + `tests/` + `solution/`），verifier 为 separate 或 shared 模式 | 内置 `harbor` 适配器 | 否 |
 | ASI-Bench seed31415 | 内置 `asi` 适配器 | 否 |
 | 其他任何形态 | 写一个外部适配器（任意语言的可执行文件），登记时 `--adapter /path/to/adapter` | 否 |
 
@@ -72,11 +72,11 @@ Orbit 读取的 `task.toml` 字段：
 | `[solution.env]` | oracle 运行 `solution/solve.sh` 时的环境变量 |
 | `[metadata] domain / field / subfield` | 任务标签 |
 
-`orbit bench tasks` 会列出不支持的设置（如 shared 模式、compose 中未实现的键、`allowlist` 网络、`mcp_servers`、`${VAR}` 模板），
+`orbit bench tasks` 会列出不支持的设置（如 compose 中未实现的键、`allowlist` 网络、`mcp_servers`、`${VAR}` 模板），
 这些任务不会运行，以免在不同条件下打分。
 
 verifier 必须把分数写到 `/logs/verifier/reward.txt`（一个数）或 `reward.json`（`reward` 键或唯一键），满分为 1。
-`environment/docker-compose.yaml` 中的其他服务作为服务容器与 solve Run 一起启动（就绪后才启动 Agent），`service = "<名>"` 的 artifacts 从该服务采集；服务日志在 solve Run 的 `output/services/<名>/log`。不支持：`environment_mode = "shared"`。
+`environment/docker-compose.yaml` 中的其他服务作为服务容器与 solve Run 一起启动（就绪后才启动 Agent），`service = "<名>"` 的 artifacts 从该服务采集；服务日志在 solve Run 的 `output/services/<名>/log`。shared 模式（默认）的 verifier 在 solve Run 的同一容器里、方法结束后运行（after 阶段），这类 trial 不能 `bench rescore`。
 
 ## 3. 写一个外部适配器
 

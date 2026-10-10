@@ -77,12 +77,19 @@ export function classify(
   const sv = solveVerdict(solve);
   if (!sv.verify) return out(sv.evaluation ?? "unknown", null, sv.issue ? [sv.issue] : []);
   if (!verify) return out("unknown", null, ["verify not run"]);
-  if (verify.state === "cancelled" || verify.state === "lost")
+  // Verified in the solve run's container (its after phase), as Harbor's shared verifier mode.
+  if (verify.id === solve.id && solve.spec.after) {
+    const a = solve.after;
+    if (!a || a.state === "running") return out("unknown", null, ["verify did not finish"]);
+    if (a.state === "skipped" || a.state === "error")
+      return out("invalid", null, [`verifier did not run: ${a.reason ?? a.state}`]);
+    if (a.state === "timeout") return out("invalid", null, ["verify timed out"]);
+  } else if (verify.state === "cancelled" || verify.state === "lost")
     return out("unknown", null, [`verify ${verify.state}`]);
-  if (verify.startedAt === null)
+  else if (verify.startedAt === null)
     return out("invalid", null, [`verifier environment failed: ${verify.reason ?? "not started"}`]);
-  if (timedOut(verify)) return out("invalid", null, ["verify timed out"]);
-  if (verify.usage?.oomKilled) return out("invalid", null, [`verify ${oomIssue(verify)}`]);
+  else if (timedOut(verify)) return out("invalid", null, ["verify timed out"]);
+  else if (verify.usage?.oomKilled) return out("invalid", null, [`verify ${oomIssue(verify)}`]);
   const setup = [oom, agentIssue, ...serviceIssues].filter((x): x is string => x !== null);
   if (!score) return out("invalid", null, ["no score", ...setup]);
   if (score.invalid || score.score === null || setup.length)

@@ -375,6 +375,64 @@ export async function copyFromContainer(
   return r.code === 0 ? null : (r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`);
 }
 
+/**
+ * Start `argv` in a running container, detached (`docker exec -d`), so it survives a daemon
+ * restart; it reports through files it writes itself.
+ */
+export async function execDetached(
+  id: string,
+  argv: string[],
+  env: Record<string, string>,
+  envFile?: string,
+): Promise<string | null> {
+  const args = ["exec", "-d"];
+  for (const [k, v] of Object.entries(env)) args.push("-e", `${k}=${v}`);
+  if (envFile) args.push("--env-file", envFile);
+  const r = await docker([...args, id, ...argv]);
+  return r.code === 0 ? null : (r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`);
+}
+
+/** Run `argv` in a running container and wait; returns the exit code (-1 if docker failed). */
+export async function execWait(id: string, argv: string[], timeoutMs = 60_000): Promise<number> {
+  const r = await docker(["exec", id, ...argv], timeoutMs);
+  return r.code;
+}
+
+/** Copy a host file or directory's contents to `dest` in a container; returns an error line or null. */
+export async function copyToContainer(
+  id: string,
+  src: string,
+  dest: string,
+): Promise<string | null> {
+  const dir = statSync(src, { throwIfNoEntry: false })?.isDirectory();
+  // A directory's contents go into dest (created if missing), not into dest/<name>.
+  if (dir && (await execWait(id, ["mkdir", "-p", dest])) !== 0) return `cannot create ${dest}`;
+  const r = await docker(["cp", dir ? `${src}/.` : src, `${id}:${dest}`], 600_000);
+  return r.code === 0 ? null : (r.stderr.trim().split("\n")[0] ?? `exit ${r.code}`);
+}
+
+/** Names of the networks a container is attached to. */
+export async function containerNetworks(id: string): Promise<string[] | null> {
+  const r = await docker([
+    "inspect",
+    "--type",
+    "container",
+    "--format",
+    "{{range $k, $v := .NetworkSettings.Networks}}{{$k}}\n{{end}}",
+    id,
+  ]);
+  if (r.code !== 0) return null;
+  return r.stdout.split("\n").filter(Boolean);
+}
+
+export async function connectNetwork(network: string, id: string): Promise<boolean> {
+  return (await docker(["network", "connect", network, id])).code === 0;
+}
+
+export async function disconnectNetwork(network: string, id: string): Promise<boolean> {
+  return (await docker(["network", "disconnect", network, id])).code === 0;
+}
+
 /** Create a per-run network; returns an error line or null. */
 export async function createNetwork(
   name: string,

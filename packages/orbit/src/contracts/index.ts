@@ -299,6 +299,43 @@ export type ServiceSpec = z.infer<typeof ServiceSpec>;
 export const NetworkSpec = z.object({ name: ServiceName, internal: z.boolean().default(false) });
 export type NetworkSpec = z.infer<typeof NetworkSpec>;
 
+/**
+ * A second command in the same container once `command` has exited (or was stopped at its
+ * timeout), with the state it left: e.g. a verifier that checks files and processes in place.
+ */
+export const AfterPhase = z
+  .object({
+    command: z.array(z.string()).min(1),
+    timeoutMin: z.number().positive(),
+    env: z.record(z.string(), z.string()).default({}),
+    /** Daemon variables for this phase only (e.g. grader keys); set by Orbit for bench runs. */
+    passEnv: z.array(EnvName).default([]),
+    /** Host paths copied to absolute container paths just before the phase. */
+    copy: z.array(z.object({ source: z.string(), target: z.string() })).default([]),
+    /** Network during the phase; default: unchanged. */
+    network: z.boolean().optional(),
+    /** Absolute paths copied to `output/after/<path>` once the phase has ended. */
+    collect: z.array(z.string()).default([]),
+  })
+  .refine(
+    (a) =>
+      [...a.collect, ...a.copy.map((c) => c.target)].every(
+        (p) => p.startsWith("/") && !hasDotDot(p),
+      ) && a.copy.every((c) => c.source.startsWith("/")),
+    { message: "after-phase paths must be absolute, without `..`" },
+  );
+export type AfterPhase = z.infer<typeof AfterPhase>;
+
+/** How a run's after phase went (`skipped`: the run was cancelled or its container died first). */
+export const AfterStatus = z.object({
+  state: z.enum(["running", "succeeded", "failed", "timeout", "skipped", "error"]),
+  exitCode: z.number().int().nullable(),
+  reason: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  endedAt: z.string().nullable(),
+});
+export type AfterStatus = z.infer<typeof AfterStatus>;
+
 /** Lease for a service: its limits, or 1 CPU / 1 GB when it has none. */
 export const serviceLease = (s: Pick<ServiceSpec, "cpus" | "memGB">) => ({
   cpus: s.cpus ?? 1,
@@ -363,6 +400,10 @@ export const RunSpec = z
     runNetworks: z.array(ServiceName).default(["default"]),
     /** Services the run's container waits for (healthy, or running without a health check). */
     dependsOn: z.array(ServiceName).default([]),
+    /** A phase run in the same container after `command` (docker runs). */
+    after: AfterPhase.optional(),
+    /** Absolute directories created in the container before `command` (e.g. Harbor's /logs/*). */
+    mkdirs: z.array(z.string()).default([]),
   })
   .refine(
     (s) =>
@@ -376,6 +417,9 @@ export const RunSpec = z
   })
   .refine((s) => s.collect.every((p) => p.startsWith("/") && !hasDotDot(p)), {
     message: "collect paths must be absolute container paths without `..`",
+  })
+  .refine((s) => s.mkdirs.every((p) => p.startsWith("/") && !hasDotDot(p)), {
+    message: "mkdirs must be absolute container paths without `..`",
   })
   .refine(
     (s) => {
@@ -393,6 +437,8 @@ export const RunSpec = z
   .superRefine((s, ctx) => {
     const problem = servicesProblem(s);
     if (problem) ctx.addIssue({ code: "custom", message: problem });
+    if (s.after && s.backend !== "docker")
+      ctx.addIssue({ code: "custom", message: "an after phase needs the docker backend" });
   });
 export type RunSpec = z.infer<typeof RunSpec>;
 export type RunSpecInput = z.input<typeof RunSpec>;
@@ -546,6 +592,8 @@ export const Run = z.object({
       }),
     )
     .default([]),
+  /** The after phase (`spec.after`), once it was reached. */
+  after: AfterStatus.nullable().default(null),
   /** Size of the run directory on disk, measured once the run is cleaned up. */
   sizeBytes: z.number().nullable().default(null),
   createdAt: z.string(),

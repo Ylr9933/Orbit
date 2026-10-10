@@ -271,6 +271,9 @@ export function parseHarborTask(dir: string, id: string): HarborTask {
     verify = verifierImage(dir, table(verifier.environment), image, problems);
     if (compose && !verify.bundledTests)
       problems.push("a separate verifier copying a docker-compose environment is not supported");
+  } else if (mode === "shared") {
+    // Harbor uploads tests/ into the Agent's container once it is done and runs test.sh there.
+    if (!existsSync(join(dir, "tests", "test.sh"))) problems.push("tests/test.sh missing");
   } else problems.push(`verifier environment_mode "${mode}" is not supported`);
   problems.push(...unsupportedSettings(toml));
   const envNetwork = networkMode(agent, environment, problems, "agent");
@@ -373,6 +376,9 @@ export const toBenchTask = (t: HarborTask): BenchTask => ({
   tags: t.tags,
 });
 
+const SHARED_VERIFY =
+  "mkdir -p /logs/verifier /logs/agent && chmod +x /tests/test.sh && (/tests/test.sh) > /logs/verifier/test-stdout.txt 2>&1";
+
 function imageFields(img: HarborImage | null): { image: string } | { dockerfile: string } {
   if (!img) throw new Error("task has no environment image");
   return img;
@@ -400,6 +406,8 @@ export function harborSolveSpec(
     workdir: t.env.workdir ?? c?.workdir ?? "image",
     timeoutMin: timeoutMin ?? (t.agentTimeoutSec ? t.agentTimeoutSec / 60 : undefined),
     collect: t.artifacts.filter((a) => !a.service).map((a) => a.source),
+    // Harbor mounts these into the Agent's environment; tasks may expect them to exist.
+    mkdirs: ["/logs/agent", "/logs/verifier", "/logs/artifacts"],
     ...(c?.services.length
       ? {
           services: c.services.map((s) => ({
@@ -412,6 +420,22 @@ export function harborSolveSpec(
         }
       : {}),
   };
+  if (t.verifier.mode === "shared") {
+    const tests = join(staging, "tests");
+    mkdirSync(staging, { recursive: true });
+    cpSync(join(t.dir, "tests"), tests, { recursive: true });
+    Object.assign(run, {
+      after: {
+        // Harbor's verifier command: executable test.sh, output kept with the reward.
+        command: ["sh", "-c", SHARED_VERIFY],
+        timeoutMin: t.verifierTimeoutSec ? t.verifierTimeoutSec / 60 : 10,
+        env: t.verifier.vars,
+        copy: [{ source: tests, target: "/tests" }],
+        network: t.verifier.network,
+        collect: ["/logs/verifier"],
+      },
+    });
+  }
   if (method.agent === "oracle") {
     const sol = join(staging, "solution");
     mkdirSync(staging, { recursive: true });
@@ -522,8 +546,8 @@ function harborTask(root: string, id: string): HarborTask {
 const REVIEW_SKIP = /^reward\.(json|txt)$/;
 
 /** Verifier outputs worth reading on the trial page (test output, logs), smallest first. */
-export function harborReview(verifyOutput: string): ScoreReply["review"] {
-  const dir = join(verifyOutput, "collected", "logs", "verifier");
+export function harborReview(verifyOutput: string, sub = "collected"): ScoreReply["review"] {
+  const dir = join(verifyOutput, sub, "logs", "verifier");
   const files: NonNullable<ScoreReply["review"]>["files"] = [];
   let names: string[] = [];
   try {
@@ -574,11 +598,13 @@ export const harborAdapter: AdapterHandlers = {
     return { spec, issues: missing.map((m) => `artifact not produced: ${m}`) };
   },
   score: ({ verify }) => {
-    const r = harborReward(join(verify.output, "collected", "logs", "verifier"));
+    // Shared mode: the solve run's after phase collected /logs/verifier into output/after/.
+    const sub = verify.run.spec.after ? "after" : "collected";
+    const r = harborReward(join(verify.output, sub, "logs", "verifier"));
     return {
       ...r,
       ...(r.score === null ? {} : { metrics: { resolved: r.score >= 1 ? 100 : 0 } }),
-      review: harborReview(verify.output),
+      review: harborReview(verify.output, sub),
     };
   },
 };

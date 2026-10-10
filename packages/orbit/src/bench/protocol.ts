@@ -170,6 +170,10 @@ export function toRunSpec(
     spec.agentBundle = method.bundle;
     spec.network = true;
   }
+  if (phase === "solve" && spec.after) {
+    // A verifier in the solve container (after the Agent) gets the grader secrets for its phase only.
+    spec.after = { ...spec.after, passEnv: b.passEnv };
+  }
   if (phase === "verify") {
     // Grader secrets go to the verifier, never to the Agent under test.
     spec.passEnv = b.passEnv;

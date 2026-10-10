@@ -140,7 +140,7 @@ unknown。纯粹用于展示：准入只看显存占用。
 { name?, project?(repo path), image | dockerfile, command(argv), resources,
   mounts[{ source | dataset, target, mode: ro|rw }], env, passEnv[], network(default true),
   snapshot(default true when project set), auth?(profile name), collect[], tags, parentId?,
-  services[], networks[{ name, internal }], runNetworks[], dependsOn[] }
+  services[], networks[{ name, internal }], runNetworks[], dependsOn[], after? }
 ```
 
 **Run**：`{ id, spec, state, exitCode?, node, remote, origin?, leaseId?, containerId?, code{commit, dirty, diffRef},
@@ -166,6 +166,17 @@ init, readOnly, tmpfs, capAdd, capDrop, securityOpt, pidsLimit?, collect }`，�
 - 结束：Run 容器退出并采集后，先记下运行中坏掉的服务（非 0 退出、OOM、unhealthy → `Run.services[].failure`，
   bench 记为 invalid），再停止服务，把日志与 `collect` 路径存到 `output/services/<name>/`。
 - 清理：删除 Run 容器、`orbit.parent` 服务容器和网络，全部确认后才释放租约；daemon 重启后同样按标签清理。
+
+**after 阶段**（`RunSpec.after`，Harbor shared verifier 用）：`{ command, timeoutMin, env, passEnv, copy[{ source, target }],
+network?, collect }`，在 `command` 结束（或到时被停）后于**同一容器**里运行，看到它留下的文件与仍在运行的进程：
+- 容器命令包一层 `/orbit/phases/run.sh`：命令在自己的 session 中后台运行（有 `setsid` 时），退出码写入
+  `/orbit/phases/main.exit`，容器保留。执行时限只停命令（整组进程），after 阶段照常运行；取消则停整个容器。
+- 命令结束后：先采集 `collect`（命令留下的样子），把 `copy` 复制进容器（如 `tests/`，命令运行时不可见），按需断开 /
+  接入网络，`docker exec -d` 启动 after 命令（输出与退出码写入 `/orbit/phases/`，密钥经 env-file），按其时限等待，
+  采集其 `collect` 到 `output/after/`，再停容器、收服务、清理。状态记在 `Run.after { state: running | succeeded |
+  failed | timeout | skipped | error, exitCode, reason, startedAt, endedAt }`；其输出在容器日志排空后接到 Run 日志。
+- 状态都在文件里，daemon 重启后接着等命令或 after 阶段。Run 的 state / exitCode 只反映 `command`。
+  after 阶段的用量计入同一容器的 usage。
 
 **容器内约定**（skill 告诉 Agent；实验代码直接用环境变量）：
 
@@ -426,7 +437,11 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
    构建，以 root 与 `workdir`（缺省为镜像 WORKDIR）运行；资源、超时来自 `task.toml`；Agent 方法给出 `agentTask`
    （`instruction.md`），oracle 把 `solution/` 挂到 `/solution` 执行 `solve.sh`。顶层 `artifacts` 声明的路径在 solve
    结束时采集（`RunSpec.collect`，写入 `output/collected/<abs path>`）。verifier 模式按 Harbor 规则解析：显式
-   `environment_mode`，否则有 `[verifier.environment]` 即 separate，否则 shared。separate 的镜像顺序同 Harbor：
+   `environment_mode`，否则有 `[verifier.environment]` 即 separate，否则 shared。shared：solve Run 带 after 阶段——
+   方法结束后把 `tests/` 复制到 /tests，以 Harbor 的命令（`chmod +x` 后执行 `/tests/test.sh`，输出写
+   `/logs/verifier/test-stdout.txt`）、`[verifier.env]`、`[verifier] timeout_sec` 与 verifier 阶段网络运行，采集
+   `/logs/verifier`；不再起 verify Run，从 solve Run 的 `output/after/` 评分，after 阶段未运行 / 超时记为 invalid；
+   环境已不在，不能 `bench rescore`。separate 的镜像顺序同 Harbor：
    `[verifier.environment] docker_image` → `tests/Dockerfile`（二者自带 /tests）→ `tests/docker-compose.yaml`（不支持）
    → 任务环境的新副本（继承其资源、网络、变量，`tests/` 挂到 /tests）。verify Run 把采集到的产物复制挂载到目标路径，
    运行 `bash /tests/test.sh`，采集 `/logs/verifier`，读取 `reward.json`（`reward` 键或唯一键）或 `reward.txt`。
@@ -437,7 +452,7 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
    healthy）、networks、init、read_only、tmpfs、cap_add/drop、security_opt、pids_limit；顶层 networks 只认 `internal`。
    插值同 Compose（`${VAR}`、`${VAR:-d}`、`${VAR-d}`、`$$`），变量为 CONTEXT_DIR、CPUS、MEMORY、PREBUILT_IMAGE_NAME 与
    任务变量；未知变量、其他键（volumes、ports 等）都列为不支持。`service = "<名>"` 的 artifacts 从该服务采集。
-   未实现的设置一律标为不支持而不是忽略（否则分数不再对应任务条件）：shared 模式、compose 中未实现的键、
+   未实现的设置一律标为不支持而不是忽略（否则分数不再对应任务条件）：compose 中未实现的键、
    复用 compose 环境的 separate verifier、`allowlist` 网络、非 linux、`gpu_types`/`tpu`、`mcp_servers`、`skills_dir`、`healthcheck`、`[agent]`/`[verifier]`
    `user`、`[[verifier.collect]]`、`[[steps]]`、`${VAR}` 变量模板；Harbor 也忽略的未知字段照样忽略。
    指标：主指标 `resolved`（reward ≥ 1 的 trial，%，即 Terminal-Bench 的 resolution rate），`score` 标为 Reward（平均 reward）。

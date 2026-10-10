@@ -150,7 +150,11 @@ SEED = 1
 `,
     ["solution/solve.sh"],
   );
-  task("shared", `[verifier]\nenvironment_mode = "shared"\n`);
+  task(
+    "shared",
+    `[environment]\nnetwork_mode = "no-network"\n[verifier]\nenvironment_mode = "shared"\ntimeout_sec = 90\n[verifier.env]\nG = "1"\n`,
+    ["tests/test.sh"],
+  );
   write(
     join(
       task("compose", `[verifier]\nenvironment_mode = "separate"\n`),
@@ -282,7 +286,7 @@ command = "true"
     expect(by.sr?.supported).toBe(true);
     expect(by.sr?.env).toMatchObject({ cpus: 4, memGB: 8, network: false });
     expect(by.sr?.tags).toEqual({ domain: "physics" });
-    expect(by.shared?.reason).toMatch(/environment_mode "shared"/);
+    expect(by.shared?.reason).toBeNull();
     expect(by.compose?.reason).toMatch(/compose service db: volumes is not supported/);
     expect(by.broken?.reason).toMatch(/^task.toml:/);
     const req = { protocol: 1 as const, op: "tasks" as const };
@@ -298,6 +302,47 @@ command = "true"
         benchmark: { name: "t", path: root, config: {} },
       }),
     ).toThrow(/solve request without trial/);
+  });
+
+  it("verifies shared-mode tasks in the solve container, after the method", () => {
+    const t = findHarborTasks(root).find((x) => x.id === "shared");
+    if (!t) throw new Error("task missing");
+    const staging = join(tmp, "shared-solve");
+    const spec = harborSolveSpec(t, { name: "e", agent: "empty" }, staging);
+    expect(spec.after).toEqual({
+      command: [
+        "sh",
+        "-c",
+        "mkdir -p /logs/verifier /logs/agent && chmod +x /tests/test.sh && (/tests/test.sh) > /logs/verifier/test-stdout.txt 2>&1",
+      ],
+      timeoutMin: 1.5,
+      env: { G: "1" },
+      // tests/ reaches the container only once the method is done.
+      copy: [{ source: join(staging, "tests"), target: "/tests" }],
+      network: false,
+      collect: ["/logs/verifier"],
+    });
+    expect(spec.mounts).toEqual([]);
+    expect(spec.mkdirs).toEqual(["/logs/agent", "/logs/verifier", "/logs/artifacts"]);
+    const b = { name: "x", adapter: "harbor", path: root, config: {}, env: {}, passEnv: ["K"] };
+    const rs = toRunSpec(spec, { name: "e", agent: "empty" }, b as unknown as Benchmark, "solve");
+    expect(rs.after?.passEnv).toEqual(["K"]);
+    expect(rs.passEnv ?? []).toEqual([]);
+    expect(RunSpec.safeParse(rs).success).toBe(true);
+
+    // The reward comes from the solve run's output/after/.
+    const out = join(tmp, "shared-out");
+    write(join(out, "after", "logs", "verifier", "reward.txt"), "1\n");
+    const solveRun = { spec: { after: spec.after } } as unknown as Run;
+    const reply = handle(harborAdapter, {
+      protocol: 1,
+      op: "score",
+      benchmark: { name: "t", path: root, config: {} },
+      trial: { id: "t1", task: "shared", method: { name: "e", agent: "empty" }, seed: 1, staging },
+      solve: { run: solveRun, output: out },
+      verify: { run: solveRun, output: out },
+    } as never) as { score: number };
+    expect(reply.score).toBe(1);
   });
 
   it("turns a docker-compose environment into services next to the run", () => {
@@ -396,7 +441,8 @@ command = "true"
 
   it("resolves verifier modes, images and networks like Harbor", () => {
     const by = Object.fromEntries(findHarborTasks(root).map((t) => [t.id, t]));
-    expect(by["implicit-shared"]?.reason).toMatch(/environment_mode "shared"/);
+    expect(by["implicit-shared"]?.verifier.mode).toBe("shared");
+    expect(by["implicit-shared"]?.reason).toMatch(/tests\/test.sh missing/);
     const sep = by["implicit-separate"];
     expect(sep?.supported).toBe(true);
     expect(sep?.verifier).toMatchObject({ mode: "separate", network: true, bundledTests: true });
@@ -797,6 +843,8 @@ const run = (p: Partial<Run>): Run =>
     reason: null,
     cleanup: "done",
     services: [],
+    after: null,
+    spec: {},
     ...p,
   }) as Run;
 
@@ -882,6 +930,30 @@ describe("outcome classification", () => {
     const survived = classify(run({ spec, usage: { ...usage, oomKilled: false } }), run({}), score);
     expect(survived).toMatchObject({ evaluation: "valid" });
     expect(survived.issues).toEqual(["1 process(es) in the solve run killed for memory"]);
+  });
+
+  it("classifies a verification done in the solve run's after phase", () => {
+    const after = (state: string, reason: string | null = null) =>
+      ({
+        state,
+        exitCode: state === "succeeded" ? 0 : null,
+        reason,
+        startedAt: "t",
+        endedAt: "t",
+      }) as Run["after"];
+    const spec = { after: { command: ["true"] } } as Run["spec"];
+    const solve = (a: Run["after"]) => run({ id: "s", spec, after: a });
+    const ok = solve(after("succeeded"));
+    expect(classify(ok, ok, score)).toMatchObject({ evaluation: "valid", score: 1 });
+    const timedOutAfter = solve(after("timeout"));
+    expect(classify(timedOutAfter, timedOutAfter, null)).toMatchObject({
+      evaluation: "invalid",
+      issues: ["verify timed out"],
+    });
+    const skipped = solve(after("error", "copy to /tests: no space"));
+    expect(classify(skipped, skipped, null).issues).toEqual([
+      "verifier did not run: copy to /tests: no space",
+    ]);
   });
 
   it("makes a solve invalid when a service of its environment broke during the run", () => {
