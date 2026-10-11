@@ -179,12 +179,18 @@ describe("harness", () => {
     expect(relay.env).toMatchObject({
       ANTHROPIC_BASE_URL: "https://a.example",
       ANTHROPIC_MODEL: "m1",
+      // Harbor parity: root containers may skip permissions; tier aliases follow the relay model.
+      IS_SANDBOX: "1",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "m1",
+      CLAUDE_CODE_SUBAGENT_MODEL: "m1",
     });
     expect(relay.secretEnv).toEqual({ ANTHROPIC_AUTH_TOKEN: "tok-0123456789" });
     expect(relay.mounts[0]?.target).toBe("/opt/orbit/claude/claude");
-    expect((await prepareHarness(mk("login"), join(dir, "run4"))).secretEnv).toEqual({
-      CLAUDE_CODE_OAUTH_TOKEN: "tok-0123456789",
-    });
+    const login = await prepareHarness(mk("login"), join(dir, "run4"));
+    expect(login.secretEnv).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "tok-0123456789" });
+    // Only a relay pins the aliases; the official API keeps Claude Code's own tiers.
+    expect(login.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
     expect((await prepareHarness(mk("api-key"), join(dir, "run5"))).secretEnv).toEqual({
       ANTHROPIC_API_KEY: "tok-0123456789",
     });
@@ -216,6 +222,8 @@ function run(id: string, state: Run["state"], group?: string): Run {
     note: "",
     folder: "",
     usage: null,
+    services: [],
+    after: null,
     sizeBytes: null,
     createdAt: "2026-01-01T00:00:00Z",
     startedAt: "2026-01-01T00:00:00Z",

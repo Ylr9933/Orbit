@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { detectAgent } from "../src/cli/agent.ts";
 import { expandGrid, substitute } from "../src/cli/program.ts";
-import { envFileText, runArgs } from "../src/executor/docker.ts";
+import { RunSpec } from "../src/contracts/index.ts";
+import { envFileText, runArgs, shellJoin } from "../src/executor/docker.ts";
 
 describe("sweep helpers", () => {
   it("expands the cartesian product and substitutes placeholders", () => {
@@ -76,5 +77,78 @@ describe("docker run args", () => {
     expect(runArgs({ ...base, gpuMode: "cdi", network: "bridge" })).not.toContain("--network");
     expect(envFileText({ K: "v=1" })).toBe("K=v=1\n");
     expect(() => envFileText({ K: "a\nb" })).toThrow();
+  });
+
+  it("starts service containers: no limits, networks with aliases, health check, hardening", () => {
+    const a = runArgs({
+      ...base,
+      gpuIds: [],
+      gpuMode: "cdi",
+      command: [],
+      cpus: null,
+      memGB: null,
+      init: false,
+      shm: false,
+      networks: [
+        { name: "orbit-r-default", aliases: ["sim"] },
+        { name: "orbit-r-task", aliases: ["sim"] },
+      ],
+      healthcheck: {
+        command: ["python3", "-c", "print('ok')"],
+        intervalSec: 2,
+        timeoutSec: 1.5,
+        startPeriodSec: 0,
+        retries: 5,
+      },
+      readOnly: true,
+      tmpfs: ["/tmp:rw,size=128m"],
+      capDrop: ["ALL"],
+      capAdd: ["KILL"],
+      securityOpt: ["no-new-privileges:true"],
+      pidsLimit: 128,
+    });
+    const j = a.join(" ");
+    for (const f of ["--init", "--cpus", "--memory", "--shm-size", "--network none"])
+      expect(j).not.toContain(f);
+    expect(j).toContain(
+      "--network name=orbit-r-default,alias=sim --network name=orbit-r-task,alias=sim",
+    );
+    expect(a[a.indexOf("--health-cmd") + 1]).toBe("python3 -c 'print('\\''ok'\\'')'");
+    expect(j).toContain("--health-timeout 1.5s --health-start-period 0s --health-retries 5");
+    expect(j).toContain("--read-only --tmpfs /tmp:rw,size=128m --cap-add KILL --cap-drop ALL");
+    expect(j).toContain("--security-opt no-new-privileges:true --pids-limit 128");
+    expect(a.at(-1)).toBe("img");
+    expect(shellJoin(["a b", "c"])).toBe("'a b' c");
+  });
+});
+
+describe("run specs with services", () => {
+  const svc = { name: "sim", image: "sim:1" };
+  const ok = (extra: object) => RunSpec.safeParse({ image: "x", command: ["true"], ...extra });
+  it("checks names, networks, dependencies and the backend", () => {
+    expect(ok({ services: [svc], dependsOn: ["sim"] }).success).toBe(true);
+    const msg = (extra: object) => {
+      const r = ok(extra);
+      return r.success ? null : r.error.issues[0]?.message;
+    };
+    expect(msg({ services: [{ ...svc, name: "main" }] })).toMatch(/main/);
+    expect(msg({ services: [svc, svc] })).toMatch(/distinct/);
+    expect(msg({ services: [{ ...svc, networks: ["task"] }] })).toMatch(/unknown network task/);
+    expect(msg({ services: [svc], dependsOn: ["db"] })).toMatch(/unknown service db/);
+    expect(
+      msg({
+        services: [
+          { ...svc, dependsOn: ["db"] },
+          { name: "db", image: "db", dependsOn: ["sim"] },
+        ],
+      }),
+    ).toMatch(/cycle/);
+    expect(msg({ services: [svc], hostNetwork: true })).toMatch(/host networking/);
+    expect(msg({ dependsOn: ["sim"] })).toMatch(/need services/);
+    expect(msg({ services: [{ name: "Sim", image: "x" }] })).toMatch(/DNS labels/);
+    // /workspace is Orbit's only when the run has a project there (Harbor tasks use it).
+    const ws = { mounts: [{ source: "/tmp", target: "/workspace/data", mode: "ro" }] };
+    expect(ok(ws).success).toBe(true);
+    expect(msg({ ...ws, project: "/p" })).toMatch(/outside \/orbit/);
   });
 });

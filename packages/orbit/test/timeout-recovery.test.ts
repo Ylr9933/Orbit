@@ -71,6 +71,7 @@ it.each([
       running: false,
       exitCode: code,
       oomKilled: false,
+      health: null,
       gpuIds: [],
       pid: 0,
     });

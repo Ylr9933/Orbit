@@ -11,6 +11,7 @@ import {
   scorerIssues,
 } from "../src/bench/asi.ts";
 import { classify, solveVerdict } from "../src/bench/classify.ts";
+import { durationSec, interpolate, parseCompose, sizeGB } from "../src/bench/compose.ts";
 import {
   findHarborTasks,
   harborAdapter,
@@ -33,7 +34,10 @@ import {
   AdapterRunSpec,
   type BenchJob,
   type Benchmark,
+  leaseRequest,
   type Run,
+  RunSpec,
+  type ServiceSpec,
   type Trial,
 } from "../src/contracts/index.ts";
 import { agentCommand, agentErrorKind } from "../src/harness/index.ts";
@@ -146,11 +150,108 @@ SEED = 1
 `,
     ["solution/solve.sh"],
   );
-  task("shared", `[verifier]\nenvironment_mode = "shared"\n`);
-  task("compose", `[verifier]\nenvironment_mode = "separate"\n`, [
-    "environment/docker-compose.yaml",
-  ]);
+  task(
+    "shared",
+    `[environment]\nnetwork_mode = "no-network"\n[verifier]\nenvironment_mode = "shared"\ntimeout_sec = 90\n[verifier.env]\nG = "1"\n`,
+    ["tests/test.sh"],
+  );
+  write(
+    join(
+      task("compose", `[verifier]\nenvironment_mode = "separate"\n`),
+      "environment",
+      "docker-compose.yaml",
+    ),
+    "services:\n  db:\n    image: postgres:16\n    volumes: [data:/var/lib/postgresql]\n",
+  );
+  // A simulator next to the Agent, as in TB-Science (a harbor-canary compose, trimmed).
+  const sidecar = task(
+    "sidecar",
+    `artifacts = ["/app/out.json", { source = "/state/usage.json", service = "sim" }]
+[environment]
+cpus = 2
+memory_mb = 4096
+[environment.env]
+SIM_URL = "http://sim:8788"
+[verifier]
+environment_mode = "separate"
+`,
+    ["environment/sim/Dockerfile"],
+  );
+  write(
+    join(sidecar, "environment", "docker-compose.yaml"),
+    `services:
+  main:
+    depends_on:
+      sim:
+        condition: service_healthy
+    working_dir: /app
+    command: ["sleep", "infinity"]
+    networks: [default, task]
+  sim:
+    build:
+      context: \${CONTEXT_DIR}
+      dockerfile: sim/Dockerfile
+    pull_policy: build
+    cpus: \${CPUS:-1}
+    mem_limit: 3g
+    command: python3 /srv/sim.py
+    read_only: true
+    cap_drop: [ALL]
+    networks: [task]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "print('ok')"]
+      interval: 2s
+      timeout: 1500ms
+      retries: 5
+      start_period: 1m
+networks:
+  task:
+    internal: true
+`,
+  );
   write(join(root, "tasks", "broken", "task.toml"), "not = [toml");
+  // No mode and no [verifier.environment]: Harbor's default is shared.
+  task("implicit-shared", `[verifier]\ntimeout_sec = 60\n`);
+  // [verifier.environment] implies separate; its network defaults to public like any environment.
+  task("implicit-separate", `[verifier.environment]\ncpus = 1\n`);
+  // Separate without tests/Dockerfile: a fresh copy of the (prebuilt) task image, tests mounted.
+  const fallback = join(root, "tasks", "fallback");
+  write(
+    join(fallback, "task.toml"),
+    `[environment]
+docker_image = "ghcr.io/x/env:1"
+workdir = "/repo"
+network_mode = "no-network"
+[environment.env]
+A = "1"
+[verifier]
+environment_mode = "separate"
+[verifier.env]
+B = "2"
+`,
+  );
+  for (const f of ["instruction.md", "tests/test.sh"]) write(join(fallback, f), "x\n");
+  task(
+    "conditions",
+    `[environment]
+network_mode = "allowlist"
+allowed_hosts = ["api.example.com"]
+gpu_types = ["H100"]
+mcp_servers = [{ name = "m", url = "http://m" }]
+[environment.env]
+KEY = "\${OPENAI_API_KEY}"
+[agent]
+user = "agent"
+[verifier]
+environment_mode = "separate"
+[[verifier.collect]]
+command = "true"
+`,
+  );
+  task(
+    "empty-lists",
+    `mcp_servers = []\n[environment]\nmcp_servers = []\n[verifier.environment]\n`,
+  );
 
   it("parses artifacts: strings, tables, and skips placeholders and other services", () => {
     const r = parseArtifacts([
@@ -162,19 +263,31 @@ SEED = 1
     expect(r.artifacts).toEqual([
       { source: "/a", destination: "/a" },
       { source: "/b", destination: "/c" },
+      { source: "/e", destination: "/e", service: "db" },
     ]);
-    expect(r.skipped).toEqual(["/d", "/e"]);
+    expect(r.skipped).toEqual(["/d"]);
   });
 
   it("lists tasks and explains the unsupported ones", () => {
     const ts = findHarborTasks(root);
     const by = Object.fromEntries(ts.map((t) => [t.id, t]));
-    expect(Object.keys(by).sort()).toEqual(["broken", "compose", "shared", "sr"]);
+    expect(Object.keys(by).sort()).toEqual([
+      "broken",
+      "compose",
+      "conditions",
+      "empty-lists",
+      "fallback",
+      "implicit-separate",
+      "implicit-shared",
+      "shared",
+      "sidecar",
+      "sr",
+    ]);
     expect(by.sr?.supported).toBe(true);
     expect(by.sr?.env).toMatchObject({ cpus: 4, memGB: 8, network: false });
     expect(by.sr?.tags).toEqual({ domain: "physics" });
-    expect(by.shared?.reason).toMatch(/environment_mode "shared"/);
-    expect(by.compose?.reason).toMatch(/docker-compose/);
+    expect(by.shared?.reason).toBeNull();
+    expect(by.compose?.reason).toMatch(/compose service db: volumes is not supported/);
     expect(by.broken?.reason).toMatch(/^task.toml:/);
     const req = { protocol: 1 as const, op: "tasks" as const };
     const reply = handle(harborAdapter, {
@@ -191,6 +304,216 @@ SEED = 1
     ).toThrow(/solve request without trial/);
   });
 
+  it("verifies shared-mode tasks in the solve container, after the method", () => {
+    const t = findHarborTasks(root).find((x) => x.id === "shared");
+    if (!t) throw new Error("task missing");
+    const staging = join(tmp, "shared-solve");
+    const spec = harborSolveSpec(t, { name: "e", agent: "empty" }, staging);
+    expect(spec.after).toEqual({
+      command: [
+        "sh",
+        "-c",
+        "mkdir -p /logs/verifier /logs/agent && chmod +x /tests/test.sh && (/tests/test.sh) > /logs/verifier/test-stdout.txt 2>&1",
+      ],
+      timeoutMin: 1.5,
+      env: { G: "1" },
+      // tests/ reaches the container only once the method is done.
+      copy: [{ source: join(staging, "tests"), target: "/tests" }],
+      network: false,
+      collect: ["/logs/verifier"],
+    });
+    expect(spec.mounts).toEqual([]);
+    expect(spec.mkdirs).toEqual(["/logs/agent", "/logs/verifier", "/logs/artifacts"]);
+    const b = { name: "x", adapter: "harbor", path: root, config: {}, env: {}, passEnv: ["K"] };
+    const rs = toRunSpec(spec, { name: "e", agent: "empty" }, b as unknown as Benchmark, "solve");
+    expect(rs.after?.passEnv).toEqual(["K"]);
+    expect(rs.passEnv ?? []).toEqual([]);
+    expect(RunSpec.safeParse(rs).success).toBe(true);
+
+    // The reward comes from the solve run's output/after/.
+    const out = join(tmp, "shared-out");
+    write(join(out, "after", "logs", "verifier", "reward.txt"), "1\n");
+    const solveRun = { spec: { after: spec.after } } as unknown as Run;
+    const reply = handle(harborAdapter, {
+      protocol: 1,
+      op: "score",
+      benchmark: { name: "t", path: root, config: {} },
+      trial: { id: "t1", task: "shared", method: { name: "e", agent: "empty" }, seed: 1, staging },
+      solve: { run: solveRun, output: out },
+      verify: { run: solveRun, output: out },
+    } as never) as { score: number };
+    expect(reply.score).toBe(1);
+  });
+
+  it("turns a docker-compose environment into services next to the run", () => {
+    const t = findHarborTasks(root).find((x) => x.id === "sidecar");
+    if (!t) throw new Error("task missing");
+    expect(t.reason).toBeNull();
+    const env = join(root, "tasks", "sidecar", "environment");
+    const spec = harborSolveSpec(t, { name: "e", agent: "empty" }, join(tmp, "sc-solve"));
+    expect(spec).toMatchObject({
+      env: { SIM_URL: "http://sim:8788" },
+      workdir: "/app",
+      collect: ["/app/out.json", "/logs/artifacts"],
+      networks: [{ name: "task", internal: true }],
+      runNetworks: ["default", "task"],
+      dependsOn: ["sim"],
+    });
+    // `main`'s compose command is Harbor's keep-alive; Orbit runs the method instead.
+    expect(spec.command).toEqual(["true"]);
+    const [sim] = spec.services as ServiceSpec[];
+    expect(sim).toMatchObject({
+      name: "sim",
+      dockerfile: join(env, "sim", "Dockerfile"),
+      context: env,
+      command: ["python3", "/srv/sim.py"],
+      cpus: 2,
+      memGB: 3,
+      readOnly: true,
+      capDrop: ["ALL"],
+      networks: ["task"],
+      collect: ["/state/usage.json"],
+      healthcheck: {
+        command: ["python3", "-c", "print('ok')"],
+        intervalSec: 2,
+        timeoutSec: 1.5,
+        startPeriodSec: 60,
+        retries: 5,
+      },
+    });
+    const parsed = RunSpec.parse(spec);
+    expect(leaseRequest(parsed)).toMatchObject({ cpus: 4, memGB: 7 });
+
+    // Service artifacts come from output/services/<name>/ into the verifier.
+    const out = join(tmp, "sc-out");
+    write(join(out, "collected", "app", "out.json"), "{}");
+    write(join(out, "services", "sim", "state", "usage.json"), "{}");
+    const v = harborVerifySpec(t, out, join(tmp, "sc-verify"));
+    expect(v.missing).toEqual([]);
+    expect(v.spec.mounts?.map((m) => m.target)).toEqual([
+      "/app/out.json",
+      "/state/usage.json",
+      "/logs/artifacts",
+    ]);
+  });
+
+  it("runs [[verifier.collect]] hooks before artifacts are collected", () => {
+    const d = task(
+      "hooks",
+      `artifacts = ["/tmp/agent.patch"]
+[verifier]
+environment_mode = "separate"
+[[verifier.collect]]
+command = "cd /app && git diff > /tmp/agent.patch"
+[[verifier.collect]]
+service = "db"
+command = "pg_dump > /tmp/db.sql"
+timeout_sec = 120
+`,
+    );
+    write(
+      join(d, "environment", "docker-compose.yaml"),
+      "services:\n  db:\n    image: postgres:16\n",
+    );
+    const t = findHarborTasks(root).find((x) => x.id === "hooks");
+    expect(t?.reason).toBeNull();
+    const spec = harborSolveSpec(t as never, { name: "e", agent: "empty" }, join(tmp, "hk"));
+    expect(spec.hooks).toEqual([
+      { command: "cd /app && git diff > /tmp/agent.patch", timeoutSec: 60 },
+      { service: "db", command: "pg_dump > /tmp/db.sql", timeoutSec: 120 },
+    ]);
+    expect(RunSpec.safeParse(spec).success).toBe(true);
+    expect(RunSpec.safeParse({ ...spec, services: [] }).success).toBe(false);
+  });
+
+  it("reads the Compose subset: interpolation, durations, sizes, conditions", () => {
+    const p: string[] = [];
+    expect(interpolate("${A}-${B:-x}-${C-y}-$$-$A", { A: "1", B: "" }, p)).toBe("1-x-y-$-1");
+    expect(interpolate("${MISSING}", {}, p)).toBe("");
+    expect(p).toEqual(["compose variable ${MISSING} is not set"]);
+    expect([durationSec("1m30s"), durationSec("500ms"), durationSec(7), durationSec("x")]).toEqual([
+      90,
+      0.5,
+      7,
+      null,
+    ]);
+    expect([sizeGB("12g"), sizeGB("4096M"), sizeGB("512mb"), sizeGB("lots")]).toEqual([
+      12,
+      4,
+      0.5,
+      null,
+    ]);
+    const d = join(tmp, "compose-cond");
+    write(
+      join(d, "docker-compose.yaml"),
+      `services:
+  a:
+    image: x
+    depends_on:
+      b: { condition: service_completed_successfully }
+  b:
+    image: y
+  c:
+    image: z
+    depends_on: { b: { condition: service_healthy } }
+    ports: ["80:80"]
+`,
+    );
+    const problems: string[] = [];
+    parseCompose(join(d, "docker-compose.yaml"), d, null, null, {}, problems);
+    expect(problems).toEqual([
+      "compose service a: depends_on b condition service_completed_successfully is not supported",
+      "compose service c: ports is not supported",
+      "compose service c: depends on b being healthy, but it has no healthcheck",
+    ]);
+  });
+
+  it("resolves verifier modes, images and networks like Harbor", () => {
+    const by = Object.fromEntries(findHarborTasks(root).map((t) => [t.id, t]));
+    expect(by["implicit-shared"]?.verifier.mode).toBe("shared");
+    expect(by["implicit-shared"]?.reason).toMatch(/tests\/test.sh missing/);
+    const sep = by["implicit-separate"];
+    expect(sep?.supported).toBe(true);
+    expect(sep?.verifier).toMatchObject({ mode: "separate", network: true, bundledTests: true });
+    expect(sep?.verifier.image).toEqual({
+      dockerfile: join(root, "tasks", "implicit-separate", "tests", "Dockerfile"),
+    });
+    expect(by["empty-lists"]?.supported).toBe(true);
+
+    const fb = by.fallback;
+    if (!fb) throw new Error("task missing");
+    expect(fb.supported).toBe(true);
+    expect(fb.env).toMatchObject({ image: { image: "ghcr.io/x/env:1" }, workdir: "/repo" });
+    // The copied environment keeps its network policy and variables; [verifier.env] adds to them.
+    expect(fb.verifier).toMatchObject({
+      image: { image: "ghcr.io/x/env:1" },
+      bundledTests: false,
+      network: false,
+      vars: { A: "1", B: "2" },
+      workdir: "/repo",
+    });
+    const solve = harborSolveSpec(fb, { name: "e", agent: "empty" }, join(tmp, "fb-solve"));
+    expect(solve).toMatchObject({ image: "ghcr.io/x/env:1", workdir: "/repo" });
+    expect(solve.dockerfile).toBeUndefined();
+    const { spec } = harborVerifySpec(fb, join(tmp, "fb-out"), join(tmp, "fb-verify"));
+    expect(spec.image).toBe("ghcr.io/x/env:1");
+    expect(spec.mounts).toContainEqual({
+      source: join(tmp, "fb-verify", "tests"),
+      target: "/tests",
+      mode: "rw",
+    });
+
+    const reason = by.conditions?.reason ?? "";
+    for (const m of [
+      /agent-phase network_mode "allowlist"/,
+      /\[environment\] gpu_types/,
+      /\[environment\] mcp_servers/,
+      /\[environment\.env\] \$\{VAR\} template/,
+      /\[agent\] user/,
+    ])
+      expect(reason).toMatch(m);
+  });
+
   it("builds oracle, empty and agent solve runs, and a verify run with copied artifacts", () => {
     const t = findHarborTasks(root).find((x) => x.id === "sr");
     if (!t) throw new Error("task missing");
@@ -198,7 +521,8 @@ SEED = 1
     const oracle = harborSolveSpec(t, { name: "oracle", agent: "oracle" }, staging);
     expect(oracle.command).toEqual(["bash", "/solution/solve.sh"]);
     expect(oracle.env).toMatchObject({ SEED: "1" });
-    expect(oracle.collect).toEqual(["/app/out"]);
+    // Harbor's /logs/artifacts convention directory travels without a declaration.
+    expect(oracle.collect).toEqual(["/app/out", "/logs/artifacts"]);
     expect(oracle.network).toBe(false);
     expect(oracle.timeoutMin).toBe(10);
     const empty = harborSolveSpec(t, { name: "empty", agent: "empty" }, staging);
@@ -223,6 +547,12 @@ SEED = 1
     expect(plan.spec.timeoutMin).toBe(2);
     expect(plan.spec.collect).toEqual(["/logs/verifier"]);
     expect(JSON.stringify(plan.spec.mounts)).toContain("/app/out");
+    // Not written by the solve run: still mounted (empty), and not reported as missing.
+    expect(plan.spec.mounts).toContainEqual({
+      source: join(staging, "artifacts", "logs", "artifacts"),
+      target: "/logs/artifacts",
+      mode: "rw",
+    });
   });
 
   it("lets Orbit add the Agent command, auth, env and grader secrets", () => {
@@ -535,7 +865,16 @@ output:
 });
 
 const run = (p: Partial<Run>): Run =>
-  ({ state: "succeeded", startedAt: "t", reason: null, cleanup: "done", ...p }) as Run;
+  ({
+    state: "succeeded",
+    startedAt: "t",
+    reason: null,
+    cleanup: "done",
+    services: [],
+    after: null,
+    spec: {},
+    ...p,
+  }) as Run;
 
 describe("outcome classification", () => {
   const score = { score: 1, maxScore: 1, issues: [], invalid: false };
@@ -619,6 +958,42 @@ describe("outcome classification", () => {
     const survived = classify(run({ spec, usage: { ...usage, oomKilled: false } }), run({}), score);
     expect(survived).toMatchObject({ evaluation: "valid" });
     expect(survived.issues).toEqual(["1 process(es) in the solve run killed for memory"]);
+  });
+
+  it("classifies a verification done in the solve run's after phase", () => {
+    const after = (state: string, reason: string | null = null) =>
+      ({
+        state,
+        exitCode: state === "succeeded" ? 0 : null,
+        reason,
+        startedAt: "t",
+        endedAt: "t",
+      }) as Run["after"];
+    const spec = { after: { command: ["true"] } } as Run["spec"];
+    const solve = (a: Run["after"]) => run({ id: "s", spec, after: a });
+    const ok = solve(after("succeeded"));
+    expect(classify(ok, ok, score)).toMatchObject({ evaluation: "valid", score: 1 });
+    const timedOutAfter = solve(after("timeout"));
+    expect(classify(timedOutAfter, timedOutAfter, null)).toMatchObject({
+      evaluation: "invalid",
+      issues: ["verify timed out"],
+    });
+    const skipped = solve(after("error", "copy to /tests: no space"));
+    expect(classify(skipped, skipped, null).issues).toEqual([
+      "verifier did not run: copy to /tests: no space",
+    ]);
+  });
+
+  it("makes a solve invalid when a service of its environment broke during the run", () => {
+    const services = [
+      { name: "sim", containerId: "c1", failure: "exited with code 137 (out of memory)" },
+      { name: "db", containerId: "c2", failure: null },
+    ];
+    const o = classify(run({ services }), run({}), score);
+    expect(o).toMatchObject({ evaluation: "invalid", score: 1 });
+    expect(o.issues).toEqual([
+      "service sim failed during the run: exited with code 137 (out of memory)",
+    ]);
   });
 });
 
@@ -789,6 +1164,9 @@ describe("methods", () => {
     expect(
       agentCommand({ name: "c", agent: "claude-code", auth: "p", model: "opus" }, "do"),
     ).toEqual(["claude", "-p", "--dangerously-skip-permissions", "--model", "opus", "do"]);
+    expect(
+      agentCommand({ name: "c", agent: "claude-code", auth: "p", effort: "max" }, "do"),
+    ).toEqual(["claude", "-p", "--dangerously-skip-permissions", "--effort", "max", "do"]);
   });
 });
 

@@ -1,5 +1,6 @@
-// Benchmark jobs: each Trial (task × method × seed) is a solve Run and a separate verify Run on the
-// same lease model as every other run. BenchService advances trials when their runs change, and
+// Benchmark jobs: each Trial (task × method × seed) is a solve Run and a separate verify Run (or the
+// solve Run's after phase, for verifiers that need its container) on the same lease model as every
+// other run. BenchService advances trials when their runs change, and
 // recovers open trials from the store after a daemon restart.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { cp } from "node:fs/promises";
@@ -51,6 +52,7 @@ import { dirBytes } from "../records/index.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { runAgentFailure } from "../sessions/index.ts";
 import type { Store } from "../store/index.ts";
+import { gitSource } from "../workspace/snapshot.ts";
 import { classify, solveVerdict } from "./classify.ts";
 import { AdapterClient, type TrialInput, toRunSpec } from "./protocol.ts";
 import type { BenchmarkRegistry } from "./registry.ts";
@@ -277,6 +279,7 @@ export class BenchService {
       resources,
       folder: folder.data,
       metrics: resolveMetrics(info.metrics),
+      source: await gitSource(b.path),
       state: "running",
       createdAt: nowIso(),
       endedAt: null,
@@ -677,6 +680,7 @@ export class BenchService {
     if (!solve) return "has no solve run";
     if (solve.remote) return `solve output stays on ${solve.node}`;
     if (!solveVerdict(solve).verify) return `solve run ${solve.state}; nothing to verify`;
+    if (solve.spec.after) return "verified in the solve environment, which is gone";
     if (!existsSync(this.deps.runs.dirs(solve.id).output)) return "solve output is gone";
     return null;
   }
@@ -877,6 +881,8 @@ export class BenchService {
         }
         return this.finish(t, outcome);
       }
+      // The verifier ran in the solve container (its after phase): score from the solve run.
+      if (solve.spec.after) return this.score(job, t, solve, solve);
       let spec: RunSpecInput;
       try {
         const { b, trial } = this.context(job, t);
@@ -904,8 +910,18 @@ export class BenchService {
     if (!verify)
       return this.finish(t, classify(solve, null, null, [...t.issues, "verify run missing"]));
     if (!isTerminal(verify.state)) return this.cancelIfJobCancelled(job.id, t, verify.id);
+    return this.score(job, t, solve, verify);
+  }
+
+  /** Score a trial whose verification has ended; `verify` is the solve run for an after phase. */
+  private async score(job: BenchJob, t: Trial, solve: Run, verify: Run): Promise<void> {
+    const runs = this.deps.runs;
+    const inline = verify.id === solve.id;
+    const ran = inline
+      ? solve.after?.state === "succeeded" || solve.after?.state === "failed"
+      : verify.startedAt && verify.state !== "cancelled" && verify.state !== "lost";
     let score: ScoreResult | null = null;
-    if (verify.startedAt && verify.state !== "cancelled" && verify.state !== "lost") {
+    if (ran) {
       try {
         const { b, trial } = this.context(job, t);
         score = await this.adapter(b).score(trial, this.ref(solve), this.ref(verify));
