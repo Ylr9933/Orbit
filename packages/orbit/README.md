@@ -1,7 +1,10 @@
-# Orbit
+# Orbit: Learn and Evolve in Any Environment.
 
-Run coding agents' experiments in isolated Docker containers with GPU / CPU / memory leases.
-Keep code snapshots, logs, metrics, outputs and agent sessions for review in the bundled local Web UI.
+Orbit provides the execution and records agents need to experiment, review trajectories and improve.
+Our vision spans digital and embodied environments; today, Orbit runs digital experiments in Docker
+with GPU / CPU / memory leases and keeps code snapshots, logs, metrics, outputs and agent sessions
+for review in the bundled local Web UI. Embodied device backends and automated trajectory learning
+are future directions.
 
 Requires Linux, Node.js 24.18+ (24.x), Git and Docker usable without sudo. GPU runs also need NVIDIA
 drivers and the NVIDIA Container Toolkit or CDI. No source checkout is needed; pnpm is only required for dsh plugin installation.

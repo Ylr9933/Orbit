@@ -5,6 +5,11 @@
 
 ## 1. 定位
 
+愿景：**Orbit: Learn and Evolve in Any Environment.** 从数字实验走向仿真与具身实验，
+为 Agent 提供跨环境执行与轨迹记录的基础，使其能分析行动、结果与失败，持续改进方法与能力。
+当前实现聚焦数字实验；具身设备后端和自动化轨迹学习闭环是未来方向，不属于已有能力。
+规划、分析与迭代仍由 Agent 主导。
+
 > Orbit 让 Codex / Claude Code 等 Agent 在隔离的 Docker 中按资源规则运行实验，
 > 并完整记录过程与结果；Web 用于本地复盘。
 

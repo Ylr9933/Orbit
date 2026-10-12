@@ -1,94 +1,165 @@
-# Orbit
+<h1 align="center">Orbit: Learn and Evolve in Any Environment.</h1>
 
-[English](README.md)
+<p align="center">让 Agent 在实验中行动，在轨迹中学习。</p>
 
-Orbit 让 Codex、Claude Code 等编程 Agent 在你的 GPU 机器上安全地跑实验。Agent 负责规划和写代码；
-Orbit 在隔离的 Docker 容器里、按 GPU / CPU / 内存租约运行它，并保留事后复盘所需的一切：确切的代码
-（commit + 未提交的 diff）、日志、指标、产物，以及提交它的 Agent 会话。你可以通过命令行或本地 Web
-界面查看。
+<p align="center">
+  <a href="LICENSE"><img src="docs/assets/license-mit.svg" alt="License: MIT"></a>
+  <a href="docs/status.md"><img src="docs/assets/status-development.svg" alt="Status: Early development"></a>
+</p>
 
-> 状态：0.1.0，开发中。单机使用（R0–R2）已验证；刷榜（R3）与多节点调度（R4）已实现，仍在测试。
-> 详见 [docs/status.md](docs/status.md) 与设计文档 [docs/design.md](docs/design.md)。
+<p align="center"><a href="#quickstart">快速开始</a> · <a href="#agent-integration">Agent 接入</a> · <a href="#benchmarks">基准评测</a> · <a href="#documentation">文档</a> · <a href="#roadmap">愿景与进展</a> · <a href="https://github.com/zjunlp/Orbit/actions/workflows/ci.yml">CI</a></p>
+<p align="center"><a href="README.md">English</a> · <strong>简体中文</strong></p>
 
-[项目演示稿](docs/ppt/README.md)：在浏览器中打开 `docs/ppt/index.html` 即可离线演示。
+---
 
-## 功能
+**Orbit 是面向 Agent 的实验基础设施。** 我们的愿景是连接数字与具身实验，让 Agent 在任何环境中运行任务、
+收集轨迹，并通过分析行动、结果与失败，持续改进自己的方法与能力。**让每一次实验，成为下一次进化的起点。**
 
-- **隔离运行**：每个 Run 是一个 Docker 容器（原生 benchmark runner 可用宿主进程），代码快照放在
-  `/workspace`，原仓库不会被修改。
-- **资源租约与排队**：每个 Run 按需租用 GPU、CPU、内存；放不下的 Run 排队并说明原因。Orbit 之外的进程
-  占用也会被计入：被占用的 GPU 不会被分配；其他进程占满 CPU 时，新的 Run 会排队等待。
-- **Sweep 与分组**：一条命令提交参数网格；`wait`、`ps` 和 Web 都可以按组操作。
-- **可复盘的记录**：commit 与 diff、日志、JSON Lines 指标与曲线、输出文件、事件、笔记，以及发起该 Run
-  的 Codex / Claude Code 会话。
-- **Web 界面**：Run 列表、Run 详情（概览、日志、指标、产物、diff、会话）、多 Run 对比、资源、设置和
-  刷榜页面，由本地 daemon 提供。
-- **Agent 凭据**：Codex 与 Claude Code 可以在容器*内*运行，支持 login、API key、中转（relay）三种
-  profile；密钥不出现在命令行，日志中自动脱敏。
-- **通知**：Run 或分组结束时发送到飞书、钉钉、企业微信、Slack 或通用 webhook。
-- **手机上查看**：`orbit feishu init` 扫码即建好飞书机器人，收带指标曲线的结果卡片，随时发 `/gpu`、`/runs` 查看状态。
-- **刷榜**：任务 × 方法 × 种子的 job；每个 trial 是一个 solve Run 加上它的验证，只有有效分数计入均值。
-  内置 [Harbor](https://github.com/harbor-framework/harbor) 任务格式的读取器（separate / shared verifier、
-  docker-compose 服务、collect hooks），[Terminal-Bench-Science](https://github.com/harbor-framework/terminal-bench-science)、
-  Terminal-Bench 等 Harbor 数据集都按 Orbit 的资源规则运行；另有 ASI-Bench 与外部适配器。
-- **多机**：一台机器把 Run 放到已加入的 worker 上；代码按内容哈希传输，数据集在各节点按名字登记，
-  日志与指标回传。不需要 Ray。
-- **Agent skill**：给 Claude Code 和 Codex 的 skill，教它们用 `orbit` 估算资源、提交、等待并记录结论。
+今天，Orbit 为 Codex、Claude Code 等 Agent 提供 Docker 实验执行、资源调度，以及代码、日志、指标、产物和会话的记录与复盘。
+Agent 负责规划、分析和迭代，Orbit 提供执行与证据。具身设备与自动化轨迹学习是[后续方向](#roadmap)。
 
-## 环境要求
+<p align="center"><strong>运行实验 → 收集轨迹 → 分析经验 → 改进方法 → 再次运行</strong></p>
 
-- Linux。
-- Node.js 24.18 及以上（24.x）。源码开发和 dsh 插件安装需要 pnpm 10。
-- Docker，当前用户无需 `sudo` 即可使用（例如加入 `docker` 组）。
-- GPU 运行：NVIDIA 驱动，以及 NVIDIA CDI spec 或 NVIDIA Container Toolkit 之一。
-- git（用于代码快照）。
-- 可选：宿主机上的 `codex` / `claude` CLI（需要在容器内运行 Agent 时）。
+<a id="功能"></a>
+<a id="features"></a>
 
-## 安装
+## ✨ 为什么选择 Orbit
 
-npm 分发已准备好，首次公开发布尚待完成。发布后，无需源码即可试用：
+| 能力 | 带来的价值 |
+| --- | --- |
+| 🧪 **可复现的执行** | Docker 隔离、代码快照与资源限制，让实验有据可查。[运行与 Sweep](#usage) |
+| ⚙️ **统一资源调度** | 按需分配 GPU、CPU 和内存，考虑外部占用，排队时说明原因。[多机运行](#several-machines) |
+| 🧭 **轨迹与复盘** | 关联 Agent 会话、代码 diff、日志、指标、产物和笔记，支持分析与下一轮迭代。[Web 界面](#web-ui) |
+| 🤖 **接入已有 Agent** | Codex、Claude Code、dsh、pi 共享实验 skills；Codex / Claude Code 也可在容器内运行。[Agent 接入](#agent-integration) |
+| 📊 **可验证的评测** | 任务 × 方法 × 种子，执行状态与评分有效性分开；支持 Harbor 格式、ASI 与外部适配器。[基准评测](#benchmarks) |
+| 📱 **随时了解进度** | 本地 Web、飞书结果卡片与只读查询，以及钉钉、企业微信、Slack 和 webhook 通知。[通知设置](#notifications) |
+
+<a id="quickstart"></a>
+
+## 🚀 快速开始
+
+<a id="环境要求"></a>
+
+**准备环境：** Linux、Node.js 24.18+（24.x）、pnpm 10、Git，以及当前用户无需 `sudo` 即可使用的 Docker。
+GPU 实验还需要 NVIDIA 驱动和 NVIDIA Container Toolkit 或 CDI；CPU 实验不需要 GPU。
+
+<a id="安装"></a>
+
+### 1. 安装 Orbit
+
+首次公开 npm 发布尚未完成，目前请从源码构建并安装本地包：
+
+```bash
+git clone https://github.com/zjunlp/Orbit.git
+cd Orbit
+corepack enable
+pnpm install --frozen-lockfile
+pnpm pack:release
+npm install -g ./dist/zjunlp-orbit-0.1.0.tgz
+orbit doctor
+```
+
+`pack:release` 会构建 CLI、daemon、Web 和共享 skills。仅从源码使用或参与开发，见[开发与贡献](#development)。
+
+<details>
+<summary><strong>npm 发布后的安装方式</strong></summary>
 
 ```bash
 npx -y @zjunlp/orbit doctor
-```
-
-或者一条命令永久安装 CLI：
-
-```bash
+# 或永久安装
 npm install -g @zjunlp/orbit
 ```
 
-下文示例使用 `orbit`；未全局安装时替换为 `npx -y @zjunlp/orbit` 即可。
-包内包含 CLI、daemon 和构建好的 Web 界面，不需要 pnpm、手动构建或软链接。
-更新：`npm install -g @zjunlp/orbit@latest && orbit daemon --stop`（下一条命令启动新版 daemon；
-运行中的容器不受影响，会被重新接管）。从源码使用见[开发](#开发)。
+发布后可用 `npm install -g @zjunlp/orbit@latest` 更新。随后执行 `orbit daemon --stop`，下一条命令会启动新版 daemon；运行中的容器会被重新接管。
 
-## 初次使用
+</details>
 
-```bash
-orbit doctor                    # 检查 docker、nvidia-smi、git、node 与 Agent CLI
-orbit resources                 # GPU、CPU、内存、磁盘、租约与队列
-```
+<a id="初次使用"></a>
 
-第一条 `orbit` 命令会自动在后台启动 daemon。它只监听 `127.0.0.1:7717`，状态保存在 `~/.orbit`。每个用户各跑自己的
-daemon：如果 7717 已被其他用户的 daemon 占用，会自动换一个空闲端口（CLI 通过 `~/.orbit` 找到它）。
-
-在某个 git 仓库里运行一个命令：
+### 2. 运行第一个实验
 
 ```bash
-cd ~/my-project
-orbit run --image python:3.12-slim -n hello -- python -c 'print("hello from orbit")'
-orbit ps -a                     # Run 及其状态
-orbit logs <id>                 # 输出
-orbit web                       # 打印 Web 界面的登录 URL（加 --open 直接打开浏览器）
+cd ~/my-project                 # 你的 Git 仓库
+orbit resources                 # 查看可用资源与队列
+orbit run --image python:3.12-slim --cpus 1 --mem 1 -n hello -w -- python -c 'print("hello from orbit")'
+orbit ps -a                     # 查看运行记录
+orbit web --open                # 在浏览器中复盘
 ```
 
-选项写在 `--` 之前，`--` 之后是要运行的命令。命令在 `/workspace` 中执行，这是当前 git 仓库的副本，
-包含未提交的修改和未跟踪（未被忽略）的文件。
+`--` 前是 Orbit 选项，后面是实验命令。默认在 `/workspace` 中执行，使用当前 Git 仓库的快照，包含未提交、未忽略的文件。
+第一条需要 daemon 的命令会自动启动它；默认只监听 `127.0.0.1:7717`，端口被占用时自动换空闲端口。
+状态保存在 `~/.orbit`，大型实验产物可以[放到独立数据目录](#configuration)。
 
-要让 Agent 使用 Orbit，安装 skill（见 [Agent 接入](#agent-接入)），然后让它用 Orbit 运行实验即可。
+### 3. 让 Agent 使用 Orbit
 
-## 使用说明
+接入下方的 skills 后，可以这样交代任务：
+
+> 用 Orbit 跑这组实验：先检查资源，再运行多个 seed，对比指标和失败原因，把结论记录到对应 Run 的笔记中。
+
+<a id="agent-接入"></a>
+<a id="agent-integration"></a>
+
+## 🤖 Agent 接入
+
+安装对应 Agent CLI 后，选择宿主插件。当前源码安装可用：
+
+```bash
+# 在 Orbit 源码目录执行，选择你的 Agent
+orbit plugin install claude --source .
+orbit plugin install codex --source .
+```
+
+重启 Agent 后加载 `orbit` 和 `orbit-bench`。前者用于实验执行与复盘，后者用于 benchmark 适配、资源配置与验证。
+
+| Agent | 宿主 skills | 容器内运行与会话采集 |
+| --- | --- | --- |
+| Codex / Claude Code | ✅ | ✅ |
+| dsh / pi | ✅ | 尚未实现 |
+
+插件的本地安装、npm 安装、更新和卸载见[插件指南](plugin/README.md)。dsh 需要 pnpm 和带 skills 服务的显式 profile。
+Agent 需要允许访问本地 daemon；MCP 接口尚未实现。
+
+<details>
+<summary><strong>容器内 Agent 与凭据配置</strong></summary>
+
+Run 可以在容器内执行 Codex 或 Claude Code（用于 Agent 实验和刷榜）。Orbit 挂载宿主机上安装的 CLI，
+并按 profile 注入凭据：
+
+```bash
+orbit auth add codex --harness codex --kind login     # 在私有目录中执行 `codex login --device-auth`
+orbit auth add gpt --harness codex --kind api-key --key-env OPENAI_API_KEY
+orbit auth add claude --harness claude-code --kind login --key-stdin    # 粘贴 `claude setup-token` 生成的 token
+orbit auth add relay --harness claude-code --kind relay --base-url https://relay.example --key-env RELAY_KEY
+orbit auth add claude --harness claude-code --kind relay --from-env    # 从环境变量 / Claude 设置读取 key、URL、模型
+orbit auth list
+orbit auth test claude          # 提交一个真实的小 Run：Agent 必须正确回答
+orbit run --auth claude --image python:3.12-slim -- claude -p --dangerously-skip-permissions "…"
+```
+
+密钥只从 stdin、环境变量或文件读取，不经过命令行参数。profile 保存在 `~/.orbit/auth.json`（权限 0600），
+Run 日志中的密钥会被脱敏。Agent 需要访问 `127.0.0.1` 上的代理时，给 profile 加 `--host-network`。
+
+</details>
+
+<a id="使用说明"></a>
+<a id="usage"></a>
+
+## 🧪 运行与复盘
+
+```bash
+orbit run --image pytorch/pytorch:latest --gpus 1 --mem 32 -n baseline -- python train.py
+orbit sweep --image python:3.12-slim --gpus 1 -g lr -p lr=1e-4,3e-4 -p seed=1,2,3 \
+  -- python train.py --lr {lr} --seed {seed}
+orbit wait -g lr
+orbit show <id>
+orbit logs <id> -f
+orbit note <id> "与基线对比后，再决定下一轮配置。"
+```
+
+命令中的 `{key}` 会替换为各个参数值；上面的 Sweep 提交 6 个 Run，按可用资源排队执行。大多数命令支持 `--json`，便于 Agent 和脚本读取。
+
+<details>
+<summary><strong>展开完整运行参考：路径、资源、Sweep 与记录管理</strong></summary>
 
 ### 容器内约定
 
@@ -152,7 +223,12 @@ orbit web <id> --open           # 在 Web 中打开该 Run
 
 大多数命令支持 `--json`，便于脚本和 Agent 使用。
 
-### Web 界面
+</details>
+
+<a id="web-界面"></a>
+<a id="web-ui"></a>
+
+### 在 Web 中查看轨迹
 
 `orbit web` 打印一个带 daemon token 的 URL，浏览器打开后以 cookie 登录。页面包括：Run 列表（筛选、
 分组、多选）、Run 详情（概览、可搜索的日志、指标曲线、产物预览、代码 diff、Agent 会话）、对比
@@ -163,76 +239,31 @@ daemon 只监听 `127.0.0.1`。从其他机器查看时用 SSH 隧道：
 `ssh -L 7717:127.0.0.1:7717 gpu-server`，然后在本地打开打印出的 URL（daemon 不在 7717 时，用 `orbit web`
 打印的 URL 里的端口）。
 
-### Agent 接入
+个人实验笔记、成绩和运行产物保留在用户侧。源码仓库中的 `docs/` 用于通用功能与开发文档。
 
-已安装对应 Agent CLI 后，选择一条命令安装（npm 发布后可用）：
+<a id="刷榜"></a>
+<a id="benchmarks"></a>
 
-```bash
-npx -y @zjunlp/orbit plugin install claude
-npx -y @zjunlp/orbit plugin install codex
-npx -y @zjunlp/orbit plugin install dsh --profile headless
-npx -y @zjunlp/orbit plugin install pi
-```
+## 📊 基准评测
 
-不指定 Agent 时默认安装 Claude Code 插件。重启 Agent 后加载 `orbit` 和 `orbit-bench`；
-四个平台共享同一份 skills，未全局安装 `orbit` 时通过 `npx` 调用。dsh 需要 pnpm，并显式指定
-带 skills 服务的 profile。支持版本、本地开发、更新和卸载见 [plugin/README.md](plugin/README.md)。
+在相同资源规则下比较方法，分别保留执行结果、评分有效性与清理状态。只有有效分数计入统计。
 
-CLI 需要网络权限访问本地 daemon。会话采集与容器内 Agent 目前支持 Codex 和 Claude Code；
-dsh/pi 的宿主机插件通过已有 CLI 提交实验，其会话解析与容器内 harness 尚未实现。MCP 仍未实现。
-
-### 在 Run 中运行 Agent（凭据 profile）
-
-Run 可以在容器内执行 Codex 或 Claude Code（用于 Agent 实验和刷榜）。Orbit 挂载宿主机上安装的 CLI，
-并按 profile 注入凭据：
+| 接入方式 | 适用场景 | 文档 |
+| --- | --- | --- |
+| **Harbor 格式** | [TB-Science](https://github.com/harbor-framework/terminal-bench-science)、Terminal-Bench 及其他 Harbor 数据集；具体支持范围由 `bench tasks` 列出 | [适配指南](docs/guides/bench-adapter.md) |
+| **ASI 原生包装** | 通过 ASI 自身 runner 执行，启动前检查已知兼容性问题 | [版本兼容](docs/guides/bench-adapter.md#asi-bench-版本兼容) |
+| **外部适配器** | 用 JSON 协议接入其他 benchmark，无需重建 Orbit | [ResearchClawBench 示例](examples/bench-adapters/researchclawbench/README.md) |
 
 ```bash
-orbit auth add codex --harness codex --kind login     # 在私有目录中执行 `codex login --device-auth`
-orbit auth add gpt --harness codex --kind api-key --key-env OPENAI_API_KEY
-orbit auth add claude --harness claude-code --kind login --key-stdin    # 粘贴 `claude setup-token` 生成的 token
-orbit auth add relay --harness claude-code --kind relay --base-url https://relay.example --key-env RELAY_KEY
-orbit auth add claude --harness claude-code --kind relay --from-env    # 从环境变量 / Claude 设置读取 key、URL、模型
-orbit auth list
-orbit auth test claude          # 提交一个真实的小 Run：Agent 必须正确回答
-orbit run --auth claude --image python:3.12-slim -- claude -p --dangerously-skip-permissions "…"
+orbit bench add tbs ../terminal-bench-science --adapter harbor
+orbit bench tasks tbs
+orbit bench run tbs -t symbolic-regression -m oracle -m empty -n smoke
+orbit bench show <job>
+orbit bench compare <job>...
 ```
 
-密钥只从 stdin、环境变量或文件读取，不经过命令行参数。profile 保存在 `~/.orbit/auth.json`（权限 0600），
-Run 日志中的密钥会被脱敏。Agent 需要访问 `127.0.0.1` 上的代理时，给 profile 加 `--host-network`。
-
-### 通知
-
-```bash
-orbit notify add team --kind feishu --url-env FEISHU_HOOK --on failed,group
-orbit notify test team
-orbit notify list
-```
-
-类型：`feishu`、`dingtalk`、`wecom`、`slack`、`webhook`。事件：`succeeded`、`failed`、`group`（分组
-全部结束时发一条汇总）。失败消息附带原因和日志最后几行。
-
-### 手机上查看（飞书机器人）
-
-```bash
-orbit feishu init phone       # 终端打印二维码：用手机飞书扫码并确认
-```
-
-扫码会新建一个飞书应用（机器人能力、消息权限、接收消息事件已预填），并自动与扫码人配对，之后：
-
-- Run 或分组结束时，机器人发来结果卡片：状态、资源与实测峰值、指标曲线（如 loss），失败时附日志尾。
-- 随时私聊机器人（群里需 @ 它）：`/gpu` 看每张卡的显存、利用率和占用者，以及 CPU、内存、队列；`/runs` 看最近的
-  Run；`/show <run id>` 看某个 Run 的卡片。命令都是只读的。
-
-daemon 主动向飞书建立长连接，不需要公网地址，daemon 仍只监听本机。若 `init` 提示长连接或测试卡片失败，按它
-给出的后台页面修改（订阅方式选「长连接」、开通权限、发布版本），再运行 `orbit feishu check phone` 重连并测试。
-
-- 可以绑定多个机器人（名字不同即可），但同一个应用只能绑一次，也不要绑到两台机器的 daemon 上（飞书每个事件
-  只投递给其中一条连接）。同时配对多个机器人会收到重复的通知。
-- 已有的应用：`orbit notify add phone --kind feishu-app --app-id cli_… --secret-stdin`。其他人私聊机器人会收到
-  配对码，在本机运行它回复的 `orbit notify pair phone <code>` 后才能使用；未配对的人看不到任何数据。
-- `orbit notify list` 查看配对人数和连接状态，`orbit notify rm phone` 删除。
-
-### 刷榜
+<details>
+<summary><strong>展开评测参考：Agent 方法、任务资源与兼容性</strong></summary>
 
 ```bash
 orbit bench add tbs ../terminal-bench-science --adapter harbor
@@ -266,7 +297,12 @@ Orbit 在启动 Agent 前检查所选 Codex/Claude adapter；发现把后台超�
 明确提示升级。需要更新的是**注册的 ASI 源码目录**（包括冻结快照），仅升级 Orbit 不能修复该目录里的代码。
 原生 attempt 状态与评分 valid 分开显示，见 [ASI 版本兼容](docs/guides/bench-adapter.md#asi-bench-版本兼容)。
 
-### 多机
+</details>
+
+<a id="多机"></a>
+<a id="several-machines"></a>
+
+## 🌐 多机运行
 
 每台机器都运行 Orbit。Agent 所在的机器（主节点）把 Run 放到已加入的 worker 上，优先使用本机资源。
 
@@ -285,7 +321,57 @@ orbit run -d imagenet --gpus 1 --image pytorch/pytorch -- python train.py
 集群协议是带 token 的明文 HTTP：请使用 Tailscale、内网或 SSH 隧道，不要暴露到公网。
 详见 [docs/guides/multi-node.md](docs/guides/multi-node.md)。
 
-## 配置与文件
+<a id="通知"></a>
+<a id="notifications"></a>
+
+## 📱 通知与手机查看
+
+用 `orbit feishu init` 扫码创建飞书机器人，接收带指标曲线的结果卡片，并用 `/gpu`、`/runs`、`/show <id>` 查询状态。
+也支持飞书 webhook、钉钉、企业微信、Slack 和通用 webhook。
+
+<details>
+<summary><strong>设置通知与飞书机器人</strong></summary>
+
+```bash
+orbit notify add team --kind feishu --url-env FEISHU_HOOK --on failed,group
+orbit notify test team
+orbit notify list
+```
+
+类型：`feishu`、`dingtalk`、`wecom`、`slack`、`webhook`。事件：`succeeded`、`failed`、`group`（分组
+全部结束时发一条汇总）。失败消息附带原因和日志最后几行。
+
+### 飞书机器人
+
+
+```bash
+orbit feishu init phone       # 终端打印二维码：用手机飞书扫码并确认
+```
+
+扫码会新建一个飞书应用（机器人能力、消息权限、接收消息事件已预填），并自动与扫码人配对，之后：
+
+- Run 或分组结束时，机器人发来结果卡片：状态、资源与实测峰值、指标曲线（如 loss），失败时附日志尾。
+- 随时私聊机器人（群里需 @ 它）：`/gpu` 看每张卡的显存、利用率和占用者，以及 CPU、内存、队列；`/runs` 看最近的
+  Run；`/show <run id>` 看某个 Run 的卡片。命令都是只读的。
+
+daemon 主动向飞书建立长连接，不需要公网地址，daemon 仍只监听本机。若 `init` 提示长连接或测试卡片失败，按它
+给出的后台页面修改（订阅方式选「长连接」、开通权限、发布版本），再运行 `orbit feishu check phone` 重连并测试。
+
+- 可以绑定多个机器人（名字不同即可），但同一个应用只能绑一次，也不要绑到两台机器的 daemon 上（飞书每个事件
+  只投递给其中一条连接）。同时配对多个机器人会收到重复的通知。
+- 已有的应用：`orbit notify add phone --kind feishu-app --app-id cli_… --secret-stdin`。其他人私聊机器人会收到
+  配对码，在本机运行它回复的 `orbit notify pair phone <code>` 后才能使用；未配对的人看不到任何数据。
+- `orbit notify list` 查看配对人数和连接状态，`orbit notify rm phone` 删除。
+
+</details>
+
+<a id="配置与文件"></a>
+<a id="configuration"></a>
+
+## ⚙️ 配置与数据
+
+<details>
+<summary><strong>目录、端口、节点与数据管理</strong></summary>
 
 | 项 | 默认值 | 覆盖方式 |
 | --- | --- | --- |
@@ -303,7 +389,38 @@ Run 数据可能达到数百 GB。系统盘小的机器，在第一次运行前�
 daemon 是 Orbit 状态的唯一写者；CLI、Web 和 Agent 都通过它的本地 HTTP API 访问。`orbit daemon --stop`
 停止 daemon，运行中的容器继续执行，daemon 重启后重新接管。`orbit daemon` 在前台运行。
 
-## 常见问题
+</details>
+
+<a id="roadmap"></a>
+
+## 🧭 愿景与进展
+
+| 方向 | 当前进展 |
+| --- | --- |
+| **数字实验** | 已实现 Docker 执行、资源调度、Sweep、轨迹记录与本地 Web 复盘；单机流程已验证。 |
+| **基准评测与多机** | 已实现；benchmark 验证以 oracle / empty 为主，多机目前完成同机双 daemon 验证。 |
+| **具身实验环境** | 愿景方向：把执行与资源抽象扩展到仿真、机器人和实验设备；设备后端尚未实现。 |
+| **从轨迹中学习与进化** | 已支持记录与复盘，由 Agent 分析并调整下一轮实验；自动化学习、策略更新与评测反馈闭环属于后续研究方向。 |
+
+Orbit 目前处于早期开发阶段（0.1.0）。已验证范围、限制和近期工作以[项目状态](docs/status.md)为准，架构见[设计文档](docs/design.md)。
+
+<a id="documentation"></a>
+
+## 📚 文档导航
+
+| 你想做什么 | 从这里开始 |
+| --- | --- |
+| 接入 Agent 与更新插件 | [插件指南](plugin/README.md) |
+| 适配 benchmark、配置任务资源 | [Benchmark 适配指南](docs/guides/bench-adapter.md) |
+| 连接多台机器 | [多节点指南](docs/guides/multi-node.md) |
+| 理解架构与当前支持范围 | [设计](docs/design.md) · [项目状态](docs/status.md) |
+| 构建与发布安装包 | [发布指南](docs/guides/releasing.md) |
+| 演示 Orbit | [离线演示稿](docs/ppt/README.md) |
+
+<a id="常见问题"></a>
+<a id="troubleshooting"></a>
+
+## 🔧 常见问题
 
 | 现象 | 检查 |
 | --- | --- |
@@ -313,7 +430,10 @@ daemon 是 Orbit 状态的唯一写者；CLI、Web 和 Agent 都通过它的本�
 | Agent 连不上 Orbit | `orbit` 在其 `PATH` 上；Codex 沙箱已允许网络 |
 | 快照过大 | 把数据和权重加入 `.gitignore`，用 `-m` 或 `orbit data` 挂载 |
 
-## 开发
+<a id="开发"></a>
+<a id="development"></a>
+
+## 🛠️ 开发与贡献
 
 需要 pnpm 10（`corepack enable`）。包验证与发布见[发布指南](docs/guides/releasing.md)。
 
@@ -338,12 +458,20 @@ docs/             design.md、status.md、tasks/、guides/、ppt/
 
 贡献者与编程 Agent 请先阅读 [AGENTS.md](AGENTS.md)。
 
-## 致谢
+欢迎通过 [Issue](https://github.com/zjunlp/Orbit/issues) 提交可复现的问题、适配需求与改进建议。
+
+<a id="致谢"></a>
+<a id="acknowledgements"></a>
+
+## 🤝 致谢
 
 Orbit 的 `harbor` 适配器读取由 Terminal-Bench 团队的 [Harbor](https://github.com/harbor-framework/harbor)（Apache-2.0）
 定义的任务格式；它是独立实现，不是 Harbor 官方运行器，也未获其作者背书。只有经过对照的部分，Orbit 的分数才与
 Harbor 的可比；对照情况见 `docs/tasks/`。
 
-## 许可
+<a id="许可"></a>
+<a id="license"></a>
+
+## 📄 许可
 
 [MIT](LICENSE) © 2026 ZJUNLP

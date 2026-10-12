@@ -1,107 +1,170 @@
-# Orbit
+<h1 align="center">Orbit: Learn and Evolve in Any Environment.</h1>
 
-[中文](README.zh-CN.md)
+<p align="center">Give agents a place to experiment — and experience to learn from.</p>
 
-Orbit lets coding agents such as Codex and Claude Code run experiments safely on your GPU machines.
-The agent plans and writes the code; Orbit runs it in an isolated Docker container under a GPU / CPU /
-memory lease and keeps everything needed to review it afterwards: the exact code (commit + uncommitted
-diff), logs, metrics, outputs and the agent session that submitted it. You review through the CLI or a
-local Web UI.
+<p align="center">
+  <a href="LICENSE"><img src="docs/assets/license-mit.svg" alt="License: MIT"></a>
+  <a href="docs/status.md"><img src="docs/assets/status-development.svg" alt="Status: Early development"></a>
+</p>
 
-> Status: version 0.1.0, under active development. Single-machine use (R0–R2) is validated; benchmarks
-> (R3) and multi-node placement (R4) are implemented and still being tested.
-> See [docs/status.md](docs/status.md) and the design in [docs/design.md](docs/design.md).
+<p align="center"><a href="#quickstart">Quickstart</a> · <a href="#agent-integration">Agents</a> · <a href="#benchmarks">Benchmarks</a> · <a href="#documentation">Documentation</a> · <a href="#roadmap">Roadmap</a> · <a href="https://github.com/zjunlp/Orbit/actions/workflows/ci.yml">CI</a></p>
+<p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
 
-For a visual introduction, see the [HTML presentation (Chinese)](docs/ppt/README.md).
-Open `docs/ppt/index.html` in a browser to present offline.
+---
 
-## Features
+**Orbit is experiment infrastructure for agents.** Our vision is to let agents run experiments
+across environments — from code, training and evaluation in the digital world to simulation and
+embodied experiments in the physical world. By collecting trajectories and analyzing actions,
+outcomes and failures, agents can refine their methods and capabilities over time.
+**Every experiment should become experience for the next.**
 
-- **Isolated runs**: every run is a Docker container (or a host process for native benchmark
-  runners) with its own code snapshot in `/workspace`; your repository is never modified.
-- **Resource leases and a queue**: GPUs, CPUs and memory are leased per run; runs that do not fit
-  wait in a queue that says why. GPUs, CPUs and memory used by processes outside Orbit are taken
-  into account (busy GPUs are not leased; new runs wait while other processes keep the CPUs busy).
-- **Sweeps and groups**: one command submits a parameter grid; `wait`, `ps` and the Web UI work on
-  whole groups.
-- **Records for review**: commit and diff, logs, JSON-lines metrics with charts, output files,
-  events, notes, and a link to the Codex / Claude Code session that started the run.
-- **Web UI**: run list, run details (overview, logs, metrics, artifacts, diff, session), run
-  comparison, resources, settings and benchmark pages, served by the local daemon.
-- **Agent credentials**: Codex and Claude Code can run *inside* containers with login, API-key or
-  relay profiles; secrets never go on the command line and are redacted from logs.
-- **Notifications**: Feishu, DingTalk, WeCom, Slack or a generic webhook when runs or groups finish.
-- **On your phone**: `orbit feishu init` sets up a Feishu bot from one QR scan; it sends result cards with
-  metric curves and answers `/gpu` and `/runs`.
-- **Benchmarks**: task × method × seed jobs; each trial is a solve run plus its verification, and
-  only valid scores enter means. A built-in reader for the [Harbor](https://github.com/harbor-framework/harbor)
-  task format (separate and shared verifiers, docker-compose services, collect hooks), so
-  [Terminal-Bench-Science](https://github.com/harbor-framework/terminal-bench-science), Terminal-Bench and
-  other Harbor datasets run under Orbit's resource rules; plus ASI-Bench and external adapters.
-- **Several machines**: one machine places runs on worker machines; code travels by content hash,
-  datasets are registered by name on each node, logs and metrics flow back. No Ray needed.
-- **Agent skill**: a skill for Claude Code and Codex that teaches them to estimate resources, submit,
-  wait and record conclusions through `orbit`.
+Today, Orbit gives agents such as Codex and Claude Code Docker execution, GPU / CPU / memory
+scheduling, and records of code, logs, metrics, outputs and agent sessions. The agent plans,
+analyzes and iterates; Orbit provides execution and evidence. Embodied device support and
+automated trajectory learning are future directions; see the [roadmap](#roadmap).
 
-## Requirements
+<p align="center"><strong>Run → Capture trajectories → Analyze → Improve → Run again</strong></p>
 
-- Linux.
-- Node.js 24.18 or later (24.x). pnpm 10 is needed for source development and dsh plugin installation.
-- Docker, usable by your user without `sudo` (e.g. a member of the `docker` group).
-- For GPU runs: the NVIDIA driver and either an NVIDIA CDI spec or the NVIDIA Container Toolkit.
-- git (for code snapshots).
-- Optional: the `codex` and/or `claude` CLIs on the host, if agents should run inside containers.
+<a id="features"></a>
 
-## Installation
+## ✨ Why Orbit
 
-The npm distribution is prepared; the first public release is pending. Once published, try Orbit
-without a source checkout:
+| Capability | What it gives you |
+| --- | --- |
+| 🧪 **Reproducible execution** | Docker isolation, code snapshots and resource limits for experiments you can inspect. [Runs & sweeps](#usage) |
+| ⚙️ **Shared resource scheduling** | GPU, CPU and memory leases that account for external use, with clear queue reasons. [Multiple machines](#several-machines) |
+| 🧭 **Trajectories for review** | Agent sessions alongside code diffs, logs, metrics, artifacts and notes to inform the next iteration. [Web UI](#web-ui) |
+| 🤖 **Your existing agents** | Shared skills for Codex, Claude Code, dsh and pi; in-container agents for Codex / Claude Code. [Agent integration](#agent-integration) |
+| 📊 **Verifiable evaluation** | Task × method × seed jobs with execution and score validity tracked separately; Harbor, ASI and external adapters. [Benchmarks](#benchmarks) |
+| 📱 **Progress wherever you are** | Local Web review, Feishu cards and read-only queries, plus DingTalk, WeCom, Slack and webhooks. [Notifications](#notifications) |
+
+<a id="quickstart"></a>
+
+## 🚀 Quickstart
+
+<a id="requirements"></a>
+
+**Prerequisites:** Linux, Node.js 24.18+ (24.x), pnpm 10, Git and Docker usable by your user without `sudo`.
+GPU experiments also need NVIDIA drivers and the NVIDIA Container Toolkit or CDI. CPU experiments need no GPU.
+
+<a id="installation"></a>
+
+### 1. Install Orbit
+
+The first public npm release is pending. For now, build and install the package from source:
+
+```bash
+git clone https://github.com/zjunlp/Orbit.git
+cd Orbit
+corepack enable
+pnpm install --frozen-lockfile
+pnpm pack:release
+npm install -g ./dist/zjunlp-orbit-0.1.0.tgz
+orbit doctor
+```
+
+`pack:release` builds the CLI, daemon, Web UI and shared skills. To run from source or contribute, see [Development](#development).
+
+<details>
+<summary><strong>Installation after the npm release</strong></summary>
 
 ```bash
 npx -y @zjunlp/orbit doctor
-```
-
-Or install the CLI permanently in one command:
-
-```bash
+# Or install permanently
 npm install -g @zjunlp/orbit
 ```
 
-The examples below use `orbit`; without a global install, replace it with `npx -y @zjunlp/orbit`.
-The package includes the CLI, daemon and built Web UI. No pnpm, manual build or symlink is needed.
-To update: `npm install -g @zjunlp/orbit@latest && orbit daemon --stop` (the next command starts the
-new daemon; running containers keep going and are reattached).
+After publication, update with `npm install -g @zjunlp/orbit@latest`, then `orbit daemon --stop`.
+The next command starts the new daemon; running containers are reattached.
 
-For installation from a checkout, see [Development](#development).
+</details>
 
-## First use
+<a id="first-use"></a>
 
-```bash
-orbit doctor                    # checks docker, nvidia-smi, git, node and the Agent CLIs
-orbit resources                 # GPUs, CPU, memory, disk, leases and the queue
-```
-
-The first `orbit` command starts a background daemon automatically. It listens only on
-`127.0.0.1:7717` and keeps its state in `~/.orbit`. Every user runs their own daemon: when another
-user's daemon already holds 7717, yours takes a free port (the CLI finds it through `~/.orbit`).
-
-Run something from inside a git repository:
+### 2. Run your first experiment
 
 ```bash
-cd ~/my-project
-orbit run --image python:3.12-slim -n hello -- python -c 'print("hello from orbit")'
-orbit ps -a                     # the run and its state
-orbit logs <id>                 # its output
-orbit web                       # prints a login URL for the Web UI (add --open to open a browser)
+cd ~/my-project                 # your Git repository
+orbit resources                 # available resources and the queue
+orbit run --image python:3.12-slim --cpus 1 --mem 1 -n hello -w -- python -c 'print("hello from orbit")'
+orbit ps -a                     # inspect run records
+orbit web --open                # review in your browser
 ```
 
-Options go before `--`; everything after `--` is the command. It runs in `/workspace`, a copy of the
-current git repository including uncommitted and untracked (not ignored) files.
+Orbit options go before `--`; the experiment command goes after it. By default, it runs in `/workspace`
+on a snapshot of your Git repository, including uncommitted, non-ignored files. The first command
+that needs the daemon starts it automatically on `127.0.0.1:7717`, or a free port if occupied.
+State lives in `~/.orbit`; large artifacts can use a [separate data directory](#configuration).
 
-To let an agent use Orbit, install the skill (see [Agent integration](#agent-integration)) and ask it
-to run your experiment with Orbit.
+### 3. Put your agent to work
 
-## Usage
+Once the skills below are installed, ask your agent:
+
+> Use Orbit to run this experiment. Check resources, try several seeds, compare metrics and failures, and attach conclusions to each run.
+
+<a id="agent-integration"></a>
+
+## 🤖 Agent integration
+
+Install your agent CLI, then choose its host plugin. With the source installation above:
+
+```bash
+# From the Orbit checkout, choose your agent
+orbit plugin install claude --source .
+orbit plugin install codex --source .
+```
+
+Restart the agent to load `orbit` for experiment execution and review, and `orbit-bench` for benchmark adapters, resources and validation.
+
+| Agent | Host skills | In-container execution & session capture |
+| --- | --- | --- |
+| Codex / Claude Code | ✅ | ✅ |
+| dsh / pi | ✅ | Not yet implemented |
+
+See the [plugin guide](plugin/README.md) for local and npm installation, updates and removal.
+dsh requires pnpm and an explicit profile with its skills service. Agents need network access to the local daemon; MCP is not implemented yet.
+
+<details>
+<summary><strong>In-container agents and credentials</strong></summary>
+
+A run can execute Codex or Claude Code inside its container (for agent experiments and benchmarks).
+Orbit mounts the CLI installed on the host and injects credentials from a profile:
+
+```bash
+orbit auth add codex --harness codex --kind login     # `codex login --device-auth` in a private home
+orbit auth add gpt --harness codex --kind api-key --key-env OPENAI_API_KEY
+orbit auth add claude --harness claude-code --kind login --key-stdin    # paste a `claude setup-token` token
+orbit auth add relay --harness claude-code --kind relay --base-url https://relay.example --key-env RELAY_KEY
+orbit auth add claude --harness claude-code --kind relay --from-env    # take key, URL, models from env / Claude settings
+orbit auth list
+orbit auth test claude          # a real small run: the agent must answer
+orbit run --auth claude --image python:3.12-slim -- claude -p --dangerously-skip-permissions "…"
+```
+
+Secrets are read from stdin, an environment variable or a file, never from arguments. Profiles are
+stored in `~/.orbit/auth.json` (mode 0600) and secret values are redacted from run logs. Use
+`--host-network` on a profile when the agent must reach a proxy on `127.0.0.1`.
+
+</details>
+
+<a id="usage"></a>
+
+## 🧪 Run and review
+
+```bash
+orbit run --image pytorch/pytorch:latest --gpus 1 --mem 32 -n baseline -- python train.py
+orbit sweep --image python:3.12-slim --gpus 1 -g lr -p lr=1e-4,3e-4 -p seed=1,2,3 \
+  -- python train.py --lr {lr} --seed {seed}
+orbit wait -g lr
+orbit show <id>
+orbit logs <id> -f
+orbit note <id> "Compare this run with the baseline before choosing the next configuration."
+```
+
+`{key}` expands to each parameter value; the sweep above submits six runs, queued as resources allow. Most commands accept `--json` for agents and scripts.
+
+<details>
+<summary><strong>Full run reference: paths, resources, sweeps and record management</strong></summary>
 
 ### Inside a run
 
@@ -167,7 +230,11 @@ orbit web <id> --open           # open the run in the Web UI
 
 Most commands accept `--json` for scripts and agents.
 
-### Web UI
+</details>
+
+<a id="web-ui"></a>
+
+### Review trajectories in the Web UI
 
 `orbit web` prints a URL that logs your browser in with the daemon's token (stored as a cookie).
 Pages: runs (filter, group, multi-select), run detail (overview, logs with search, metric charts,
@@ -179,86 +246,30 @@ The daemon listens on `127.0.0.1` only. To view it from another machine, use an 
 `ssh -L 7717:127.0.0.1:7717 gpu-server`, then open the printed URL locally (use the port in the URL that
 `orbit web` prints if your daemon is not on 7717).
 
-### Agent integration
+Keep personal experiment notes, scores and artifacts in user-owned storage. The source repository’s `docs/` is for reusable product and development documentation.
 
-With your agent CLI installed, choose one command (after the npm release):
+<a id="benchmarks"></a>
 
-```bash
-npx -y @zjunlp/orbit plugin install claude
-npx -y @zjunlp/orbit plugin install codex
-npx -y @zjunlp/orbit plugin install dsh --profile headless
-npx -y @zjunlp/orbit plugin install pi
-```
+## 📊 Benchmarks
 
-Omitting the agent defaults to Claude Code. Restart the agent to load `orbit` and `orbit-bench`.
-All four integrations share the same skills and use `npx` when `orbit` is not on PATH. dsh requires
-pnpm and an explicit profile with its skills service. See [plugin/README.md](plugin/README.md) for
-supported versions, local development, native management and removal.
+Compare methods under the same resource rules, keeping execution, evaluation validity and cleanup separate. Only valid scores enter aggregates.
 
-The CLI needs network access to the local daemon. Session capture and in-container agents support
-Codex and Claude Code; dsh/pi host plugins use the existing CLI without adding those harnesses.
-MCP is not implemented yet.
-
-### Agents inside runs (auth profiles)
-
-A run can execute Codex or Claude Code inside its container (for agent experiments and benchmarks).
-Orbit mounts the CLI installed on the host and injects credentials from a profile:
+| Integration | Use it for | Guide |
+| --- | --- | --- |
+| **Harbor format** | [TB-Science](https://github.com/harbor-framework/terminal-bench-science), Terminal-Bench and other Harbor datasets; `bench tasks` lists supported tasks | [Adapter guide](docs/guides/bench-adapter.md) |
+| **ASI native wrapper** | ASI’s own runner, with known compatibility issues checked before launch | [Compatibility](docs/guides/bench-adapter.md#asi-bench-版本兼容) |
+| **External adapters** | Other benchmarks via a JSON protocol, without rebuilding Orbit | [ResearchClawBench example](examples/bench-adapters/researchclawbench/README.md) |
 
 ```bash
-orbit auth add codex --harness codex --kind login     # `codex login --device-auth` in a private home
-orbit auth add gpt --harness codex --kind api-key --key-env OPENAI_API_KEY
-orbit auth add claude --harness claude-code --kind login --key-stdin    # paste a `claude setup-token` token
-orbit auth add relay --harness claude-code --kind relay --base-url https://relay.example --key-env RELAY_KEY
-orbit auth add claude --harness claude-code --kind relay --from-env    # take key, URL, models from env / Claude settings
-orbit auth list
-orbit auth test claude          # a real small run: the agent must answer
-orbit run --auth claude --image python:3.12-slim -- claude -p --dangerously-skip-permissions "…"
+orbit bench add tbs ../terminal-bench-science --adapter harbor
+orbit bench tasks tbs
+orbit bench run tbs -t symbolic-regression -m oracle -m empty -n smoke
+orbit bench show <job>
+orbit bench compare <job>...
 ```
 
-Secrets are read from stdin, an environment variable or a file, never from arguments. Profiles are
-stored in `~/.orbit/auth.json` (mode 0600) and secret values are redacted from run logs. Use
-`--host-network` on a profile when the agent must reach a proxy on `127.0.0.1`.
-
-### Notifications
-
-```bash
-orbit notify add team --kind feishu --url-env FEISHU_HOOK --on failed,group
-orbit notify test team
-orbit notify list
-```
-
-Kinds: `feishu`, `dingtalk`, `wecom`, `slack`, `webhook`. Events: `succeeded`, `failed`, `group` (one
-summary when a group has finished). Failure messages include the reason and the last log lines.
-
-### On your phone (Feishu bot)
-
-```bash
-orbit feishu init phone       # prints a QR code: scan it with the Feishu app and confirm
-```
-
-Scanning creates a Feishu app (bot, message permissions and the message event pre-filled) paired with
-whoever scanned it. Then:
-
-- When a run or group finishes, the bot sends a card: state, resources and measured peaks, metric curves
-  (e.g. loss), and the log tail for failures.
-- Message the bot at any time (mention it in groups): `/gpu` shows memory, utilization and holder of each
-  GPU plus CPU, memory and the queue; `/runs` the recent runs; `/show <run id>` one run. Commands are
-  read-only.
-
-The daemon opens an outbound long connection to Feishu: no public address is needed and the daemon still
-listens on localhost only. If `init` reports that the long connection or the test card failed, it prints
-the console page to fix (subscription mode "persistent connection", permissions, publish a version);
-then run `orbit feishu check phone` to reconnect and test.
-
-- Several bots can be bound (with different names), but each app only once, and never to the daemons of
-  two machines (Feishu hands each event to only one connection). Pairing with several bots duplicates
-  notifications.
-- An existing app: `orbit notify add phone --kind feishu-app --app-id cli_… --secret-stdin`. Others who
-  message the bot get a pairing code and can use it after you run `orbit notify pair phone <code>`;
-  unpaired people see no data.
-- `orbit notify list` shows paired users and the connection; `orbit notify rm phone` removes the bot.
-
-### Benchmarks
+<details>
+<summary><strong>Full benchmark reference: agent methods, task resources and compatibility</strong></summary>
 
 ```bash
 orbit bench add tbs ../terminal-bench-science --adapter harbor
@@ -296,7 +307,11 @@ rejects the known bug that treats a background timeout warning as execution fail
 The native attempt status is shown separately from score validity. See
 [ASI compatibility](docs/guides/bench-adapter.md#asi-bench-版本兼容).
 
-### Several machines
+</details>
+
+<a id="several-machines"></a>
+
+## 🌐 Multiple machines
 
 Every machine runs Orbit. The machine your agent works on (the primary) places runs on workers it has
 added; local resources are used first.
@@ -317,7 +332,63 @@ mirrored to the primary; outputs stay on the worker and are read through the pri
 protocol is plain HTTP with a token: use Tailscale, a private network or an SSH tunnel, never the
 public internet. Details: [docs/guides/multi-node.md](docs/guides/multi-node.md).
 
-## Configuration and files
+<a id="notifications"></a>
+
+## 📱 Notifications and mobile access
+
+Use `orbit feishu init` to create a Feishu bot by QR code, receive result cards with metric curves,
+and query `/gpu`, `/runs` or `/show <id>`. Feishu webhooks, DingTalk, WeCom, Slack and generic webhooks are also supported.
+
+<details>
+<summary><strong>Set up notifications and the Feishu bot</strong></summary>
+
+```bash
+orbit notify add team --kind feishu --url-env FEISHU_HOOK --on failed,group
+orbit notify test team
+orbit notify list
+```
+
+Kinds: `feishu`, `dingtalk`, `wecom`, `slack`, `webhook`. Events: `succeeded`, `failed`, `group` (one
+summary when a group has finished). Failure messages include the reason and the last log lines.
+
+### Feishu bot
+
+
+```bash
+orbit feishu init phone       # prints a QR code: scan it with the Feishu app and confirm
+```
+
+Scanning creates a Feishu app (bot, message permissions and the message event pre-filled) paired with
+whoever scanned it. Then:
+
+- When a run or group finishes, the bot sends a card: state, resources and measured peaks, metric curves
+  (e.g. loss), and the log tail for failures.
+- Message the bot at any time (mention it in groups): `/gpu` shows memory, utilization and holder of each
+  GPU plus CPU, memory and the queue; `/runs` the recent runs; `/show <run id>` one run. Commands are
+  read-only.
+
+The daemon opens an outbound long connection to Feishu: no public address is needed and the daemon still
+listens on localhost only. If `init` reports that the long connection or the test card failed, it prints
+the console page to fix (subscription mode "persistent connection", permissions, publish a version);
+then run `orbit feishu check phone` to reconnect and test.
+
+- Several bots can be bound (with different names), but each app only once, and never to the daemons of
+  two machines (Feishu hands each event to only one connection). Pairing with several bots duplicates
+  notifications.
+- An existing app: `orbit notify add phone --kind feishu-app --app-id cli_… --secret-stdin`. Others who
+  message the bot get a pairing code and can use it after you run `orbit notify pair phone <code>`;
+  unpaired people see no data.
+- `orbit notify list` shows paired users and the connection; `orbit notify rm phone` removes the bot.
+
+</details>
+
+<a id="configuration-and-files"></a>
+<a id="configuration"></a>
+
+## ⚙️ Configuration and data
+
+<details>
+<summary><strong>Directories, ports, nodes and data management</strong></summary>
 
 | Item | Default | Override |
 | --- | --- | --- |
@@ -338,7 +409,37 @@ once, before the first runs: `orbit config data /data/$USER/orbit && orbit daemo
 space. Folders organize runs and bench jobs without moving files: `orbit run --folder rcb/noskills`,
 `orbit mv <id...> rcb/archive`, `orbit folders`, and `orbit export rcb /path/to/copy` for a real copy.
 
-## Troubleshooting
+</details>
+
+<a id="roadmap"></a>
+
+## 🧭 Vision and progress
+
+| Direction | Current progress |
+| --- | --- |
+| **Digital experiments** | Docker execution, resource scheduling, sweeps, trajectory records and local Web review are implemented; single-machine workflows are validated. |
+| **Benchmarks & multiple machines** | Implemented; benchmark validation focuses on oracle / empty methods, and multi-node validation uses two daemons on one host. |
+| **Embodied environments** | Vision: extend execution and resource abstractions to simulation, robots and experimental equipment. Device backends are not implemented yet. |
+| **Learning and evolution from trajectories** | Records and review are available for agents to analyze and refine the next experiment. Automated learning, policy updates and evaluation feedback loops are future research directions. |
+
+Orbit is in early development (0.1.0). See [project status](docs/status.md) for validation limits and near-term work, and [design](docs/design.md) for the architecture.
+
+<a id="documentation"></a>
+
+## 📚 Documentation
+
+| I want to… | Start here |
+| --- | --- |
+| Connect agents and manage plugins | [Plugin guide](plugin/README.md) |
+| Add a benchmark or size task resources | [Benchmark adapter guide](docs/guides/bench-adapter.md) |
+| Connect several machines | [Multi-node guide](docs/guides/multi-node.md) |
+| Understand architecture and support | [Design](docs/design.md) · [Project status](docs/status.md) |
+| Build and publish a package | [Release guide](docs/guides/releasing.md) |
+| Present Orbit | [Offline slides (Chinese)](docs/ppt/README.md) |
+
+<a id="troubleshooting"></a>
+
+## 🔧 Troubleshooting
 
 | Symptom | What to check |
 | --- | --- |
@@ -348,7 +449,9 @@ space. Folders organize runs and bench jobs without moving files: `orbit run --f
 | An agent cannot reach Orbit | `orbit` is on its `PATH`; Codex sandbox allows network access |
 | Snapshot too large | Add data and weights to `.gitignore` and mount them with `-m` or `orbit data` |
 
-## Development
+<a id="development"></a>
+
+## 🛠️ Development and contributing
 
 Requires pnpm 10 (`corepack enable`). See the [release guide](docs/guides/releasing.md) for publishing.
 
@@ -373,13 +476,19 @@ docs/             design.md, status.md, tasks/, guides/, ppt/
 
 Contributors and coding agents: read [AGENTS.md](AGENTS.md) first.
 
-## Acknowledgements
+Contributions and reproducible bug reports are welcome through [GitHub Issues](https://github.com/zjunlp/Orbit/issues).
+
+<a id="acknowledgements"></a>
+
+## 🤝 Acknowledgements
 
 Orbit's `harbor` adapter reads the task format defined by [Harbor](https://github.com/harbor-framework/harbor)
 (Apache-2.0) from the Terminal-Bench team; it is an independent implementation, not an official Harbor
 runner and not endorsed by its authors. Scores from Orbit are comparable to Harbor's only where they have
 been checked against it; see `docs/tasks/` for what was checked.
 
-## License
+<a id="license"></a>
+
+## 📄 License
 
 [MIT](LICENSE) © 2026 ZJUNLP
