@@ -1,5 +1,5 @@
 # Reconcile terminal Agent failures before consolidation
-branch: fix/bench-agent-error-reconcile · status: in_progress · updated: 2026-10-13
+branch: fix/bench-agent-error-reconcile · status: completed · updated: 2026-10-13
 
 ## Goal
 Prevent model routing failures from becoming valid zero scores and let valid retries replace historically misclassified trials.
@@ -15,7 +15,7 @@ Prevent model routing failures from becoming valid zero scores and let valid ret
 | --- | --- | --- | --- |
 | Targeted tests | working tree | passed | 14 consolidation/session tests; explicit fixtures with real store and HTTP paths |
 | pnpm verify | working tree | passed | 194 Orbit, 11 Web and 5 script tests; 10 opt-in checks skipped; types, boundaries and builds passed |
-| Stored session integration | working tree | pending | Check corrected detection and preview/apply behavior through the daemon |
+| Stored session integration | 8911aba | passed | Daemon preview recognized terminal routing errors; apply adopted valid retries and preserved unrelated trials |
 
 ## Next / open issues
 - Error classification remains conservative and message-based; unknown errors are not blanket-reclassified.
