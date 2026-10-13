@@ -296,7 +296,9 @@ export function agentCommand(method: Method, instruction: string): string[] {
 export function agentErrorKind(text: string): string | null {
   const t = text.toLowerCase();
   if (
-    /invalid_api_key|authentication_error|unauthorized|invalid api key|please run \/login/.test(t)
+    /invalid_api_key|authentication_error|unauthorized|token_revoked|invalidated oauth token|invalid api key|please run \/login/.test(
+      t,
+    )
   )
     return "model_authentication_failed";
   if (
@@ -308,7 +310,11 @@ export function agentErrorKind(text: string): string | null {
     /not supported|does not exist|do not have access|model_not_found/.test(t)
   )
     return "model_unavailable";
-  if (/stream disconnected|error sending request|connection (reset|refused|failed)/.test(t))
+  if (
+    /stream disconnected|error sending request|connection (reset|refused|failed)|workspace routing discovery timed out/.test(
+      t,
+    )
+  )
     return "model_unreachable";
   return null;
 }

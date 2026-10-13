@@ -50,7 +50,7 @@ import {
 import { newId, nowIso } from "../lib/ids.ts";
 import { dirBytes } from "../records/index.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
-import { runAgentFailure } from "../sessions/index.ts";
+import { type AgentFailure, runAgentFailure } from "../sessions/index.ts";
 import type { Store } from "../store/index.ts";
 import { gitSource } from "../workspace/snapshot.ts";
 import { classify, solveVerdict } from "./classify.ts";
@@ -530,9 +530,22 @@ export class BenchService {
       throw new UserError(
         "appendTasks preserves invalid artifacts; do not combine it with pruneInvalid",
       );
-    const target = this.job(id);
     const sources = [...new Set(f.sources)];
     if (sources.includes(id)) throw new UserError("target cannot also be a source");
+    const failures = new Map<string, AgentFailure>();
+    for (const jobId of [id, ...sources]) {
+      const snapshot = this.job(jobId);
+      if (snapshot.trials.some((t) => t.state !== "done" || this.busy.has(t.id)))
+        throw new UserError(`job ${jobId} has active trials`);
+      for (const t of snapshot.trials) {
+        const run = t.solveRunId ? this.deps.runs.get(t.solveRunId) : null;
+        if (run?.state !== "failed") continue;
+        const failure = await runAgentFailure(this.deps.runs.dirs(run.id).agent);
+        if (failure) failures.set(run.id, failure);
+      }
+    }
+    // Reload after reading session files; validate ownership and terminal state before any mutation.
+    const target = this.job(id);
     const donors = sources.map((source) => this.job(source));
     const all = [target, ...donors];
     const oldRuns = new Map<string, Run>();
@@ -550,6 +563,17 @@ export class BenchService {
           oldRuns.set(rid, run);
         }
     }
+    for (const d of all)
+      for (const t of d.trials) {
+        const failure = t.solveRunId ? failures.get(t.solveRunId) : null;
+        if (!failure || !t.solveRunId || oldRuns.get(t.solveRunId)?.state !== "failed") continue;
+        const issue = `Agent stopped: ${failure.kind} (${failure.message})`;
+        for (const outcome of [t.outcome, ...t.history.map((h) => h.outcome)]) {
+          if (outcome?.evaluation !== "valid") continue;
+          outcome.evaluation = "invalid";
+          outcome.issues = [...new Set([...outcome.issues, issue])];
+        }
+      }
     const key = (t: Trial) => JSON.stringify([t.task, t.method, t.seed]);
     const trials = new Map(target.trials.map((t) => [key(t), structuredClone(t)]));
     const adopted: BenchConsolidateResult["adopted"] = [];

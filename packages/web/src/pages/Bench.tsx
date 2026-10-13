@@ -321,7 +321,7 @@ export function BenchJobDetail({ id }: { id: string }) {
   };
   const consolidate = async () => {
     const input = prompt(
-      "Source job IDs, separated by spaces. Valid retries replace invalid trials. Consumed source jobs are deleted.",
+      "Source job IDs, separated by spaces. Terminal Agent failures are rechecked. Valid retries replace invalid trials. Consumed source jobs are deleted.",
     );
     if (input === null) return;
     const sources = input.trim().split(/\s+/).filter(Boolean);

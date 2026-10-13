@@ -398,7 +398,9 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
   只有 `valid` 的分数进入均分；无效或未知单独列出，不静默计入。清理状态汇总两个 Run 的 `cleanup`。
 - **重试归并**：`POST /bench/jobs/:id/consolidate` / `orbit bench consolidate <job> [sources...]`
   默认只预览；`--apply` 才执行。只接收全部 trial 已完成、Run 已清理且无后台更新的任务；同 benchmark、methods、options、metrics，
-  按 task × method × seed 对齐。有效重试只替换无效位置，拒绝覆盖有效成绩（包括 0 分）或从多份有效成绩里挑选。
+  按 task × method × seed 对齐。归并先重读失败 solve 的会话末轮错误：明确的认证、额度、模型连接故障
+  会纠正旧的 valid 标记（包括同一次 solve 的评分历史），原始分数保留；预览不写回。读取后重新检查终态及归属。
+  有效重试只替换无效位置，拒绝覆盖真正有效的成绩（包括 0 分）或从多份有效成绩里挑选。
   保留目标 trial ID、来源 Run ID、原产物与 source_job/source_trial 标签；daemon 在单事务内更新归属并移除来源 job，
   再调用已有 RunService 删除废弃 Run。`--prune-invalid` 清除无效 Run 与无效评分历史，保留任务位置及失败原因。
   `--append-tasks` 追加尚未出现的任务（同 methods × seeds），更新任务列表并保留新增 trial 的有效/无效/未知结果及产物；

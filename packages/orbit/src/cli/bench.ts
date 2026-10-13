@@ -414,7 +414,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
 
   bench
     .command("consolidate <job> [sources...]")
-    .description("merge valid retries into invalid slots and remove consumed source jobs")
+    .description("recheck Agent failures, merge valid retries, and remove consumed source jobs")
     .option("--append-tasks", "append new tasks, keeping invalid outcomes and artifacts")
     .option(
       "--allow-transport-differences",
