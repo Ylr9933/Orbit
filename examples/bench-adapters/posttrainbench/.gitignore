@@ -1,0 +1,5 @@
+# Wheels fetched by ptb-solve/fetch-wheels.sh: build inputs, not sources.
+wheels/
+
+# Build and run logs
+*.log
