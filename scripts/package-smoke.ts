@@ -50,6 +50,15 @@ try {
   const pkg = join(temp, "node_modules/@zjunlp/orbit");
   assert.ok(existsSync(join(pkg, "LICENSE")));
   assert.ok(existsSync(join(pkg, "README.md")));
+  const notices = readFileSync(join(pkg, "dist/web/THIRD_PARTY_LICENSES.md"), "utf8");
+  const web = join(root, "packages/web");
+  const webManifest = JSON.parse(readFileSync(join(web, "package.json"), "utf8"));
+  for (const name of Object.keys(webManifest.dependencies)) {
+    const dependency = join(web, "node_modules", name);
+    const license = readFileSync(join(dependency, "LICENSE"), "utf8").trim();
+    assert.ok(notices.includes(name), `missing attribution for ${name}`);
+    assert.ok(notices.includes(license), `missing full license text for ${name}`);
+  }
   const installed = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8"));
   assert.deepEqual(installed.pi.skills, ["./dist/plugin/skills"]);
   assert.ok(existsSync(join(pkg, installed.dsh.bundle.patch)));
@@ -106,7 +115,7 @@ try {
   assert.ok(assets.length > 0, "bundled Web assets must be referenced");
   for (const asset of assets) assert.equal((await fetch(`${info.url}${asset[1]}`)).status, 200);
   console.log(
-    "package smoke passed: installed CLI, npx, exports/types, daemon HTTP, Web and assets",
+    "package smoke passed: installed CLI, npx, exports/types, daemon HTTP, Web, assets and licenses",
   );
 } finally {
   if (existsSync(cli)) run(cli, ["daemon", "--stop"]);

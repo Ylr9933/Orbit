@@ -40,4 +40,6 @@ npx -y @zjunlp/orbit web
 [Chinese guide](https://github.com/zjunlp/Orbit/blob/main/README.zh-CN.md) ·
 [Validation limits](https://github.com/zjunlp/Orbit/blob/main/docs/status.md)
 
-MIT © ZJUNLP
+Orbit's original source code: MIT © ZJUNLP. Bundled dependencies retain their own licenses;
+full notices ship in `dist/web/THIRD_PARTY_LICENSES.md`. See
+[Third-party notices](https://github.com/zjunlp/Orbit/blob/main/THIRD_PARTY_NOTICES.md) for license scope.

@@ -1,13 +1,13 @@
 # Orbit status
 
-- **Updated at:** 2026-10-12
+- **Updated at:** 2026-10-13
 - **Basis:** Bench task append, consolidation and Harbor compatibility; repository records contain reusable technical content only.
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none for implementation; first npm publication deferred by the user (publisher authentication still needed).
 
 ## Available
 
-- npm tarball with Web and shared skills; one-command native plugins for Claude Code, Codex, dsh and pi. Isolated real installs and skill loading verified. [Plugin guide](../plugin/README.md) · [Release guide](guides/releasing.md).
+- npm tarball with Web, shared skills and generated third-party licenses; one-command native plugins for Claude Code, Codex, dsh and pi. Isolated real installs and skill loading verified. [Plugin guide](../plugin/README.md) · [Release guide](guides/releasing.md).
 - `pnpm verify` (Biome, tsc, boundaries, vitest, builds). Auto-started local daemon (127.0.0.1, token/cookie, sqlite); `orbit run / sweep / ps / show / logs / wait [-g] / cancel / note / resources / doctor / web / auth / notify / bench / node / data`.
 - Resource leases with a queue (with reasons); use outside Orbit is respected (busy GPUs, measured CPU use, `MemAvailable`). Docker executor: code snapshot, CDI GPU mapping checked against the lease,
   execution-only timeouts; logs, metrics and outputs collected before cleanup. Process backend for native runners, with a labelling, GPU-limiting docker shim.

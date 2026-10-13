@@ -47,9 +47,10 @@ Web (local SPA served by the daemon): runs, compare, logs, sessions, bench revie
 直接调用 `docker` / `nvidia-smi` / `git` 命令行，Hono HTTP，zod 契约，commander CLI，
 vitest 测试，Biome 格式/lint，tsdown 打包。发布为单个 npm 包 `@zjunlp/orbit`，命令 `orbit`。
 
-分发：`pnpm pack:release` 先构建 Web、CLI 与契约 JS / 声明文件，生成包含 Web、README 与 MIT 许可的
+分发：`pnpm pack:release` 先构建 Web、CLI 与契约 JS / 声明文件，生成包含 Web、README、MIT 许可与第三方依赖完整许可的
 tarball（含共享 skills 与 dsh 薄入口）；pnpm 的 `publishConfig.exports` 将仓库内源码入口替换为发布包的 `dist` 入口。
-`pnpm smoke:package [tarball]` 在仓库外安装，验证 CLI、导出、自动 daemon 与 Web 资源。
+Vite 按实际打包依赖生成 `dist/web/THIRD_PARTY_LICENSES.md`，保留字体及前端库的版权和许可文本。
+`pnpm smoke:package [tarball]` 在仓库外安装，验证 CLI、导出、自动 daemon、Web 资源与第三方许可。
 用户通过 `npx -y @zjunlp/orbit doctor` 试用或 `npm install -g @zjunlp/orbit` 安装。
 `orbit plugin install [claude|codex|dsh|pi]` 调用各平台原生安装器，省略平台仍默认 Claude。
 Claude / Codex 注册 `zjunlp/Orbit` marketplace 后安装 `orbit@orbit`；Codex 使用根 `plugin.json` 和

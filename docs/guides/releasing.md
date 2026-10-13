@@ -24,6 +24,12 @@ with `--ignore-scripts` in a temporary directory, imports the public exports, in
 Docker/GPU prerequisites are probed for real; missing prerequisites on CI are reported without
 pretending an experiment ran. The private daemon is stopped afterwards.
 
+The tarball must include `LICENSE` for Orbit and `dist/web/THIRD_PARTY_LICENSES.md`
+for bundled Web dependencies. Vite generates the latter from the installed dependency
+licenses on every production build; the smoke check verifies full license texts,
+including Inter and JetBrains Mono's OFL notices. Keep the repository's
+[license scope](../../THIRD_PARTY_NOTICES.md) accurate when adding third-party material.
+
 For Claude Code, validate and install the candidate in a temporary config directory:
 
 ```bash

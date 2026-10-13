@@ -474,4 +474,6 @@ Harbor 的可比；对照情况见 `docs/tasks/`。
 
 ## 📄 许可
 
-[MIT](LICENSE) © 2026 ZJUNLP
+Orbit 原创源码采用 [MIT](LICENSE) 许可，© 2026 ZJUNLP。
+随包分发的第三方依赖保留各自许可，详见[第三方许可说明](THIRD_PARTY_NOTICES.md)。
+[演示稿](docs/ppt/README.md#来源与许可)沿用 AGPL-3.0，其中的第三方素材分别遵循其原有许可。

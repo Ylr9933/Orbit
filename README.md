@@ -491,4 +491,6 @@ been checked against it; see `docs/tasks/` for what was checked.
 
 ## 📄 License
 
-[MIT](LICENSE) © 2026 ZJUNLP
+Orbit's original source code is licensed under [MIT](LICENSE) © 2026 ZJUNLP.
+Bundled dependencies retain their own licenses; see [Third-party notices](THIRD_PARTY_NOTICES.md).
+The [presentation](docs/ppt/README.md#来源与许可) follows AGPL-3.0, with separate licenses for its third-party assets.

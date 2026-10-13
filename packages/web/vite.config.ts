@@ -7,5 +7,10 @@ const target = process.env.ORBIT_URL ?? `http://127.0.0.1:${process.env.ORBIT_PO
 export default defineConfig({
   plugins: [react()],
   server: { proxy: { "/api": target, "/login": target } },
-  build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 600 },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 600,
+    license: { fileName: "THIRD_PARTY_LICENSES.md" },
+  },
 });
