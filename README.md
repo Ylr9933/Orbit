@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/orbit-logo.png" alt="Orbit" width="480">
+</p>
+
 <h1 align="center">Orbit: Learn and Evolve in Any Environment.</h1>
 
 <p align="center">Give agents a place to experiment — and experience to learn from.</p>
@@ -487,6 +491,7 @@ pnpm verify                           # lint + typecheck + module boundaries + t
 ```
 packages/orbit/   the `@zjunlp/orbit` package (CLI `orbit`, daemon, modules)
 packages/web/     the Web UI (React + Vite, served by the daemon)
+assets/           shared project logo and icon
 plugin/           the Orbit skill for Codex / Claude Code
 scripts/          repository checks (module boundaries)
 docs/             design.md, status.md, tasks/, guides/, ppt/

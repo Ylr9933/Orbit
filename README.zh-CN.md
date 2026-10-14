@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/orbit-logo.png" alt="Orbit" width="480">
+</p>
+
 <h1 align="center">Orbit: Learn and Evolve in Any Environment.</h1>
 
 <p align="center">让 Agent 在实验中行动，在轨迹中学习。</p>
@@ -470,6 +474,7 @@ pnpm verify                           # lint + 类型检查 + 模块边界 + 测
 ```
 packages/orbit/   `@zjunlp/orbit` 包（CLI `orbit`、daemon、各模块）
 packages/web/     Web 界面（React + Vite，由 daemon 提供）
+assets/           项目共享的 Logo 与图标
 plugin/           给 Codex / Claude Code 的 Orbit skill
 scripts/          仓库检查（模块边界）
 docs/             design.md、status.md、tasks/、guides/、ppt/

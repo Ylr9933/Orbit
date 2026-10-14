@@ -108,10 +108,7 @@ export function App() {
   if (unauthorized)
     return (
       <div style={{ height: "100%", display: "grid", placeItems: "center" }}>
-        <Empty
-          title="Sign in to this Orbit daemon"
-          icon={<IconLogo size={40} style={{ color: "var(--accent)" }} />}
-        >
+        <Empty title="Sign in to this Orbit daemon" icon={<IconLogo size={40} />}>
           <p>
             The Web UI uses a login link that carries the daemon token. In a terminal on this
             machine run
@@ -130,7 +127,7 @@ export function App() {
     <div className="shell">
       <nav className="rail">
         <div className="logo" title="Orbit">
-          <IconLogo size={26} />
+          <IconLogo size={32} />
         </div>
         {nav("/", "Runs", <IconRuns />, loc.path === "/" || loc.path.startsWith("/runs"), "r")}
         {nav("/compare", "Compare", <IconCompare />, loc.path === "/compare", "c")}

@@ -1,7 +1,8 @@
 // Inline 16px stroke icons (Lucide-style geometry) so the bundle has no icon font or CDN.
-import type { SVGProps } from "react";
+import type { ImgHTMLAttributes, SVGProps } from "react";
 
 type P = SVGProps<SVGSVGElement> & { size?: number };
+const logoUrl = new URL("../../../../assets/orbit-icon.png", import.meta.url).href;
 
 function I({ size = 16, children, ...rest }: P & { children: React.ReactNode }) {
   return (
@@ -22,11 +23,11 @@ function I({ size = 16, children, ...rest }: P & { children: React.ReactNode }) 
   );
 }
 
-export const IconLogo = (p: P) => (
-  <I {...p}>
-    <circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none" />
-    <ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(-30 12 12)" />
-  </I>
+export const IconLogo = ({
+  size = 16,
+  ...rest
+}: ImgHTMLAttributes<HTMLImageElement> & { size?: number }) => (
+  <img src={logoUrl} alt="Orbit" width={size} height={size} className="brand-logo" {...rest} />
 );
 export const IconRuns = (p: P) => (
   <I {...p}>

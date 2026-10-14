@@ -184,13 +184,17 @@ textarea {
   padding: 10px 0;
   gap: 4px;
 }
+.brand-logo {
+  display: block;
+  border-radius: 6px;
+  background: #fff;
+}
 .rail .logo {
   width: 32px;
   height: 32px;
   margin-bottom: 12px;
   display: grid;
   place-items: center;
-  color: var(--accent);
 }
 .rail a,
 .rail button {

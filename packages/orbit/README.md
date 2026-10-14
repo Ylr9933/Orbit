@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/zjunlp/Orbit/main/assets/orbit-logo.png" alt="Orbit" width="480">
+</p>
+
 # Orbit: Learn and Evolve in Any Environment.
 
 Orbit provides the execution and records agents need to experiment, review trajectories and improve.
