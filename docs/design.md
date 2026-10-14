@@ -60,7 +60,8 @@ profile 外解析不到宿主依赖。pi 通过 npm 包的 `pi.skills` 发现 sk
 dsh / pi 默认安装与当前 CLI 相同版本的 npm 包，不引用 npx 临时缓存。各平台只有
 `plugin/skills/` 一份源文件，构建时复制入包；无全局 CLI 时使用 npx。安装器不改 daemon 状态或凭据。
 插件支持不扩展容器内 harness、auth 或会话解析（目前仍只有 Codex / Claude）；MCP 独立待实现。
-GitHub Release 的 `v<version>` 标签触发 npm 发布工作流，通过 npm trusted publishing 认证；首次发布需要维护者登录。
+维护者可登录 npm 发布已验证的 tarball；配置 npm trusted publisher 后，也可通过 GitHub Release 的
+`v<version>` 标签触发发布工作流。两条路径都要求使用未发布过的新版本号，见[发布指南](guides/releasing.md)。
 
 ## 3. 代码布局与依赖方向
 

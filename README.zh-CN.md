@@ -3,6 +3,7 @@
 <p align="center">让 Agent 在实验中行动，在轨迹中学习。</p>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/@zjunlp/orbit"><img src="https://img.shields.io/npm/v/%40zjunlp%2Forbit" alt="npm version"></a>
   <a href="LICENSE"><img src="docs/assets/license-mit.svg" alt="License: MIT"></a>
   <a href="docs/status.md"><img src="docs/assets/status-development.svg" alt="Status: Early development"></a>
 </p>
@@ -40,14 +41,40 @@ Agent 负责规划、分析和迭代，Orbit 提供执行与证据。具身设�
 
 <a id="环境要求"></a>
 
-**准备环境：** Linux、Node.js 24.18+（24.x）、pnpm 10、Git，以及当前用户无需 `sudo` 即可使用的 Docker。
+**准备环境：** Linux、Node.js 24.18+（24.x）、Git，以及当前用户无需 `sudo` 即可使用的 Docker。
 GPU 实验还需要 NVIDIA 驱动和 NVIDIA Container Toolkit 或 CDI；CPU 实验不需要 GPU。
 
 <a id="安装"></a>
 
 ### 1. 安装 Orbit
 
-首次公开 npm 发布尚未完成，目前请从源码构建并安装本地包：
+通过 [npm](https://www.npmjs.com/package/@zjunlp/orbit) 安装：
+
+```bash
+npm install -g @zjunlp/orbit
+orbit doctor
+```
+
+包内已包含 CLI、daemon、Web 和共享 skills，无需克隆源码或自行构建。
+不想全局安装时，也可以用 `npx -y @zjunlp/orbit@latest doctor` 试用。
+
+<details>
+<summary><strong>更新 Orbit</strong></summary>
+
+```bash
+npm install -g @zjunlp/orbit@latest
+orbit daemon --stop
+orbit doctor
+```
+
+停止旧 daemon 后，下一条命令会启动新版 daemon；运行中的容器会被重新接管。
+
+</details>
+
+<details>
+<summary><strong>从源码构建并安装</strong></summary>
+
+需要 pnpm 10，适合安装尚未发布到 npm 的改动：
 
 ```bash
 git clone https://github.com/zjunlp/Orbit.git
@@ -55,22 +82,12 @@ cd Orbit
 corepack enable
 pnpm install --frozen-lockfile
 pnpm pack:release
-npm install -g ./dist/zjunlp-orbit-0.1.0.tgz
+orbit_version=$(node -p 'require("./packages/orbit/package.json").version')
+npm install -g "./dist/zjunlp-orbit-${orbit_version}.tgz"
 orbit doctor
 ```
 
 `pack:release` 会构建 CLI、daemon、Web 和共享 skills。仅从源码使用或参与开发，见[开发与贡献](#development)。
-
-<details>
-<summary><strong>npm 发布后的安装方式</strong></summary>
-
-```bash
-npx -y @zjunlp/orbit doctor
-# 或永久安装
-npm install -g @zjunlp/orbit
-```
-
-发布后可用 `npm install -g @zjunlp/orbit@latest` 更新。随后执行 `orbit daemon --stop`，下一条命令会启动新版 daemon；运行中的容器会被重新接管。
 
 </details>
 
@@ -101,12 +118,14 @@ orbit web --open                # 在浏览器中复盘
 
 ## 🤖 Agent 接入
 
-安装对应 Agent CLI 后，选择宿主插件。当前源码安装可用：
+安装对应 Agent CLI 后，选择宿主插件：
 
 ```bash
-# 在 Orbit 源码目录执行，选择你的 Agent
-orbit plugin install claude --source .
-orbit plugin install codex --source .
+# 选择你的 Agent
+orbit plugin install claude
+orbit plugin install codex
+orbit plugin install dsh --profile headless
+orbit plugin install pi
 ```
 
 重启 Agent 后加载 `orbit` 和 `orbit-bench`。前者用于实验执行与复盘，后者用于 benchmark 适配、资源配置与验证。

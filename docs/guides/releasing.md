@@ -1,7 +1,12 @@
 # Publishing Orbit
 
-The first public npm release is pending. The package name is `@zjunlp/orbit`; the Claude Code / Codex
+Orbit is available on [npm](https://www.npmjs.com/package/@zjunlp/orbit) as `@zjunlp/orbit`; the Claude Code / Codex
 marketplace is `orbit` in `zjunlp/Orbit`, with plugin `orbit@orbit`. dsh and pi use the same npm package.
+
+For each new release, choose an unpublished version in `packages/orbit/package.json`. When plugin
+content changes, also update `plugin/plugin.json` and `plugin/.claude-plugin/plugin.json`, keeping
+their plugin versions equal. Review, validate and merge the candidate to `zjunlp/Orbit` before
+publication, because `orbit plugin install` fetches that repository.
 
 ## Validate the artifact
 
@@ -11,7 +16,8 @@ Use Node.js from `.node-version` and the pnpm version from the root `package.jso
 pnpm install --frozen-lockfile
 pnpm verify
 pnpm pack:release
-pnpm smoke:package dist/zjunlp-orbit-0.1.0.tgz
+orbit_version=$(node -p 'require("./packages/orbit/package.json").version')
+pnpm smoke:package "dist/zjunlp-orbit-${orbit_version}.tgz"
 ```
 
 `pack:release` builds current sources, including the Web UI, and writes the tarball to `dist/`.
@@ -52,9 +58,9 @@ orbit_plugin_test=$(mktemp -d)
 mkdir -p "$orbit_plugin_test/codex"
 CODEX_HOME="$orbit_plugin_test/codex" pnpm orbit plugin install codex --source .
 CODEX_HOME="$orbit_plugin_test/codex" codex plugin list --json
-DSH_HOME="$orbit_plugin_test/dsh" pnpm orbit plugin install dsh --profile headless --source ./dist/zjunlp-orbit-0.1.0.tgz
+DSH_HOME="$orbit_plugin_test/dsh" pnpm orbit plugin install dsh --profile headless --source "./dist/zjunlp-orbit-${orbit_version}.tgz"
 DSH_HOME="$orbit_plugin_test/dsh" dsh --profile headless --dump-config
-tar -xzf dist/zjunlp-orbit-0.1.0.tgz -C "$orbit_plugin_test"
+tar -xzf "dist/zjunlp-orbit-${orbit_version}.tgz" -C "$orbit_plugin_test"
 PI_CODING_AGENT_DIR="$orbit_plugin_test/pi" pnpm orbit plugin install pi --source "$orbit_plugin_test/package"
 PI_CODING_AGENT_DIR="$orbit_plugin_test/pi" pi list
 ```
@@ -67,35 +73,33 @@ no model call; keep them separate from the explicit command fakes in unit tests.
 smoke also checks skill bytes, pi metadata and the dsh entry without installing the dsh runtime.
 For the tested versions and profile requirements, see [the plugin guide](../../plugin/README.md).
 
-## First npm publication
+## Publish from a terminal
 
 An npm account needs permission to publish public packages under the `@zjunlp` organization.
 Authenticate in your terminal; never put a token or OTP in Git, an issue or a task record.
 
 ```bash
-npm login
-npm whoami
-npm publish ./dist/zjunlp-orbit-0.1.0.tgz --access public
+npm login --registry=https://registry.npmjs.org
+npm whoami --registry=https://registry.npmjs.org
+npm publish "./dist/zjunlp-orbit-${orbit_version}.tgz" --access public --registry=https://registry.npmjs.org
 ```
 
-The tested code and plugin should be reviewed and merged to `zjunlp/Orbit` before publication,
-because `orbit plugin install` fetches that repository. Remove the first-release-pending notices
-once publication succeeds. Verify from a directory outside the checkout:
+For a prerelease, add `--tag next` to the publish command. An existing npm version cannot be
+overwritten; publishing another version requires updating the manifest and rebuilding the artifact.
+After publication, verify from a directory outside the checkout, using the same `orbit_version`:
 
 ```bash
-npx -y @zjunlp/orbit@0.1.0 doctor
-npx -y @zjunlp/orbit@0.1.0 plugin install
+npx -y "@zjunlp/orbit@${orbit_version}" doctor
+npx -y "@zjunlp/orbit@${orbit_version}" plugin install
 ```
 
-## Later releases
+## Publish through GitHub Releases
 
 Configure an npm trusted publisher in the package's npm settings: GitHub owner `zjunlp`, repository
 `Orbit`, workflow `publish.yml`, environment `npm`. Create that GitHub environment with the desired
 release approvals. The workflow uses OIDC and provenance, with no long-lived npm token.
 
-Update `packages/orbit/package.json` and, when plugin content changes, both `plugin/plugin.json` and
-`plugin/.claude-plugin/plugin.json` (keep their plugin versions equal).
-Review, validate and merge the release. Publish a GitHub Release tagged `v<package version>`:
+Once the trusted publisher is configured and the candidate is merged, publish a GitHub Release tagged `v<package version>`:
 `.github/workflows/publish.yml` checks the version, verifies, packs, installs/tests that tarball and
 publishes the same bytes. Stable releases use npm's `latest` tag; GitHub prereleases use `next`.
 Do not trigger this workflow for a version already published locally.

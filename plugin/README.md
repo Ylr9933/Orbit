@@ -6,8 +6,7 @@ not on PATH. Requires Linux and Node.js 24.18+ (24.x); experiments also need Git
 
 ## Install
 
-The first npm release is pending. After publication, with your agent CLI already installed, choose
-one command:
+With your agent CLI already installed, choose one command:
 
 ```bash
 npx -y @zjunlp/orbit plugin install claude

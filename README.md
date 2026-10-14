@@ -3,6 +3,7 @@
 <p align="center">Give agents a place to experiment — and experience to learn from.</p>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/@zjunlp/orbit"><img src="https://img.shields.io/npm/v/%40zjunlp%2Forbit" alt="npm version"></a>
   <a href="LICENSE"><img src="docs/assets/license-mit.svg" alt="License: MIT"></a>
   <a href="docs/status.md"><img src="docs/assets/status-development.svg" alt="Status: Early development"></a>
 </p>
@@ -44,14 +45,40 @@ automated trajectory learning are future directions; see the [roadmap](#roadmap)
 
 <a id="requirements"></a>
 
-**Prerequisites:** Linux, Node.js 24.18+ (24.x), pnpm 10, Git and Docker usable by your user without `sudo`.
+**Prerequisites:** Linux, Node.js 24.18+ (24.x), Git and Docker usable by your user without `sudo`.
 GPU experiments also need NVIDIA drivers and the NVIDIA Container Toolkit or CDI. CPU experiments need no GPU.
 
 <a id="installation"></a>
 
 ### 1. Install Orbit
 
-The first public npm release is pending. For now, build and install the package from source:
+Install the [npm package](https://www.npmjs.com/package/@zjunlp/orbit):
+
+```bash
+npm install -g @zjunlp/orbit
+orbit doctor
+```
+
+The package includes the CLI, daemon, Web UI and shared skills. No source checkout or build is needed.
+To try Orbit without a global installation, use `npx -y @zjunlp/orbit@latest doctor`.
+
+<details>
+<summary><strong>Update Orbit</strong></summary>
+
+```bash
+npm install -g @zjunlp/orbit@latest
+orbit daemon --stop
+orbit doctor
+```
+
+Stopping the old daemon lets the next command start the updated version; running containers are reattached.
+
+</details>
+
+<details>
+<summary><strong>Build and install from source</strong></summary>
+
+Requires pnpm 10. Use this to install changes that are not yet on npm:
 
 ```bash
 git clone https://github.com/zjunlp/Orbit.git
@@ -59,23 +86,12 @@ cd Orbit
 corepack enable
 pnpm install --frozen-lockfile
 pnpm pack:release
-npm install -g ./dist/zjunlp-orbit-0.1.0.tgz
+orbit_version=$(node -p 'require("./packages/orbit/package.json").version')
+npm install -g "./dist/zjunlp-orbit-${orbit_version}.tgz"
 orbit doctor
 ```
 
 `pack:release` builds the CLI, daemon, Web UI and shared skills. To run from source or contribute, see [Development](#development).
-
-<details>
-<summary><strong>Installation after the npm release</strong></summary>
-
-```bash
-npx -y @zjunlp/orbit doctor
-# Or install permanently
-npm install -g @zjunlp/orbit
-```
-
-After publication, update with `npm install -g @zjunlp/orbit@latest`, then `orbit daemon --stop`.
-The next command starts the new daemon; running containers are reattached.
 
 </details>
 
@@ -106,12 +122,14 @@ Once the skills below are installed, ask your agent:
 
 ## 🤖 Agent integration
 
-Install your agent CLI, then choose its host plugin. With the source installation above:
+Install your agent CLI, then choose its host plugin:
 
 ```bash
-# From the Orbit checkout, choose your agent
-orbit plugin install claude --source .
-orbit plugin install codex --source .
+# Choose your agent
+orbit plugin install claude
+orbit plugin install codex
+orbit plugin install dsh --profile headless
+orbit plugin install pi
 ```
 
 Restart the agent to load `orbit` for experiment execution and review, and `orbit-bench` for benchmark adapters, resources and validation.
