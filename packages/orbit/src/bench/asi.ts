@@ -271,8 +271,7 @@ export function asiSolveSpec(b: Bench, ctx: Trial): RunDescription {
     command: withOutput("--output-dir", "native", argv),
     resources: { gpus: meta.requiresGpu ? 1 : 0, cpus: 2, memGB: 8 },
     env,
-    // The runner's own timeout ends the agent; this bounds the whole wrapper.
-    timeoutMin: ctx.timeoutMin ? ctx.timeoutMin + 15 : undefined,
+    timeoutMin: ctx.timeoutMin,
   };
 }
 

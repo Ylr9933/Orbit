@@ -230,15 +230,14 @@ def score(req):
         return bad("judge wrote no result")
     if not attempts:
         return bad("judge ran no attempt")
-    error = attempts[0].get("error")
-    if error == NO_REPORT:
+    if len(attempts) == 1 and attempts[0].get("error") == NO_REPORT:
         # The method produced no report: its result, scored zero.
         return {"score": 0, "maxScore": 100, "issues": ["no report in report/"],
                 "metrics": {"matched": 0}, "review": review(req, attempts)}
-    if error:
-        return bad(f"judge: {error}")
     issues = []
     for i, a in enumerate(attempts, 1):
+        if "error" in a:
+            return bad(f"judge: {a['error']} (attempt {i})")
         if a["failedItems"]:
             issues.append(f"judge failed on {len(a['failedItems'])}/{a['items']} checklist items"
                           f" (attempt {i})")

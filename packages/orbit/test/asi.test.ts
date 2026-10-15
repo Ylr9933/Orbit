@@ -79,7 +79,7 @@ describe("ASI runner compatibility", () => {
     expect(spec.command).toContain('{"model":"gpt-6.1-sol","effort":"max"}');
     expect(spec.command?.slice(-6)).toContain("os");
     expect(spec.command).toContain("10800");
-    expect(spec.timeoutMin).toBe(195);
+    expect(spec.timeoutMin).toBe(180);
   });
 
   it("accepts an alternative fix that checks successful execution first", () => {

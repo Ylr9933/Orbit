@@ -82,7 +82,7 @@ Use this with your own training harness. Orbit runs the harness's `solve.sh` dir
 inside the container, without a Codex or Claude Code CLI.
 
 The decision layer reads its credentials from a dotenv file in the PostTrainBench
-checkout, which the adapter mounts and sources:
+checkout, which the adapter mounts and sources only for `native=empty`:
 
 ```bash
 cat > /path/to/PostTrain_Agent/.env << 'EOF'
@@ -139,14 +139,18 @@ may fetch extra training data and screen it themselves.
   PostTrainBench's own `run_task.sh` / `run_local.sh`: the workspace holds
   `evaluate.py`, `templates/`, `timer.sh`, and its parent holds
   `contamination_check.py` and `test_data.json` for self-decontamination. The
-  PostTrainBench checkout and the HuggingFace cache are mounted read-only.
+  PostTrainBench `src/` tree is mounted read-only; the HuggingFace cache uses the
+  cache mounts described in the adapter. Only `native=empty` gets the full checkout
+  and its dotenv mount with `AGENT_ENV`; Codex, Claude Code and empty methods do not.
   `final_model/` is collected when the run ends.
   - `empty`: `true`, no work (the adapter check).
   - `native`: runs the harness's `solve.sh`; the workspace becomes `/home/ben/task`,
     matching the path the script expects.
   - `codex` / `claude-code`: `agentTask`, so Orbit launches the CLI.
 - **Verify**: a GPU container runs `evaluate.py --model-path <collected final_model>
-  --json-output-file $ORBIT_OUTPUT/metrics.json`.
+  --json-output-file $ORBIT_OUTPUT/metrics.json`. Verify and score use
+  `collected/home/ben/task/final_model` for `native=empty`, and
+  `collected/task/final_model` for the other methods.
 - **Score**: `accuracy × 100` from `metrics.json`. A run with no `final_model` (the
   `empty` method) scores a valid 0; a crashed `evaluate.py` (no metrics file) is
   invalid. `oracle` is refused: the model is the thing being trained, so no
@@ -167,3 +171,14 @@ All keys are optional; pass them to `orbit bench add -c KEY=VALUE`.
 | `hfHome` | `$HF_HOME`, else `~/.cache/huggingface` | HuggingFace cache on the host |
 | `cudaCompat` | `/usr/local/cuda-13.0/compat` | CUDA forward-compatibility libraries; empty skips the mount |
 | `proxy` | none | HTTP(S) proxy for the container, e.g. `http://172.17.0.1:7890` for a proxy on the Docker bridge gateway |
+
+## Adapter tests
+
+From the Orbit repository root, using only the system Python and temporary fixtures:
+
+```bash
+python3 -B -m unittest discover -s examples/bench-adapters/posttrainbench
+```
+
+These checks also run under `pnpm verify`. They do not launch containers, train a model,
+read credentials or call external services.

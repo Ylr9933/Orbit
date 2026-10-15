@@ -260,7 +260,9 @@ oomKilled }`，运行中写库（不发变更事件），终态前再采一次�
 `POST folders/export`（文件夹，见下）。`POST runs` 与 `POST bench/jobs` 可带 `?folder=`，`GET runs` 可按 `?folder=` 筛选（含子文件夹）。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
 `orbit web [id]` 打印带 token 的登录 URL（`--open` 时用浏览器打开）并定位到 Run。
 `files/*` 只读输出目录内的普通文件（解析符号链接后仍须在目录内），以 `Content-Security-Policy: sandbox`、
-`nosniff` 返回，避免产物中的 HTML 以 Web UI 的身份执行脚本。`wait` 在 Run 终态且清理结束后返回。
+`nosniff` 返回，避免产物中的 HTML 以 Web UI 的身份执行脚本。非法百分号编码返回 400；数字查询参数
+（`limit`、`offset`、`after`、`timeout`）必须是非负安全整数，否则返回 400，省略或空值仍取默认值。
+`wait` 在 Run 终态且清理结束后返回；CLI `wait -g` 与 `rm -g` 使用相同的 10000 条组内 Run 查询上限。
 
 Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行详情、GitHub 的 diff 视图）：
 
@@ -401,18 +403,20 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 | solve 未启动（镜像构建、租约、认证失败） | invalid（环境问题，不是方法的结果） |
 | solve 失败或超时 | 照常 verify（方法的结果；超时记入 issues） |
 | solve 因内存不足被杀（`usage.oomKilled`，资源申请的问题，不是方法的结果；仍照常 verify 并保留分数） | invalid |
-| solve 内的 Agent 最后一轮以认证、额度、模型不可用或连不上模型结束，或最后一轮未结束而 Run 日志停在 Codex 重连模型（如超时被停）（`sessions.runAgentFailure` 读 Run 的 Agent home 与日志尾；`harness.agentErrorKind` 先看结构化错误码——Codex `codex_error_info` 及其 HTTP 状态码、Claude Code 的 `error`——再看文本；对所有适配器生效）：不提交 verify，记 `verify skipped`；after 阶段已评分或显式 rescore 时照常评分并保留分数 | invalid |
+| solve 内的 Agent 最后一轮以认证、额度、模型不可用或连不上模型结束，或最后一轮未结束而 Run 日志停在 Codex 重连模型（如超时被停）（`sessions.runAgentFailure` 读 Run 的 Agent home 与日志尾；`harness.agentErrorKind` 先看结构化错误码——Codex `codex_error_info` 及其 HTTP 状态码、Claude Code 的 `error`——再看文本；对所有适配器生效）：不提交 verify，记 `verify skipped` 并保留 OOM、服务失败等问题；显式 rescore 时照常评分并保留分数 | invalid |
 | verify 未启动、超时、内存不足，没有分数，或适配器判为无效（无 reward、scorer 内部错误、judge 不可用、模型不可用且 0 分） | invalid |
 | 其余 | valid |
 
   只有 `valid` 的分数进入均分；无效或未知单独列出，不静默计入。清理状态按 failed > pending > done 汇总 Run 的 `cleanup`。
+  Agent 失败检查在推进、评分和归并时共用同一条件：`solveVerdict(run).verify` 且无 after 阶段，包括正常退出的 solve；
+  已恢复或正常完成的最后一轮不算失败，after 阶段按 verifier 自身结果评分。
   BenchService 启动时对 done 且 outcome.cleanup 为 pending 的 trial 重算其全部关联 Run（含评分历史）的清理状态，
   逐条记录修复的 trial ID；重复启动不再写入已修复结果。后续 Run 通知也使用同一汇总规则。
 - **重试归并**：`POST /bench/jobs/:id/consolidate` / `orbit bench consolidate <job> [sources...]`
   默认只预览；`--apply` 才执行。每个计划返回 `digest`（对 adopted、reclassified、removedRuns、removedJobs 的规范排序内容计算 SHA-256）；
   apply 可带 `expect`，CLI / Web 都传入已确认预览的 digest。daemon 在任何写入或删除前重新计算，摘要不符则拒绝并提示
   `plan changed since preview; preview again`。只接收全部 trial 已完成、Run 已清理且无后台更新的任务；同 benchmark、methods、options、metrics，
-  按 task × method × seed 对齐。归并先重读失败 solve 的会话末轮错误：明确的认证、额度、模型连接故障
+  按 task × method × seed 对齐。归并先重读符合上述条件的 solve 的会话末轮错误：明确的认证、额度、模型连接故障
   会把旧的 valid / unknown 标记改为 invalid（包括同一次 solve 的评分历史），原始分数保留，结果的 `reclassified`
   列出这些 trial；不带来源时只做这一复核；预览不写回。读取后重新检查终态及归属。
   有效重试只替换无效位置，拒绝覆盖真正有效的成绩（包括 0 分）或从多份有效成绩里挑选。
@@ -469,7 +473,9 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 - **任务资源文件**（`contracts.BenchResources`，`bench/resources.ts`）：`orbit bench add --resources <file>` 登记一个
   JSON：`{ version: 1, default, tasks: { <task>: { cpus?, memGB?, gpus?, gpuMemGB?, timeoutMin?, evidence?, confidence?,
   note? } } }`，未知字段报错，`evidence` 等只给人看。只覆盖 solve Run：任务条目 > `default` > 适配器给的值，
-  `orbit bench run --timeout` 仍优先于 `timeoutMin`。登记时与提交 job 时校验（文件中不存在的任务 id 报错）；提交时
+  `orbit bench run --timeout` 仍优先于 `timeoutMin`。在调用适配器前按 CLI > 任务条目 > `default` 解析 solve 时限，
+  通过 `trial.timeoutMin` 传入，返回的 solve spec 也使用该值；都未设置时保留适配器默认值。verify 时限不受此覆盖。
+  登记时与提交 job 时校验（文件中不存在的任务 id 报错）；提交时
   把每个任务解析后的值存入 `BenchJob.resources`，之后改文件不影响已提交的 job。文件由人（或其 Agent）维护，
   Orbit 从不写它。
 - **用量建议**：`orbit bench usage <job>...`（`GET /bench/usage?jobs=`）汇总 Agent 方法 solve Run 的实测峰值（oracle /
@@ -492,7 +498,8 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
    环境已不在，不能 `bench rescore`。separate 的镜像顺序同 Harbor：
    `[verifier.environment] docker_image` → `tests/Dockerfile`（二者自带 /tests）→ `tests/docker-compose.yaml`（不支持）
    → 任务环境的新副本（继承其资源、网络、变量，`tests/` 挂到 /tests）。verify Run 把采集到的产物复制挂载到目标路径，
-   运行 `bash /tests/test.sh`，采集 `/logs/verifier`，读取 `reward.json`（`reward` 键或唯一键）或 `reward.txt`。
+   使用与 shared 相同的 `chmod +x`、直接执行命令和 `/logs/verifier/test-stdout.txt` stdout/stderr 采集，
+   采集 `/logs/verifier`，读取 `reward.json`（`reward` 键或唯一键）或 `reward.txt`。
    网络按阶段解析：`[agent]` / `[verifier]` 的 `network_mode`，否则所在环境的（缺省 public）。
    `environment/docker-compose.yaml`（`bench/compose.ts`）翻译成服务容器：`main` 取 `environment`、`working_dir`、
    `depends_on`、`networks`（其 `command` 是 Harbor 的保活命令，忽略；task 的 `[environment.env]` 覆盖 compose 的值），
@@ -512,7 +519,7 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
    （原生 scorer 否则直接报错），再运行 `ai4sci_bench.cli score`；分数取该实例最新 attempt 的 `final_score / max_score`。
    指标：主指标 `score`（`final_score / max_score` 的 %），另有 `fullMarks`（满分 trial 的 %）。
    ASI checkout 只读：进程 cwd 是 Run 目录，`PYTHONPATH` 指向 checkout，`PYTHONDONTWRITEBYTECODE=1`。
-   solve 显式启用 `--fail-on-agent-error`。Agent 方法在规划时通过 `config.python` 的 AST 解析，
+   solve 显式启用 `--fail-on-agent-error`，原生 `--timeout` 与 solve Run 使用同一个已解析时限。Agent 方法在规划时通过 `config.python` 的 AST 解析，
    检查所选 Codex/Claude 源码是否仍把任意日志中的 `timed out` 放在成功退出判断之前，以及 CLI
    是否声明失败退出码选项；已知不兼容版本拒绝启动并提示更新注册 checkout，不 monkey-patch 第三方代码。
    native result 和 score report 分别按 attempt 数值选择最新项；review 的 `attempt_status` 只依赖
@@ -540,6 +547,9 @@ CLI `orbit bench add|ls|rm|tasks|run|jobs|show|cancel|rescore|compare [--metric]
   任务 workspace 在 `/task`（`data/`、`related_work/` 只读，其余可写，结束时采集），原版指令模板，RCB 的 venv 按宿主路径
   只读挂载；verify 为 process Run，在 RCB `.venv` 中调用原版 `evaluation.score.score_run`。没有 report 为有效 0 分，
   judge 调用失败为 invalid；分数 0–100（50 ≈ 原论文水平），多次 judge 取均值。RCB 没有参考解，oracle 不可用。
+- **PostTrainBench 示例**（`examples/bench-adapters/posttrainbench/`）：native 方法从采集到的
+  `home/ben/task/final_model` 验证和评分，其他方法使用 `task/final_model`；仅 `native=empty` 挂载完整 checkout
+  和 dotenv 并设置 `AGENT_ENV`，其他方法只挂载 `src/`，避免通过 `/repo/.env` 暴露凭据。
 - **接入验收（任意新 benchmark）**：oracle 满分（没有参考解时省略）、空答案零分、抽样与原版结果一致。
 - **已知限制**：verify Run 在 solve 结束后才提交，group 通知可能在 job 中途（某一时刻组内无排队/运行 Run）提前发出；
   ASI 包装每个 trial 调一次原生 runner，不复用其并行调度。

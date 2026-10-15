@@ -52,14 +52,13 @@ export function resolveResources(
 export function applyOverride(
   spec: RunSpecInput,
   o: ResourceOverride | undefined,
-  timeoutFixed: boolean,
+  timeoutMin?: number,
 ): RunSpecInput {
-  if (!o) return spec;
-  const { timeoutMin, ...res } = o;
+  const { timeoutMin: taskTimeout, ...res } = o ?? {};
   return {
     ...spec,
     resources: { ...spec.resources, ...res },
-    ...(timeoutMin !== undefined && !timeoutFixed ? { timeoutMin } : {}),
+    timeoutMin: timeoutMin ?? taskTimeout ?? spec.timeoutMin,
   };
 }
 

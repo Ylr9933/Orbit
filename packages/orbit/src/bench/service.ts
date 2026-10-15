@@ -54,7 +54,13 @@ import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { type AgentFailure, runAgentFailure } from "../sessions/index.ts";
 import type { Store } from "../store/index.ts";
 import { gitSource } from "../workspace/snapshot.ts";
-import { classify, cleanupOf, solveVerdict } from "./classify.ts";
+import {
+  agentFailureIssue,
+  classify,
+  cleanupOf,
+  shouldCheckAgentFailure,
+  solveVerdict,
+} from "./classify.ts";
 import { AdapterClient, type TrialInput, toRunSpec } from "./protocol.ts";
 import type { BenchmarkRegistry } from "./registry.ts";
 import { applyOverride, loadResources, resolveResources, usageRow } from "./resources.ts";
@@ -551,7 +557,7 @@ export class BenchService {
         throw new UserError(`job ${jobId} has active trials`);
       for (const t of snapshot.trials) {
         const run = t.solveRunId ? this.deps.runs.get(t.solveRunId) : null;
-        if (run?.state !== "failed") continue;
+        if (!run) continue;
         const failure = await this.agentFailure(run);
         if (failure) failures.set(run.id, failure);
       }
@@ -579,8 +585,9 @@ export class BenchService {
     for (const d of all)
       for (const t of d.trials) {
         const failure = t.solveRunId ? failures.get(t.solveRunId) : null;
-        if (!failure || !t.solveRunId || oldRuns.get(t.solveRunId)?.state !== "failed") continue;
-        const issue = `Agent stopped: ${failure.kind} (${failure.message})`;
+        const run = t.solveRunId ? oldRuns.get(t.solveRunId) : null;
+        if (!failure || !run || !shouldCheckAgentFailure(run)) continue;
+        const issue = agentFailureIssue(failure);
         let changed = false;
         // A valid score, or an unknown one (e.g. its verify run was lost), that only measures the setup.
         for (const outcome of [t.outcome, ...t.history.map((h) => h.outcome)]) {
@@ -890,7 +897,7 @@ export class BenchService {
         method,
         seed: t.seed,
         options: job.spec.options,
-        timeoutMin: job.spec.timeoutMin,
+        timeoutMin: job.spec.timeoutMin ?? job.resources?.[t.task]?.timeoutMin,
         staging: join(this.deps.paths.bench, job.id, t.id),
         hostNetwork: method.auth
           ? Boolean(this.deps.auth?.get(method.auth)?.profile.hostNetwork)
@@ -964,6 +971,7 @@ export class BenchService {
 
   /** Why the Agent in a solve run could not work (credentials, quota, model endpoint), or null. */
   private agentFailure(solve: Run): Promise<AgentFailure | null> {
+    if (!shouldCheckAgentFailure(solve)) return Promise.resolve(null);
     const dirs = this.deps.runs.dirs(solve.id);
     return runAgentFailure(dirs.agent, dirs.log).catch(() => null);
   }
@@ -1009,7 +1017,7 @@ export class BenchService {
         spec = applyOverride(
           toRunSpec(reply.spec, trial.method, b, "solve"),
           job.resources?.[t.task],
-          job.spec.timeoutMin !== undefined,
+          job.spec.timeoutMin,
         );
         t.issues = [...t.issues, ...reply.issues];
       } catch (e) {
@@ -1035,10 +1043,7 @@ export class BenchService {
       const sv = solveVerdict(solve);
       // An Agent that could not reach or use its model left nothing worth verifying; an explicit
       // rescore (history kept) verifies anyway, and an after phase has already verified.
-      const agent =
-        sv.verify && !solve.spec.after && t.history.length === 0
-          ? await this.agentFailure(solve)
-          : null;
+      const agent = t.history.length === 0 ? await this.agentFailure(solve) : null;
       if (agent) return this.finish(t, classify(solve, null, null, t.issues, agent));
       if (!sv.verify || this.cancelled(job.id, t)) {
         const outcome = classify(solve, null, null, t.issues);

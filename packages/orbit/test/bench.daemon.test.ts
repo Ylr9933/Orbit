@@ -135,6 +135,24 @@ afterAll(async () => {
 });
 
 describe("bench jobs", () => {
+  it("retains benchmark input defaults and rejects malformed registrations", async () => {
+    const registered = await client.benchmarkPut({
+      name: "defaults",
+      adapter: join(home, "adapter.cjs"),
+      path: home,
+    });
+    try {
+      expect(registered).toMatchObject({ config: {}, env: {}, passEnv: [] });
+      expect(registered.resources).toBeUndefined();
+      await expect(
+        client.benchmarkPut({ name: "bad/path", adapter: join(home, "adapter.cjs"), path: home }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect((await client.benchmarks()).some((b) => b.name === "bad/path")).toBe(false);
+    } finally {
+      await client.benchmarkRemove("defaults");
+    }
+  });
+
   it("lists tasks and rejects unsupported ones and bad methods", async () => {
     const tasks = await client.benchTasks("asi");
     expect(tasks.map((t) => [t.id, t.supported])).toEqual([

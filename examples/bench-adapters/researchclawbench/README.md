@@ -31,3 +31,14 @@ orbit bench run rcb -t Astronomy_000 -m gpt=codex,auth=<profile>,model=<model>,b
 Settings (`-c KEY=VALUE`) are listed at the top of `adapter.py`. Per-task solve resources come from
 the resources file (`--resources`; see the bench adapter guide); `-c cpus/memGB/gpus/timeoutMin` only
 set the adapter's own defaults for tasks the file does not cover.
+
+## Adapter tests
+
+From the Orbit repository root:
+
+```bash
+python3 -B -m unittest discover -s examples/bench-adapters/researchclawbench
+```
+
+The tests use temporary fixtures and the system Python, including errors on later judge attempts.
+They also run under `pnpm verify`; no benchmark checkout, model API or containers are needed.

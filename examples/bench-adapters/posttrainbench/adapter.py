@@ -57,6 +57,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 # mount targets must avoid both. /task is the workspace, /repo the read-only
 # PostTrainBench checkout, /hf-cache the HuggingFace cache, /env the config file.
 WORKSPACE = "/task"
+NATIVE_WORKSPACE = "/home/ben/task"
 REPO_DIR = "/repo"
 HF_DIR = "/hf-cache"
 ENV_DIR = "/env"
@@ -80,6 +81,17 @@ METRICS = [
 
 def config(req, key, default):
     return req["benchmark"]["config"].get(key, default)
+
+
+def is_native(req):
+    method = req["trial"]["method"]
+    return method["agent"] == "empty" and method.get("name") == "native"
+
+
+def collected_model_dir(req):
+    workspace = NATIVE_WORKSPACE if is_native(req) else WORKSPACE
+    return os.path.join(req["solve"]["output"], "collected",
+                        workspace.lstrip("/"), "final_model")
 
 
 def tasks_dir(req):
@@ -266,6 +278,7 @@ def hf_cache_mounts(req, hf_home):
 def solve(req):
     trial = req["trial"]
     agent = trial["method"]["agent"]
+    native = is_native(req)
     if agent == "oracle":
         raise ValueError(
             "PostTrainBench has no reference solution: the model is what gets "
@@ -286,7 +299,8 @@ def solve(req):
     # native harness, which needs its parent directory instead.
     mounts = [
         {"source": ws, "target": WORKSPACE, "mode": "rw"},
-        {"source": repo, "target": REPO_DIR, "mode": "ro"},
+        {"source": repo if native else os.path.join(repo, "src"),
+         "target": REPO_DIR if native else f"{REPO_DIR}/src", "mode": "ro"},
     ]
     mounts += hf_cache_mounts(req, hf_home)
 
@@ -320,10 +334,11 @@ def solve(req):
             "NO_PROXY": "localhost,127.0.0.1", "no_proxy": "localhost,127.0.0.1",
         })
     # The decision layer of a native harness reads its keys from a dotenv file.
-    agent_env = os.environ.get("AGENT_ENV", os.path.join(repo, ".env"))
-    if os.path.isfile(agent_env):
-        mounts.append({"source": agent_env, "target": f"{ENV_DIR}/.env", "mode": "ro"})
-        env["AGENT_ENV"] = f"{ENV_DIR}/.env"
+    if native:
+        agent_env = os.environ.get("AGENT_ENV", os.path.join(repo, ".env"))
+        if os.path.isfile(agent_env):
+            mounts.append({"source": agent_env, "target": f"{ENV_DIR}/.env", "mode": "ro"})
+            env["AGENT_ENV"] = f"{ENV_DIR}/.env"
 
     spec = {
         "resources": {
@@ -341,7 +356,7 @@ def solve(req):
         "image": image,
     }
 
-    if agent == "empty" and trial["method"].get("name", "") == "native":
+    if native:
         # Native harness: run the agent's own solve.sh. It cd's to /home/ben/task,
         # so the staging parent becomes the container home and the workspace
         # contract (with its parent) is preserved.
@@ -350,8 +365,8 @@ def solve(req):
             {"source": os.path.dirname(ws), "target": "/home/ben", "mode": "rw"},
             *mounts[1:],
         ]
-        spec["workdir"] = "/home/ben/task"
-        spec["collect"] = ["/home/ben/task/final_model"]
+        spec["workdir"] = NATIVE_WORKSPACE
+        spec["collect"] = [f"{NATIVE_WORKSPACE}/final_model"]
         spec["command"] = ["sh", "-c",
             "ln -sfn /repo/agents/my_pt_agent/src /home/ben/task/src; "
             "unset ANTHROPIC_AUTH_TOKEN; "
@@ -409,9 +424,8 @@ def verify(req):
                      os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface")))
     if os.path.isdir(hf_home):
         mounts.append({"source": hf_home, "target": HF_DIR, "mode": "ro"})
-    # The solve run's output directory holds collected/<workspace>/final_model.
     mounts.append({"source": solve_output, "target": "/solve-out", "mode": "ro"})
-    model_in_container = f"/solve-out/collected{WORKSPACE}/final_model"
+    model_in_container = "/solve-out/" + os.path.relpath(collected_model_dir(req), solve_output)
 
     proxy = config(req, "proxy", "")
     env = {"PYTHONNOUSERSITE": "1", "HF_HUB_OFFLINE": "1"}
@@ -447,8 +461,7 @@ def score(req):
     def bad(issue):
         return {"score": None, "maxScore": 100, "invalid": True, "issues": [issue]}
 
-    final_model = os.path.join(req["solve"]["output"], "collected",
-                               WORKSPACE.lstrip("/"), "final_model")
+    final_model = collected_model_dir(req)
     if not os.path.isdir(final_model):
         return {"score": 0, "maxScore": 100, "invalid": False,
                 "issues": ["no final_model produced"], "metrics": {}}

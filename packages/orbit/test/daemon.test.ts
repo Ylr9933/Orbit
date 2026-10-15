@@ -1,11 +1,13 @@
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { tryConnect } from "../src/client/index.ts";
 import { readDaemonInfo } from "../src/config/daemon-info.ts";
 import { orbitPaths } from "../src/config/paths.ts";
+import { Run } from "../src/contracts/index.ts";
 import { type StartedDaemon, startDaemon } from "../src/daemon/server.ts";
+import { Store } from "../src/store/index.ts";
 
 const home = mkdtempSync(join(tmpdir(), "orbit-test-"));
 const paths = orbitPaths({ ORBIT_HOME: home });
@@ -13,6 +15,33 @@ let daemon: StartedDaemon;
 
 beforeAll(async () => {
   daemon = await startDaemon(paths, { port: 0, tickMs: 200 });
+  const store = new Store(paths.db);
+  try {
+    const at = "2026-10-16T00:00:00.000Z";
+    store.putRun(
+      Run.parse({
+        id: "fixture",
+        spec: { backend: "process", command: ["true"] },
+        state: "succeeded",
+        reason: null,
+        exitCode: 0,
+        node: "fixture",
+        image: null,
+        containerId: null,
+        lease: null,
+        code: null,
+        cleanup: "done",
+        note: "",
+        createdAt: at,
+        startedAt: at,
+        endedAt: at,
+      }),
+    );
+  } finally {
+    store.close();
+  }
+  mkdirSync(daemon.runs.dirs("fixture").output, { recursive: true });
+  writeFileSync(join(daemon.runs.dirs("fixture").output, "a b.txt"), "fixture output");
 });
 afterAll(async () => {
   await daemon.stop();
@@ -38,6 +67,57 @@ describe("daemon", () => {
     const res = await fetch(`${daemon.url}/api/v1/health`);
     expect(res.status).toBe(401);
   });
+
+  it.each(["%", "%GG", "%E2%9C"])("returns 400 for malformed file escape %s", async (path) => {
+    const res = await fetch(`${daemon.url}/api/v1/runs/fixture/files/${path}`, {
+      headers: { authorization: `Bearer ${daemon.token}` },
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining("invalid path") });
+  });
+
+  it("still serves valid escaped filenames", async () => {
+    const res = await fetch(`${daemon.url}/api/v1/runs/fixture/files/a%20b.txt`, {
+      headers: { authorization: `Bearer ${daemon.token}` },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("fixture output");
+  });
+
+  it.each(["-1", "1.5", "1e21", "9007199254740992", "NaN", "Infinity", "abc"])(
+    "rejects non-safe or negative integer query numbers: %s",
+    async (number) => {
+      for (const route of [
+        "/runs?limit=",
+        "/bench/jobs?limit=",
+        "/runs/fixture/events?after=",
+        "/runs/fixture/logs?offset=",
+        "/runs/fixture/logs?limit=",
+        "/runs/fixture/wait?timeout=",
+      ]) {
+        const res = await fetch(`${daemon.url}/api/v1${route}${number}`, {
+          headers: { authorization: `Bearer ${daemon.token}` },
+        });
+        expect(res.status, route).toBe(400);
+        expect(await res.json()).toMatchObject({
+          error: expect.stringContaining("non-negative safe integer"),
+        });
+      }
+    },
+  );
+
+  it.each(["", "0", "1", "1e3", "9007199254740991"])(
+    "accepts safe integer limits and the empty default: %s",
+    async (limit) => {
+      const res = await fetch(`${daemon.url}/api/v1/runs?limit=${limit}`, {
+        headers: { authorization: `Bearer ${daemon.token}` },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        runs: [expect.objectContaining({ id: "fixture" })],
+      });
+    },
+  );
 
   it("logs the browser in with a cookie and only redirects to local paths", async () => {
     const token = readDaemonInfo(paths)?.token ?? "";

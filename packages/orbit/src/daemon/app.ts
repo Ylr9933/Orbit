@@ -355,7 +355,7 @@ export function createApp(deps: AppDeps): Hono {
     }
     // Listing the tasks once checks that the adapter answers (and the resources file fits) first.
     const { tasks } = await bench.infoOf({
-      ...BenchmarkInput.parse(input),
+      ...input,
       createdAt: "",
       updatedAt: "",
     });
@@ -463,6 +463,7 @@ function errorResponse(c: Context, err: Error) {
     return c.json({ error: err.message }, 400);
   if (err instanceof z.ZodError) return c.json({ error: z.prettifyError(err) }, 400);
   if (err instanceof SyntaxError) return c.json({ error: `invalid JSON: ${err.message}` }, 400);
+  if (err instanceof URIError) return c.json({ error: `invalid path: ${err.message}` }, 400);
   console.error(err);
   return c.json({ error: err.message }, 500);
 }
@@ -484,10 +485,13 @@ function sameOrigin(c: Context): boolean {
   return !origin || origin === new URL(c.req.url).origin;
 }
 
-/** A numeric query parameter, or the default when absent or not a number. */
+/** A non-negative safe integer query parameter, or the default when absent. */
 function num(v: string | undefined, def: number): number {
-  const n = v === undefined || v === "" ? Number.NaN : Number(v);
-  return Number.isFinite(n) ? n : def;
+  if (v === undefined || v === "") return def;
+  const n = Number(v);
+  if (!Number.isSafeInteger(n) || n < 0)
+    throw new UserError("query number must be a non-negative safe integer");
+  return n;
 }
 
 const TYPES: Record<string, string> = {

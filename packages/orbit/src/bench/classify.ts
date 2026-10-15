@@ -40,6 +40,12 @@ export function solveVerdict(solve: Run): {
   return { verify: true };
 }
 
+export const shouldCheckAgentFailure = (solve: Run): boolean =>
+  solveVerdict(solve).verify && !solve.spec.after;
+
+export const agentFailureIssue = (failure: AgentFailure): string =>
+  `Agent stopped: ${failure.kind} (${failure.message})`;
+
 export function classify(
   solve: Run,
   verify: Run | null,
@@ -53,7 +59,7 @@ export function classify(
   // Out of memory is the resource request's fault, not the method's: the score is kept but invalid.
   const oom = solve.usage?.oomKilled ? oomIssue(solve) : null;
   // Like OOM: the setup's fault, not the method's; the score is kept but invalid.
-  const agentIssue = agent ? `Agent stopped: ${agent.kind} (${agent.message})` : null;
+  const agentIssue = agent ? agentFailureIssue(agent) : null;
   // A service the task environment depends on broke while the method ran: the environment's fault.
   const serviceIssues = solve.services
     .filter((s) => s.failure)
@@ -76,8 +82,9 @@ export function classify(
   });
   const sv = solveVerdict(solve);
   if (!sv.verify) return out(sv.evaluation ?? "unknown", null, sv.issue ? [sv.issue] : []);
+  const setup = [oom, agentIssue, ...serviceIssues].filter((x): x is string => x !== null);
   // The Agent could not work, so its leftovers are not verified (a rescore still can).
-  if (!verify && agentIssue) return out("invalid", null, [agentIssue, "verify skipped"]);
+  if (!verify && agentIssue) return out("invalid", null, [...setup, "verify skipped"]);
   if (!verify) return out("unknown", null, ["verify not run"]);
   // Verified in the solve run's container (its after phase), as Harbor's shared verifier mode.
   if (verify.id === solve.id && solve.spec.after) {
@@ -92,7 +99,6 @@ export function classify(
     return out("invalid", null, [`verifier environment failed: ${verify.reason ?? "not started"}`]);
   else if (timedOut(verify)) return out("invalid", null, ["verify timed out"]);
   else if (verify.usage?.oomKilled) return out("invalid", null, [`verify ${oomIssue(verify)}`]);
-  const setup = [oom, agentIssue, ...serviceIssues].filter((x): x is string => x !== null);
   if (!score) return out("invalid", null, ["no score", ...setup]);
   if (score.invalid || score.score === null || setup.length)
     return out("invalid", score.score, [...score.issues, ...setup]);

@@ -1,4 +1,5 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -596,6 +597,43 @@ timeout_sec = 120
     expect(AdapterRunSpec.safeParse({ image: "x" }).success).toBe(false);
   });
 
+  it("uses the same executable verifier and stdout capture in separate and shared modes", () => {
+    const separate = findHarborTasks(root).find((t) => t.id === "sr");
+    const shared = findHarborTasks(root).find((t) => t.id === "shared");
+    if (!separate || !shared) throw new Error("task missing");
+    const staging = join(tmp, "verifier-command");
+    const { spec } = harborVerifySpec(separate, join(tmp, "command-output"), staging);
+    const solve = harborSolveSpec(shared, { name: "e", agent: "empty" }, join(staging, "shared"));
+    expect(spec.command).toEqual(solve.after?.command);
+    const tests = join(staging, "local-tests");
+    const logs = join(staging, "local-logs");
+    const script = join(tests, "test.sh");
+    write(
+      script,
+      `#!/usr/bin/env python3
+import os, sys
+print("verifier stdout")
+print("verifier stderr", file=sys.stderr)
+with open(os.environ["REWARD"], "w") as f:
+    f.write("0.5")
+sys.exit(7)
+`,
+    );
+    chmodSync(script, 0o644);
+    const result = spawnSync(
+      "sh",
+      ["-c", (spec.command?.[2] ?? "").replaceAll("/tests", tests).replaceAll("/logs", logs)],
+      { encoding: "utf8", env: { ...process.env, REWARD: join(logs, "verifier/reward.txt") } },
+    );
+    expect(result.status).toBe(7);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    const output = readFileSync(join(logs, "verifier/test-stdout.txt"), "utf8");
+    expect(output).toContain("verifier stdout");
+    expect(output).toContain("verifier stderr");
+    expect(harborReward(join(logs, "verifier"))).toMatchObject({ score: 0.5, invalid: false });
+  });
+
   it("reads rewards from reward.txt or reward.json", () => {
     const d = (n: string) => join(tmp, "reward", n);
     write(join(d("txt"), "reward.txt"), "0.75\n");
@@ -996,6 +1034,28 @@ describe("outcome classification", () => {
     const survived = classify(run({ spec, usage: { ...usage, oomKilled: false } }), run({}), score);
     expect(survived).toMatchObject({ evaluation: "valid" });
     expect(survived.issues).toEqual(["1 process(es) in the solve run killed for memory"]);
+    const skipped = classify(
+      run({
+        state: "failed",
+        reason: "timeout after 5 min",
+        spec,
+        usage,
+        services: [{ name: "sim", containerId: "c1", failure: "unhealthy" }],
+      }),
+      null,
+      null,
+      ["adapter issue"],
+      { kind: "model_unreachable", message: "connection refused" },
+    );
+    expect(skipped).toMatchObject({ evaluation: "invalid", score: null });
+    expect(skipped.issues).toEqual([
+      "adapter issue",
+      "solve timed out",
+      "ran out of memory (limit 16 GB, peak 15.9 GB)",
+      "Agent stopped: model_unreachable (connection refused)",
+      "service sim failed during the run: unhealthy",
+      "verify skipped",
+    ]);
   });
 
   it("classifies a verification done in the solve run's after phase", () => {
@@ -1071,12 +1131,13 @@ describe("resources file", () => {
       timeoutMin: 60,
     };
     const o = { cpus: 4, memGB: 16, gpus: 1, timeoutMin: 240 };
-    expect(applyOverride(spec, o, false)).toMatchObject({
+    expect(applyOverride(spec, o)).toMatchObject({
       resources: { cpus: 4, memGB: 16, gpus: 1 },
       timeoutMin: 240,
     });
-    expect(applyOverride(spec, o, true).timeoutMin).toBe(60);
-    expect(applyOverride(spec, undefined, false)).toBe(spec);
+    expect(applyOverride(spec, o, 30).timeoutMin).toBe(30);
+    expect(applyOverride(spec, undefined, 30).timeoutMin).toBe(30);
+    expect(applyOverride(spec, undefined)).toEqual(spec);
   });
 
   it("suggests from measured peaks with headroom, after OOMs and timeouts, never GPUs", () => {

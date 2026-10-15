@@ -1,7 +1,7 @@
 # Orbit status
 
 - **Updated at:** 2026-10-15
-- **Basis:** State integrity: commit-only notifications, daemon/spawn locks, atomic bench submit, bounded adapters and preview-checked consolidation.
+- **Basis:** State integrity plus bench/adapter corrections: model paths, native-only dotenv, judge errors, consistent Agent failure rules, timeout precedence and API validation.
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none for the current release.
 
@@ -17,10 +17,10 @@
 - Data directory apart from `~/.orbit` (`orbit config data`, `ORBIT_DATA`), doctor disk warnings; logical folders (`--folder`, `mv`, `folders`, `export`).
 - Auth profiles for Codex and Claude Code; notifications (Feishu, DingTalk, WeCom, Slack, webhook; `feishu-app` bot: `orbit feishu init` QR setup, pairing, read-only `/gpu` `/runs` `/show`, curve cards).
 - Bench: solve + verify run per trial, valid-only means (OOM solves invalid); one JSON adapter protocol
-  for built-ins and external executables (e.g. ResearchClawBench); per-task resources file; `bench usage`
+  for built-ins and external executables (e.g. ResearchClawBench); per-task resources and timeout resolved before adapter planning; `bench usage`
   suggestions; solves whose Agent could not use its model are invalid without a verify run; `bench consolidate` checks preview digests and preserves newly invalid evidence; startup repairs stale trial cleanup; retries and task append retain validity; `orbit-bench` skill; `bench rescore` re-verifies from saved solve outputs (history kept). Measured peak memory / CPU / GPU memory on every run. Adapter-declared
   metrics (`score` built in): per-task then over-task means, task-clustered 95% CI, paired Δ in compare. ASI checks known runner incompatibilities before Agent launch, propagates failures, and shows latest attempt status separately from score validity.
-- Harbor format: separate/shared verifiers, compose services, collect hooks, Harbor's network/image rules; TB-Science 70/70 and TB 4.0 56/66 supported (oracle/empty checked on samples incl. all 5 compose tasks); jobs record the benchmark commit.
+- Harbor format: separate/shared verifiers share the executable test command and stdout capture; compose services, collect hooks, Harbor's network/image rules; TB-Science 70/70 and TB 4.0 56/66 supported (oracle/empty checked on samples incl. all 5 compose tasks); jobs record the benchmark commit.
 - Multi-node: workers join by token; placement across nodes, code bundles by hash, named datasets, mirrored logs/metrics, proxied artifacts. Guide: [guides/multi-node.md](guides/multi-node.md).
 
 ## Main gaps

@@ -435,49 +435,98 @@ it("refuses duplicate appended tasks and pruning during append without changing 
   expect(f.bench.job("first").trials).toHaveLength(1);
 });
 
-it("reconciles misclassified terminal Agent errors before replacing a valid zero, without a force override", async () => {
-  const f = fixture();
-  f.job("retry-b", ["b"]);
-  f.trial("retry-b", "b", true);
-  const run = f.runs.get("target.b-solve"),
-    trial = f.store.getTrial("target.b");
-  if (!run || !trial?.outcome) throw new Error("missing fixture");
-  f.store.putRun({ ...run, state: "failed", exitCode: 1, reason: "exit code 1" });
-  f.store.putTrial({
-    ...trial,
-    history: [{ verifyRunId: null, outcome: trial.outcome, endedAt: at }],
-  });
-  const dir = join(f.runs.dirs(run.id).agent, "codex/sessions/2026/10/13");
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, "rollout-fixture.jsonl");
-  const done = (error: unknown) =>
-    JSON.stringify({ type: "event_msg", payload: { type: "task_complete", error } });
-  writeFileSync(file, `${done({ message: "workspace routing discovery timed out" })}\n`);
-  const before = f.bench.job("target");
-  const plan = await f.bench.consolidate("target", { sources: ["retry-b"] });
-  expect(plan.adopted.map((a) => a.task)).toEqual(["b"]);
-  expect(plan.reclassified).toEqual([
-    { job: "target", trial: trial.id, task: "b", kind: "model_unreachable" },
-  ]);
-  expect(f.bench.job("target")).toEqual(before);
-  // A recovered later turn and ordinary experiment failures must retain the valid-score guard.
-  for (const text of [
-    `${done({ message: "workspace routing discovery timed out" })}\n${done(null)}\n`,
-    `${done({ message: "pytest assertion failed" })}\n`,
-  ]) {
-    writeFileSync(file, text);
-    await expect(
-      f.bench.consolidate("target", { sources: ["retry-b"], dryRun: false }),
-    ).rejects.toThrow(/replace valid/);
-  }
-  writeFileSync(file, `${done({ message: "workspace routing discovery timed out" })}\n`);
-  await f.bench.consolidate("target", { sources: ["retry-b"], dryRun: false });
-  expect(f.store.getTrial(trial.id)).toMatchObject({
-    solveRunId: "retry-b.b-solve",
-    outcome: { evaluation: "valid", score: 0 },
-  });
-  expect(f.bench.job("target").trials).toHaveLength(3);
-});
+it.each(["failed", "succeeded"] as const)(
+  "reconciles terminal Agent errors in a %s solve before replacing a valid zero",
+  async (state) => {
+    const f = fixture();
+    f.job("retry-b", ["b"]);
+    f.trial("retry-b", "b", true);
+    const run = f.runs.get("target.b-solve"),
+      trial = f.store.getTrial("target.b");
+    if (!run || !trial?.outcome) throw new Error("missing fixture");
+    f.store.putRun({ ...run, state, exitCode: state === "failed" ? 1 : 0 });
+    f.store.putTrial({
+      ...trial,
+      history: [{ verifyRunId: null, outcome: trial.outcome, endedAt: at }],
+    });
+    const dir = join(f.runs.dirs(run.id).agent, "codex/sessions/2026/10/13");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "rollout-fixture.jsonl");
+    const done = (error: unknown) =>
+      JSON.stringify({ type: "event_msg", payload: { type: "task_complete", error } });
+    writeFileSync(file, `${done({ message: "workspace routing discovery timed out" })}\n`);
+    const before = f.bench.job("target");
+    const plan = await f.bench.consolidate("target", { sources: ["retry-b"] });
+    expect(plan.adopted.map((a) => a.task)).toEqual(["b"]);
+    expect(plan.reclassified).toEqual([
+      { job: "target", trial: trial.id, task: "b", kind: "model_unreachable" },
+    ]);
+    expect(f.bench.job("target")).toEqual(before);
+    // A recovered later turn and ordinary experiment failures must retain the valid-score guard.
+    for (const text of [
+      `${done({ message: "workspace routing discovery timed out" })}\n${done(null)}\n`,
+      `${done({ message: "pytest assertion failed" })}\n`,
+    ]) {
+      writeFileSync(file, text);
+      await expect(
+        f.bench.consolidate("target", { sources: ["retry-b"], dryRun: false }),
+      ).rejects.toThrow(/replace valid/);
+    }
+    writeFileSync(file, `${done({ message: "workspace routing discovery timed out" })}\n`);
+    await f.bench.consolidate("target", { sources: ["retry-b"], dryRun: false });
+    expect(f.store.getTrial(trial.id)).toMatchObject({
+      solveRunId: "retry-b.b-solve",
+      outcome: { evaluation: "valid", score: 0 },
+    });
+    expect(f.bench.job("target").trials).toHaveLength(3);
+  },
+);
+
+it.each(["cancelled", "lost", "unstarted", "after"] as const)(
+  "does not reclassify Agent errors for a %s solve",
+  async (kind) => {
+    const f = fixture();
+    const run = f.runs.get("target.b-solve");
+    if (!run) throw new Error("missing fixture");
+    f.store.putRun({
+      ...run,
+      state: kind === "cancelled" || kind === "lost" ? kind : "failed",
+      startedAt: kind === "unstarted" ? null : run.startedAt,
+      spec: {
+        ...run.spec,
+        ...(kind === "after"
+          ? {
+              backend: "docker",
+              image: "fixture",
+              after: {
+                command: ["true"],
+                timeoutMin: 1,
+                env: {},
+                passEnv: [],
+                copy: [],
+                collect: [],
+              },
+            }
+          : {}),
+      },
+    });
+    const dir = join(f.runs.dirs(run.id).agent, "codex/sessions/2026/10/16");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "rollout-fixture.jsonl"),
+      `${JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "task_complete",
+          error: { message: "workspace routing discovery failed" },
+        },
+      })}\n`,
+    );
+    const before = f.bench.job("target");
+    expect((await f.bench.consolidate("target", { dryRun: false })).reclassified).toEqual([]);
+    expect(f.bench.job("target")).toEqual(before);
+  },
+);
 
 it("marks an unknown outcome invalid without sources when its Agent could not work", async () => {
   const f = fixture();

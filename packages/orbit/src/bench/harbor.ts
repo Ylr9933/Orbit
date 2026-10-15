@@ -404,7 +404,7 @@ export const toBenchTask = (t: HarborTask): BenchTask => ({
   tags: t.tags,
 });
 
-const SHARED_VERIFY =
+const VERIFY_COMMAND =
   "mkdir -p /logs/verifier /logs/agent && chmod +x /tests/test.sh && (/tests/test.sh) > /logs/verifier/test-stdout.txt 2>&1";
 
 function imageFields(img: HarborImage | null): { image: string } | { dockerfile: string } {
@@ -456,7 +456,7 @@ export function harborSolveSpec(
     Object.assign(run, {
       after: {
         // Harbor's verifier command: executable test.sh, output kept with the reward.
-        command: ["sh", "-c", SHARED_VERIFY],
+        command: ["sh", "-c", VERIFY_COMMAND],
         timeoutMin: t.verifierTimeoutSec ? t.verifierTimeoutSec / 60 : 10,
         env: t.verifier.vars,
         copy: [{ source: tests, target: "/tests" }],
@@ -516,7 +516,7 @@ export function harborVerifySpec(
   return {
     spec: {
       ...imageFields(t.verifier.image),
-      command: ["sh", "-c", "mkdir -p /logs/verifier /logs/agent && exec bash /tests/test.sh"],
+      command: ["sh", "-c", VERIFY_COMMAND],
       resources: { gpus: t.verifier.gpus, cpus: t.verifier.cpus, memGB: t.verifier.memGB },
       mounts,
       env: t.verifier.vars,

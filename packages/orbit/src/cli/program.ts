@@ -564,7 +564,8 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
     .option("--json", "print JSON")
     .action(async (ids: string[], o: { group?: string; json?: boolean }) => {
       const c = await client();
-      if (o.group) ids = [...ids, ...(await c.list({ group: o.group })).map((r) => r.id)];
+      if (o.group)
+        ids = [...ids, ...(await c.list({ group: o.group, limit: 10_000 })).map((r) => r.id)];
       if (ids.length === 0) throw new Error("give run ids or --group");
       await waitAll(c, [...new Set(ids)], Boolean(o.json));
     });
