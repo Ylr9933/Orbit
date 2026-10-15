@@ -101,7 +101,8 @@ export async function receiveBundle(
   await mkdir(root, { recursive: true, mode: 0o700 });
   const tmp = await mkdtemp(join(root, `.in-${hash.slice(0, 8)}-`));
   try {
-    const child = spawn("tar", ["-xf", "-", "--no-same-owner", "-C", tmp], {
+    // Drain archive padding to EOF before tar closes the upload pipeline's stdin.
+    const child = spawn("tar", ["-xf", "-", "--ignore-zeros", "--no-same-owner", "-C", tmp], {
       stdio: ["pipe", "ignore", "pipe"],
     });
     let err = "";

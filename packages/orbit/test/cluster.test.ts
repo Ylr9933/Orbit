@@ -83,6 +83,24 @@ describe("bundles", () => {
     expect(await receiveBundle(join(tmp, "late-cache"), h, body)).toBe(join(tmp, "late-cache", h));
   });
 
+  it("drains delayed archive padding before completing an upload", async () => {
+    const src = tree("trailing-padding");
+    const hash = await treeHash(src);
+    const archive = execFileSync("tar", ["-cf", "-", "-C", src, "."]);
+    let drained = false;
+    const body = Readable.from(
+      (async function* () {
+        yield gzipSync(archive);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        yield gzipSync(Buffer.alloc(1024));
+        drained = true;
+      })(),
+    );
+    const root = join(tmp, "padding-cache");
+    expect(await receiveBundle(root, hash, body)).toBe(join(root, hash));
+    expect(drained).toBe(true);
+  });
+
   it("aborts oversized compressed uploads and removes staging", async () => {
     const root = join(tmp, "compressed-limit");
     const body = Readable.from([gzipSync("fixture"), Buffer.alloc(700), Buffer.alloc(700)]);
