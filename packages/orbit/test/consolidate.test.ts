@@ -662,33 +662,39 @@ it("replaces a scored failed solve only by opt-in over HTTP, regardless of score
   expect(existsSync(join(f.paths.runs, run.id))).toBe(false);
 });
 
-it("retains an invalid retry with a successful solve over a non-valid target without pruning", async () => {
-  const f = fixture();
-  const retry = f.trial("source", "a", false),
-    verify = f.runs.get("source.a-verify");
-  if (!retry.outcome || !verify) throw new Error("missing fixture");
-  const outcome = { ...retry.outcome, score: 0, issues: ["verify timed out"] };
-  f.store.putTrial({ ...retry, outcome });
-  f.store.putRun({ ...verify, state: "failed", reason: "timeout after 10 min", exitCode: 143 });
-  const before = f.bench.job("target");
-  await expect(f.bench.consolidate("target", { sources: ["source"] })).rejects.toThrow(
-    /no valid result/,
-  );
-  const body = { sources: ["source"], replaceFailed: true };
-  expect((await f.bench.consolidate("target", body)).adopted).toHaveLength(1);
-  expect(f.bench.job("target")).toEqual(before);
-  await f.bench.consolidate("target", { ...body, dryRun: false });
-  expect(f.store.getTrial("target.a")).toMatchObject({
-    solveRunId: retry.solveRunId,
-    verifyRunId: retry.verifyRunId,
-    outcome,
-  });
-  expect(f.runs.get(retry.solveRunId as string)?.spec.tags.source_job).toBe("source");
-  expect(existsSync(join(f.paths.runs, verify.id, "orbit/output/answer"))).toBe(true);
-  expect(f.store.getJob("source")).toBeNull();
-});
+it.each(["succeeded", "failed"] as const)(
+  "retains a completed invalid retry with a %s solve over a non-valid target without pruning",
+  async (state) => {
+    const f = fixture();
+    const retry = f.trial("source", "a", false),
+      verify = f.runs.get("source.a-verify");
+    if (!retry.outcome || !verify) throw new Error("missing fixture");
+    const solve = f.runs.get(retry.solveRunId as string);
+    if (!solve) throw new Error("missing fixture solve");
+    f.store.putRun({ ...solve, state });
+    const outcome = { ...retry.outcome, execution: state, score: 0, issues: ["verify timed out"] };
+    f.store.putTrial({ ...retry, outcome });
+    f.store.putRun({ ...verify, state: "failed", reason: "timeout after 10 min", exitCode: 143 });
+    const before = f.bench.job("target");
+    await expect(f.bench.consolidate("target", { sources: ["source"] })).rejects.toThrow(
+      /no valid result/,
+    );
+    const body = { sources: ["source"], replaceFailed: true };
+    expect((await f.bench.consolidate("target", body)).adopted).toHaveLength(1);
+    expect(f.bench.job("target")).toEqual(before);
+    await f.bench.consolidate("target", { ...body, dryRun: false });
+    expect(f.store.getTrial("target.a")).toMatchObject({
+      solveRunId: retry.solveRunId,
+      verifyRunId: retry.verifyRunId,
+      outcome,
+    });
+    expect(f.runs.get(retry.solveRunId as string)?.spec.tags.source_job).toBe("source");
+    expect(existsSync(join(f.paths.runs, verify.id, "orbit/output/answer"))).toBe(true);
+    expect(f.store.getJob("source")).toBeNull();
+  },
+);
 
-it("protects successful valid targets and rejects invalid replacement solves, pruning and duplicate sources", async () => {
+it("protects valid targets and rejects lost or cancelled replacement solves, pruning and duplicate sources", async () => {
   const f = fixture();
   f.job("retry-b", ["b"]);
   f.trial("retry-b", "b", true);
@@ -707,13 +713,27 @@ it("protects successful valid targets and rejects invalid replacement solves, pr
   const source = f.trial("source", "a", false),
     run = f.runs.get("source.a-solve");
   if (!source.outcome || !run) throw new Error("missing fixture");
-  for (const state of ["failed", "lost"] as const) {
+  for (const state of ["lost", "cancelled"] as const) {
     f.store.putRun({ ...run, state });
     await expect(
       f.bench.consolidate("target", { sources: ["source"], replaceFailed: true, dryRun: false }),
     ).rejects.toThrow(/no valid result/);
   }
   f.store.putRun(run);
+  const target = f.store.getTrial("target.a");
+  const protectedOutcome = f.store.getTrial("target.b")?.outcome;
+  if (!target || !protectedOutcome) throw new Error("missing fixture target");
+  for (const validHistory of [false, true]) {
+    f.store.putTrial({
+      ...target,
+      outcome: validHistory ? target.outcome : protectedOutcome,
+      history: validHistory ? [{ verifyRunId: null, outcome: protectedOutcome, endedAt: at }] : [],
+    });
+    await expect(
+      f.bench.consolidate("target", { sources: ["source"], replaceFailed: true, dryRun: false }),
+    ).rejects.toThrow(/no valid result|replace valid/);
+  }
+  f.store.putTrial(target);
   f.store.putTrial({ ...source, outcome: { ...source.outcome, evaluation: "unknown" } });
   await expect(
     f.bench.consolidate("target", { sources: ["source"], replaceFailed: true, dryRun: false }),

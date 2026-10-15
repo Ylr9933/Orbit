@@ -203,7 +203,10 @@ export class OrbitClient {
       body: spec,
       timeoutMs: 600_000,
     });
-  /** Apply with the preview digest in `expect` to reject a changed consolidation plan. */
+  /**
+   * Retain completed invalid retries only over non-valid slots.
+   * Apply with the preview digest in `expect` to reject a changed consolidation plan.
+   */
   benchConsolidate = (id: string, body: BenchConsolidateInput) =>
     this.call(BenchConsolidateResult, `/bench/jobs/${enc(id)}/consolidate`, {
       method: "POST",

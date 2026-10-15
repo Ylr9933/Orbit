@@ -167,7 +167,8 @@ export function planConsolidation(input: {
       const retainInvalid =
         f.replaceFailed &&
         !protectedTarget &&
-        retrySucceeded &&
+        t.solveRunId &&
+        ["succeeded", "failed"].includes(oldRuns.get(t.solveRunId)?.state ?? "") &&
         t.outcome?.evaluation === "invalid" &&
         !t.history.some((h) => h.outcome.evaluation === "valid");
       if (isValid(t) || retainInvalid) {

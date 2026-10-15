@@ -23,7 +23,7 @@ const OPTIONS = [
   [
     "replaceFailed",
     "Replace failed solves",
-    "Allow successful retries to replace failed solves, including scored attempts. Successful valid attempts stay protected.",
+    "Allow successful retries to replace failed solves, including scored attempts. Also retain completed invalid retries, including failed solves, only over results with no valid history. Successful valid attempts stay protected.",
   ],
 ] as const;
 
