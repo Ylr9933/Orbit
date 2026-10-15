@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { type DaemonInfo, readDaemonInfo } from "../config/daemon-info.ts";
 import type { OrbitPaths } from "../config/paths.ts";
+import type { RunCursor } from "../contracts/index.ts";
 import {
   API_PREFIX,
   Artifacts,
@@ -101,13 +102,31 @@ export class OrbitClient {
   /** Pre-flight checks of a run without submitting it. */
   check = (spec: RunSpecInput) =>
     this.call(DoctorReport, "/runs/check", { method: "POST", body: spec, timeoutMs: 120_000 });
-  list = (q: { states?: RunState[]; group?: string; folder?: string; limit?: number } = {}) => {
+  list = (
+    q: {
+      states?: RunState[];
+      group?: string;
+      folder?: string;
+      limit?: number;
+      before?: RunCursor;
+    } = {},
+  ) => this.listPage(q).then((r) => r.runs);
+  listPage = (
+    q: {
+      states?: RunState[];
+      group?: string;
+      folder?: string;
+      limit?: number;
+      before?: RunCursor;
+    } = {},
+  ) => {
     const p = new URLSearchParams();
     if (q.states?.length) p.set("state", q.states.join(","));
     if (q.group) p.set("group", q.group);
     if (q.folder) p.set("folder", q.folder);
     if (q.limit) p.set("limit", String(q.limit));
-    return this.call(RunList, `/runs?${p}`).then((r) => r.runs);
+    if (q.before) p.set("before", JSON.stringify(q.before));
+    return this.call(RunList, `/runs?${p}`);
   };
   get = (id: string) => this.call(Run, `/runs/${enc(id)}`);
   cancel = (id: string) => this.call(Run, `/runs/${enc(id)}/cancel`, { method: "POST" });

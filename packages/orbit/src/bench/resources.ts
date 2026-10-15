@@ -3,8 +3,11 @@
 // `orbit bench usage`, which only suggests changes.
 import { readFileSync } from "node:fs";
 import {
+  type BenchJobDetail,
   BenchResources,
   type BenchUsageRow,
+  isAgentMethod,
+  isTerminal,
   type ResourceOverride,
   type Run,
   type RunSpecInput,
@@ -139,4 +142,33 @@ export function usageRow(task: string, requested: ResourceOverride, runs: Run[])
   }
   if (measured.length < 3) row.notes.push(`only ${measured.length} run(s) measured`);
   return row;
+}
+
+export function usageRows(
+  jobs: BenchJobDetail[],
+  getRun: (id: string) => Run | null,
+): BenchUsageRow[] {
+  const runs = new Map<string, Run[]>();
+  const requested = new Map<string, Run["spec"]>();
+  for (const d of jobs) {
+    // Only Agent methods show what a task needs; oracle and empty runs say nothing about it.
+    const agents = new Set(d.job.spec.methods.filter(isAgentMethod).map((m) => m.name));
+    for (const t of d.trials) {
+      if (!agents.has(t.method)) continue;
+      const r = t.solveRunId ? getRun(t.solveRunId) : null;
+      if (!r || !isTerminal(r.state)) continue;
+      runs.set(t.task, [...(runs.get(t.task) ?? []), r]);
+      // The latest job's request is what a suggestion is compared against.
+      requested.set(t.task, r.spec);
+    }
+  }
+  return [...runs.keys()].sort().map((task) => {
+    const s = requested.get(task) as Run["spec"];
+    const { cpus, memGB, gpus, gpuMemGB } = s.resources;
+    return usageRow(
+      task,
+      { cpus, memGB, gpus, ...(gpuMemGB ? { gpuMemGB } : {}), timeoutMin: s.timeoutMin },
+      runs.get(task) ?? [],
+    );
+  });
 }

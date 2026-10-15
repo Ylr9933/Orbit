@@ -1,9 +1,10 @@
 // Named datasets and model weights on this node: a name shared across the cluster, mapped to a path
 // local to each node. Placement only picks nodes that have every dataset a run mounts; Orbit never
 // copies data between nodes.
-import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { Dataset, DatasetInput, type DatasetInput as DatasetInputT } from "../contracts/index.ts";
 import { nowIso } from "../lib/ids.ts";
+import { writePrivateJson } from "../lib/private-json.ts";
 
 export class DatasetRegistry {
   private readonly file: string;
@@ -19,12 +20,7 @@ export class DatasetRegistry {
   }
 
   private write(all: Dataset[]): void {
-    const tmp = `${this.file}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify({ version: 1, datasets: all }, null, 2)}\n`, {
-      mode: 0o600,
-    });
-    chmodSync(tmp, 0o600);
-    renameSync(tmp, this.file);
+    writePrivateJson(this.file, { version: 1, datasets: all });
   }
 
   list(): Dataset[] {

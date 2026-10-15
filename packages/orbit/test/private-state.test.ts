@@ -135,3 +135,95 @@ it("continues after EPERM and leaves a doctor warning", () => {
     detail: expect.stringContaining(paths.home),
   });
 });
+
+it("tightens every existing private JSON, log and lock file without creating absent files", () => {
+  const paths = fixture("private-files");
+  ensureHome(paths);
+  const files = [
+    paths.auth,
+    paths.notify,
+    paths.nodes,
+    paths.cluster,
+    paths.datasets,
+    paths.benchmarks,
+    paths.daemonFile,
+    paths.daemonLog,
+    join(paths.home, "daemon.lock"),
+  ];
+  expect(privateStateCheck(paths).warn).toBe(false);
+  for (const file of files) expect(fs.existsSync(file)).toBe(false);
+  for (const file of files) {
+    fs.writeFileSync(file, "fixture");
+    fs.chmodSync(file, 0o644);
+  }
+  for (const file of files) expect(privateStateCheck(paths).detail).toContain(file);
+  tightenPrivateState(paths, vi.fn());
+  for (const file of files) expect(mode(file)).toBe(0o600);
+  expect(privateStateCheck(paths).warn).toBe(false);
+});
+
+it("checks and tightens an owned home symlink's target, including default data paths", () => {
+  const paths = orbitPaths({ ORBIT_HOME: join(root, "linked-home") });
+  ensureHome(paths);
+  const target = join(root, "home-target");
+  fs.renameSync(paths.home, target);
+  fs.symlinkSync(target, paths.home);
+  fs.chmodSync(target, 0o775);
+  fs.writeFileSync(paths.auth, "fixture");
+  fs.chmodSync(paths.auth, 0o644);
+  expect(privateStateCheck(paths).warn).toBe(true);
+  tightenPrivateState(paths, vi.fn());
+  expect(mode(target)).toBe(0o700);
+  expect(mode(paths.auth)).toBe(0o600);
+  expect(fs.lstatSync(paths.home).isSymbolicLink()).toBe(true);
+  expect(privateStateCheck(paths).warn).toBe(false);
+});
+
+it("does not follow private file or intermediate directory symlinks beneath a linked home", () => {
+  const paths = orbitPaths({ ORBIT_HOME: join(root, "nested-home") });
+  ensureHome(paths);
+  const target = join(root, "nested-target");
+  fs.renameSync(paths.home, target);
+  fs.symlinkSync(target, paths.home);
+  const outside = join(root, "outside-cache");
+  fs.mkdirSync(join(outside, "bundles"), { recursive: true });
+  fs.chmodSync(join(outside, "bundles"), 0o775);
+  fs.rmSync(dirname(paths.bundles), { recursive: true });
+  fs.symlinkSync(outside, dirname(paths.bundles));
+  const file = join(root, "outside-auth");
+  fs.writeFileSync(file, "fixture");
+  fs.chmodSync(file, 0o644);
+  fs.symlinkSync(file, paths.auth);
+  tightenPrivateState(paths, vi.fn());
+  expect(mode(join(outside, "bundles"))).toBe(0o775);
+  expect(mode(file)).toBe(0o644);
+  expect(privateStateCheck(paths)).toMatchObject({
+    warn: true,
+    detail: expect.stringContaining("symlink"),
+  });
+});
+
+it.each(["link", "target"])(
+  "refuses a home symlink when its %s belongs to another user",
+  async (foreign) => {
+    const paths = orbitPaths({ ORBIT_HOME: join(root, `foreign-${foreign}`) });
+    ensureHome(paths);
+    const target = join(root, `foreign-${foreign}-target`);
+    fs.renameSync(paths.home, target);
+    fs.symlinkSync(target, paths.home);
+    fs.chmodSync(target, 0o775);
+    fs.writeFileSync(paths.auth, "fixture");
+    fs.chmodSync(paths.auth, 0o644);
+    const { lstatSync: lstat } = await vi.importActual<typeof fs>("node:fs");
+    vi.mocked(fs.lstatSync).mockImplementation(((path: fs.PathLike) => {
+      const st = lstat(path);
+      if (path === (foreign === "link" ? paths.home : target))
+        st.uid = (process.getuid?.() ?? 0) + 1;
+      return st;
+    }) as typeof fs.lstatSync);
+    tightenPrivateState(paths, vi.fn());
+    expect(mode(target)).toBe(0o775);
+    expect(mode(paths.auth)).toBe(0o644);
+    expect(privateStateCheck(paths).warn).toBe(true);
+  },
+);

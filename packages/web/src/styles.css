@@ -2018,3 +2018,20 @@ a.card.phase:hover {
   border: 1px solid var(--border);
   border-radius: 6px;
 }
+
+.merge-dialog {
+  width: min(720px, 92vw);
+  max-height: 82vh;
+  margin: 8vh auto 0;
+  padding: 0;
+  overflow-y: auto;
+  color: var(--text);
+}
+.merge-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+.merge-dialog ul {
+  margin: 0;
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+}

@@ -6,6 +6,7 @@ import {
   Lease,
   type MethodSummary,
   Run,
+  type RunCursor,
   RunEvent,
   type RunState,
   Trial,
@@ -91,6 +92,7 @@ export interface RemoteSync {
 }
 
 export interface RunFilter {
+  before?: RunCursor;
   states?: RunState[];
   group?: string;
   /** This folder and its subfolders. */
@@ -217,6 +219,10 @@ export class Store {
     if (filter.folder) {
       where.push(IN_FOLDER);
       args.push(filter.folder, filter.folder, filter.folder);
+    }
+    if (filter.before) {
+      where.push("(created_at < ? OR (created_at = ? AND id < ?))");
+      args.push(filter.before.createdAt, filter.before.createdAt, filter.before.id);
     }
     const sql = `SELECT doc FROM runs ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
                  ORDER BY created_at DESC, id DESC LIMIT ${Math.max(1, filter.limit ?? 500)}`;

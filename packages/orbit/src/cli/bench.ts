@@ -14,22 +14,12 @@ import {
   trialRunIds,
 } from "../contracts/index.ts";
 import { fmtCi, fmtMetric, primaryMetric, resolveMetrics } from "../contracts/metrics.ts";
-import { kv, type Print } from "./auth.ts";
+import type { Print } from "./auth.ts";
 import { confirmTyped } from "./confirm.ts";
+import { compactTable as table } from "./format.ts";
+import { kv, numericOption } from "./options.ts";
 
 type Job = BenchJobList["jobs"][number];
-
-function table(rows: string[][]): string {
-  const widths = rows[0]?.map((_, i) => Math.max(...rows.map((r) => (r[i] ?? "").length))) ?? [];
-  return rows
-    .map((r) =>
-      r
-        .map((c, i) => c.padEnd(widths[i] ?? 0))
-        .join("  ")
-        .trimEnd(),
-    )
-    .join("\n");
-}
 
 /** `72.5% ±3.2`: a metric's mean with the half width of its 95% CI. */
 const statText = (s: MethodSummary["metrics"][string] | undefined, m: MetricSpec) =>
@@ -334,8 +324,8 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
       (v, p: string[]) => [...p, v],
       [],
     )
-    .option("--seeds <n>", "repetitions per task × method", (v) => Number.parseInt(v, 10), 1)
-    .option("--timeout <min>", "solve timeout per trial in minutes", Number.parseFloat)
+    .option("--seeds <n>", "repetitions per task × method", numericOption("integer"), 1)
+    .option("--timeout <min>", "solve timeout per trial in minutes", numericOption("float"))
     .option(
       "--option <KEY=VALUE>",
       "adapter option, e.g. promptLevel=b2 for asi",

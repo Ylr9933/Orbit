@@ -12,6 +12,8 @@ import type {
   NotifyTarget,
 } from "../contracts/index.ts";
 import { readStdinSecret } from "./confirm.ts";
+import { compactTable as table } from "./format.ts";
+import { kv } from "./options.ts";
 
 export type Print = (json: boolean | undefined, value: unknown, text: () => string) => void;
 
@@ -109,15 +111,7 @@ async function readSecret(o: AddOpts, env: Record<string, string>): Promise<stri
   );
 }
 
-export function kv(list: string[], what: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const item of list) {
-    const i = item.indexOf("=");
-    if (i <= 0) throw new Error(`${what} must be KEY=VALUE: ${item}`);
-    out[item.slice(0, i)] = item.slice(i + 1);
-  }
-  return out;
-}
+export { kv } from "./options.ts";
 
 function formatProfiles(ps: AuthProfile[]): string {
   if (ps.length === 0) return "no auth profiles; add one with `orbit auth add`";
@@ -144,18 +138,6 @@ function formatTargets(ts: NotifyTarget[]): string {
       t.connection ?? "",
     ]),
   ]);
-}
-
-function table(rows: string[][]): string {
-  const widths = rows[0]?.map((_, i) => Math.max(...rows.map((r) => (r[i] ?? "").length))) ?? [];
-  return rows
-    .map((r) =>
-      r
-        .map((c, i) => c.padEnd(widths[i] ?? 0))
-        .join("  ")
-        .trimEnd(),
-    )
-    .join("\n");
 }
 
 export function registerAuth(program: Command, client: () => Promise<OrbitClient>, print: Print) {

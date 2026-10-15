@@ -15,6 +15,7 @@ import { bytes, isActive } from "../../lib/format.ts";
 import { useHotkeys } from "../../lib/hotkeys.ts";
 import { ansiSpans, canReadMoreLogs, type LogLine, toLines } from "../../lib/log.ts";
 import { setHash, setQuery, useLocation } from "../../lib/router.ts";
+import { usePageVisible } from "../../lib/use.ts";
 
 /** Load at most this much of a log into the browser; older bytes are available via download. */
 const MAX_BYTES = 48 * 1024 * 1024;
@@ -40,6 +41,7 @@ interface LogState {
 }
 
 function useLog(run: Run) {
+  const visible = usePageVisible();
   const [st, setSt] = useState<LogState>({
     lines: [],
     partial: "",
@@ -75,7 +77,7 @@ function useLog(run: Run) {
         const start = probe.size > MAX_BYTES ? probe.size - MAX_BYTES : 0;
         s = { ...s, next: start, start, size: probe.size };
       }
-      for (let i = 0; i < 64 && alive.current; i++) {
+      for (let i = 0; i < 64 && alive.current && document.visibilityState !== "hidden"; i++) {
         const c = await api.logs(run.id, s.next, CHUNK);
         let text = s.partial + c.text;
         // When starting mid-file, drop the first (partial) line.
@@ -113,20 +115,20 @@ function useLog(run: Run) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: pull again when the state changes
   useEffect(() => {
-    void pull();
-  }, [pull, run.state]);
+    if (visible) void pull();
+  }, [pull, run.state, visible]);
   useEffect(() => {
-    if (!active) return;
+    if (!active || !visible) return;
     const t = setInterval(() => void pull(), 1000);
     return () => clearInterval(t);
-  }, [active, pull]);
+  }, [active, pull, visible]);
   // After the run ends, keep pulling until the daemon reports EOF (logs are drained before cleanup).
   // biome-ignore lint/correctness/useExhaustiveDependencies: st.next re-arms the timer after each pull
   useEffect(() => {
-    if (active || st.eof || !st.loaded) return;
+    if (active || st.eof || !st.loaded || !visible) return;
     const t = setTimeout(() => void pull(), 800);
     return () => clearTimeout(t);
-  }, [active, st.eof, st.loaded, st.next, pull]);
+  }, [active, st.eof, st.loaded, st.next, pull, visible]);
 
   const lines = useMemo(
     () => (st.partial ? st.lines.concat(toLines(st.partial, st.nextN)) : st.lines),

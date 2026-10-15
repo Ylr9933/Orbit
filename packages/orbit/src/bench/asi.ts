@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AdapterRequest, BenchTask, Method } from "../contracts/index.ts";
+import { isAgentMethod } from "../contracts/index.ts";
 import { agentErrorKind } from "../harness/index.ts";
 import type { AdapterHandlers, RunDescription, ScoreReply, TrialRequest } from "./adapter.ts";
 
@@ -141,7 +142,7 @@ export function oracleTemplate(instances: string, outputs: string[]): string {
 }
 
 function agentArgs(method: Method): string[] {
-  if (method.agent === "oracle" || method.agent === "empty") return [];
+  if (!isAgentMethod(method)) return [];
   const config: Record<string, string> = {};
   if (method.model) config.model = method.model;
   if (method.effort) config.effort = method.effort;
@@ -216,7 +217,7 @@ print(check())
 `;
 
 function requireCompatibleRunner(b: Bench, method: Method): void {
-  if (method.agent !== "codex" && method.agent !== "claude-code") return;
+  if (!isAgentMethod(method)) return;
   const adapter = method.agent === "codex" ? "codex_cli" : "claude_code_cli";
   const result = spawnSync(
     b.config.python ?? "python3",

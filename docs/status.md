@@ -1,7 +1,7 @@
 # Orbit status
 
-- **Updated at:** 2026-10-15
-- **Basis:** State/bench and security corrections plus hot-path optimizations: SQL bench summaries/completion, background cancellation, cached lookups, shared HTTP subscriptions and isolated snapshot objects with submodule warnings.
+- **Updated at:** 2026-10-16
+- **Basis:** Domain modules split behind stable APIs; pure bench merge planning, paginated Web runs, merge preview dialog, visible-tab polling and private state checks for owned home symlinks.
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none for the current release.
 
@@ -11,10 +11,10 @@
 - `pnpm verify` (Biome, tsc, boundaries, vitest, builds). Auto-started local daemon (127.0.0.1, token/cookie, one-time browser login, private sqlite/state, one writer per home); `orbit run / sweep / ps / show / logs / wait [-g] / cancel / note / resources / doctor / web / auth / notify / bench / node / data`.
 - Resource leases with a queue (with reasons); use outside Orbit is respected (busy GPUs, measured CPU use, `MemAvailable`). Docker executor: code snapshot, CDI GPU mapping checked against the lease,
   execution-only timeouts; logs, metrics and outputs collected before cleanup. Process backend for native runners, with a labelling, GPU-limiting docker shim.
-- Session linking; Web UI: runs, run detail, trial page, compare, resources, settings, bench; typed-confirmation deletion.
+- Session linking; Web UI: complete paginated runs with SSE, run detail, trial page, compare, resources, settings, bench; typed-confirmation deletion and digest-confirmed merge dialog; polling pauses in hidden tabs.
 - Who holds each GPU (user, command, PID, container/Run, memory, runtime; else unknown) in Web and CLI.
 - Pre-flight `orbit run|sweep --check` (data, output disk, image, placement); `--smoke '<cmd>'` gates submission.
-- Data directory apart from `~/.orbit` (`orbit config data`, `ORBIT_DATA`), doctor disk warnings; logical folders (`--folder`, `mv`, `folders`, `export`).
+- Data directory apart from `~/.orbit` (`orbit config data`, `ORBIT_DATA`), doctor disk warnings; owned home symlink targets and existing private files checked/tightened; logical folders (`--folder`, `mv`, `folders`, `export`).
 - Auth profiles for Codex and Claude Code; notifications (Feishu, DingTalk, WeCom, Slack, webhook; `feishu-app` bot: `orbit feishu init` QR setup, pairing, read-only `/gpu` `/runs` `/show`, curve cards).
 - Bench: solve + verify run per trial, valid-only means (OOM solves invalid); one JSON adapter protocol
   for built-ins and external executables (e.g. ResearchClawBench); per-task resources and timeout resolved before adapter planning; `bench usage`

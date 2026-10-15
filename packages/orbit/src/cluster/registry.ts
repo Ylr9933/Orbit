@@ -1,8 +1,9 @@
 // Cluster configuration files, written only by the daemon (0600): the worker nodes this node places
 // runs on (with their tokens), and this node's own listener for a primary.
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { nowIso } from "../lib/ids.ts";
+import { writePrivateJson } from "../lib/private-json.ts";
 
 export interface NodeEntry {
   name: string;
@@ -21,13 +22,6 @@ export interface ExposeConfig {
 function readJson<T>(file: string, fallback: T): T {
   if (!existsSync(file)) return fallback;
   return JSON.parse(readFileSync(file, "utf8")) as T;
-}
-
-function writeJson(file: string, value: unknown): void {
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, file);
 }
 
 export class NodeRegistry {
@@ -52,7 +46,7 @@ export class NodeRegistry {
     const nodes = [...all.filter((n) => n.name !== e.name), e].sort((a, b) =>
       a.name.localeCompare(b.name),
     );
-    writeJson(this.file, { version: 1, nodes });
+    writePrivateJson(this.file, { version: 1, nodes });
     return e;
   }
 
@@ -60,7 +54,7 @@ export class NodeRegistry {
     const all = this.list();
     const rest = all.filter((n) => n.name !== name);
     if (rest.length === all.length) return false;
-    writeJson(this.file, { version: 1, nodes: rest });
+    writePrivateJson(this.file, { version: 1, nodes: rest });
     return true;
   }
 }
@@ -77,19 +71,19 @@ export class ExposeStore {
     const c = readJson<Partial<ExposeConfig>>(this.file, {});
     if (c.token) return { listen: c.listen ?? null, token: c.token };
     const fresh = { listen: c.listen ?? null, token: newToken() };
-    writeJson(this.file, { version: 1, ...fresh });
+    writePrivateJson(this.file, { version: 1, ...fresh });
     return fresh;
   }
 
   setListen(listen: string | null): ExposeConfig {
     const c = { ...this.read(), listen };
-    writeJson(this.file, { version: 1, ...c });
+    writePrivateJson(this.file, { version: 1, ...c });
     return c;
   }
 
   rotate(): ExposeConfig {
     const c = { ...this.read(), token: newToken() };
-    writeJson(this.file, { version: 1, ...c });
+    writePrivateJson(this.file, { version: 1, ...c });
     return c;
   }
 }

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   type AuthProfile,
   AuthProfileInput,
@@ -6,6 +6,7 @@ import {
   AuthProfile as AuthProfileSchema,
 } from "../contracts/index.ts";
 import { nowIso } from "../lib/ids.ts";
+import { writePrivateJson } from "../lib/private-json.ts";
 import { maskSecret } from "../lib/redact.ts";
 
 /** A profile with its secret. Only the daemon holds these. */
@@ -94,10 +95,7 @@ export class AuthStore {
   }
 
   private write(data: AuthFile): void {
-    const tmp = `${this.file}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
-    chmodSync(tmp, 0o600);
-    renameSync(tmp, this.file);
+    writePrivateJson(this.file, data);
   }
 
   list(): AuthProfile[] {

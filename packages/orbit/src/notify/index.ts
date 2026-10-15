@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   FEISHU_APP,
   isTerminal,
@@ -9,6 +9,7 @@ import {
   type NotifyTargetInput as NotifyTargetInputT,
   type Run,
 } from "../contracts/index.ts";
+import { writePrivateJson } from "../lib/private-json.ts";
 import { FeishuApi, groupCard, runCard, textCard } from "./feishu.ts";
 
 /** A target that cannot be saved as given (shown to the user). */
@@ -48,10 +49,7 @@ export class NotifyStore {
   }
 
   private write(targets: StoredTarget[]): void {
-    const tmp = `${this.file}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify({ version: 1, targets }, null, 2)}\n`, { mode: 0o600 });
-    chmodSync(tmp, 0o600);
-    renameSync(tmp, this.file);
+    writePrivateJson(this.file, { version: 1, targets });
   }
 
   list(): NotifyTarget[] {

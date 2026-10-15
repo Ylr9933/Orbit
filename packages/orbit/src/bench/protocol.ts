@@ -14,6 +14,7 @@ import {
   AdapterTasksResponse,
   type Benchmark,
   BUILTIN_ADAPTERS,
+  isAgentMethod,
   type Method,
   RunSpec,
   type RunSpecInput,
@@ -166,8 +167,6 @@ export class AdapterClient {
   }
 }
 
-const isAgent = (m: Method) => m.agent === "codex" || m.agent === "claude-code";
-
 /** The RunSpec of an adapter's run description, with what Orbit owns filled in. */
 export function toRunSpec(
   s: AdapterRunSpec,
@@ -176,7 +175,7 @@ export function toRunSpec(
   phase: "solve" | "verify",
 ): RunSpecInput {
   const { agentTask, command, ...rest } = s;
-  if (agentTask && (phase === "verify" || !isAgent(method)))
+  if (agentTask && (phase === "verify" || !isAgentMethod(method)))
     throw new AdapterError(
       phase === "verify"
         ? "verify runs cannot ask for an Agent"
@@ -188,7 +187,7 @@ export function toRunSpec(
     env: { ...b.env, ...((rest.env as Record<string, string> | undefined) ?? {}) },
     snapshot: false,
   } as RunSpecInput;
-  if (phase === "solve" && isAgent(method)) {
+  if (phase === "solve" && isAgentMethod(method)) {
     // The Agent reaches its model API; native runners get the auth to inject into their containers.
     spec.auth = method.auth;
     spec.agentBundle = method.bundle;

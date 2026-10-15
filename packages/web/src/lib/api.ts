@@ -22,8 +22,10 @@ import type {
   Metrics,
   NotifyTarget,
   Run,
+  RunCursor,
   RunDeletion,
   RunEvent,
+  RunList,
   RunSessions,
 } from "@zjunlp/orbit/contracts";
 
@@ -96,7 +98,19 @@ const enc = encodeURIComponent;
 
 export const api = {
   health: () => req<{ ok: boolean }>("/health"),
-  runs: (limit = 1000) => req<{ runs: Run[] }>(`/runs?limit=${limit}`).then((r) => r.runs),
+  runs: (limit = 1000) => api.runsPage(limit).then((r) => r.runs),
+  runsPage: (limit = 1000, before?: RunCursor) =>
+    req<RunList>(`/runs?limit=${limit}${before ? `&before=${enc(JSON.stringify(before))}` : ""}`),
+  allRuns: async (): Promise<Run[]> => {
+    const runs: Run[] = [];
+    let before: RunCursor | undefined;
+    do {
+      const page = await api.runsPage(1000, before);
+      runs.push(...page.runs);
+      before = page.next ?? undefined;
+    } while (before);
+    return runs;
+  },
   run: (id: string) => req<Run>(`/runs/${enc(id)}`),
   cancel: (id: string) => req<Run>(`/runs/${enc(id)}/cancel`, { method: "POST" }),
   deleteRuns: (ids: string[]) =>

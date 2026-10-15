@@ -1,0 +1,264 @@
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { Readable } from "node:stream";
+import type { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
+import { z } from "zod";
+import {
+  isTerminal,
+  type Run,
+  RunCursor,
+  type RunList,
+  type RunSessions,
+  RunState,
+} from "../../contracts/index.ts";
+import {
+  decodePath,
+  listArtifacts,
+  outputFile,
+  readDiff,
+  readLog,
+  readMetrics,
+} from "../../records/index.ts";
+import { loadRunAgentTranscript, loadTranscript } from "../../sessions/index.ts";
+import type { AppDeps } from "../app.ts";
+import { must, num, remoteRecords } from "../http.ts";
+
+export function registerRunsRoutes(api: Hono, deps: AppDeps): void {
+  const { runs, cluster } = deps;
+  const waiters = new Map<string, Set<(run: Run) => void>>();
+  const subscribers = new Set<(event: string, data: string) => void>();
+  runs.on("change", ({ run }) => {
+    if (isTerminal(run.state) && run.cleanup !== "pending")
+      for (const finish of waiters.get(run.id) ?? []) finish(run);
+    if (subscribers.size) {
+      const data = JSON.stringify(run);
+      for (const send of subscribers) send("run", data);
+    }
+  });
+  runs.on("deleted", (ids) => {
+    if (subscribers.size) {
+      const data = JSON.stringify({ ids });
+      for (const send of subscribers) send("deleted", data);
+    }
+  });
+
+  api.get("/runs", (c) => {
+    const states = c.req
+      .query("state")
+      ?.split(",")
+      .filter(Boolean)
+      .map((s) => RunState.parse(s));
+    const limit = num(c.req.query("limit"), 500);
+    const folder = c.req.query("folder") || undefined;
+    const cursor = c.req.query("before");
+    const before = cursor ? RunCursor.parse(JSON.parse(cursor)) : undefined;
+    const page = runs.storeList({ states, group: c.req.query("group"), folder, limit, before });
+    const last = page.at(-1);
+    return c.json<RunList>({
+      runs: page,
+      next:
+        last && page.length === Math.max(1, limit)
+          ? { createdAt: last.createdAt, id: last.id }
+          : null,
+    });
+  });
+  api.post("/runs", async (c) =>
+    c.json(await runs.submit(await c.req.json(), { folder: c.req.query("folder") }), 201),
+  );
+
+  api.post("/runs/check", async (c) => c.json(await runs.check(await c.req.json())));
+
+  api.get("/runs/:id", (c) => c.json(must(runs.get(c.req.param("id")))));
+  api.post("/runs/:id/cancel", async (c) => c.json(await runs.cancel(c.req.param("id"))));
+  api.put("/runs/:id/note", async (c) => {
+    const { note } = z.object({ note: z.string().max(100_000) }).parse(await c.req.json());
+    return c.json(runs.setNote(c.req.param("id"), note));
+  });
+
+  /** Long-poll until the run is terminal or `timeout` seconds pass; returns the current run. */
+  api.get("/runs/:id/wait", async (c) => {
+    const id = c.req.param("id");
+    const timeoutMs = Math.min(num(c.req.query("timeout"), 30), 120) * 1000;
+    const run = must(runs.get(id));
+    if (isTerminal(run.state) && run.cleanup !== "pending") return c.json(run);
+    const done = await new Promise<Run>((resolve) => {
+      const signal = c.req.raw.signal;
+      const own = waiters.get(id) ?? new Set<(run: Run) => void>();
+      const t = setTimeout(() => finish(runs.get(id) ?? run), timeoutMs);
+      const onAbort = () => finish(run);
+      const finish = (r: Run) => {
+        clearTimeout(t);
+        signal.removeEventListener("abort", onAbort);
+        own.delete(finish);
+        if (own.size === 0) waiters.delete(id);
+        resolve(r);
+      };
+      own.add(finish);
+      waiters.set(id, own);
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
+    return c.json(done);
+  });
+
+  api.get("/runs/:id/events", (c) => {
+    const id = c.req.param("id");
+    must(runs.get(id));
+    return c.json({ events: runs.events(id, num(c.req.query("after"), 0)) });
+  });
+
+  api.get("/runs/:id/logs", async (c) => {
+    const run = must(runs.get(c.req.param("id")));
+    const offset = num(c.req.query("offset"), 0);
+    const limit = num(c.req.query("limit"), 256 * 1024);
+    // Process runs write straight to the log; it is redacted in place only when they end.
+    const terminal = isTerminal(run.state);
+    const chunk = await readLog(
+      runs.dirs(run.id).log,
+      offset,
+      limit,
+      terminal,
+      run.spec.backend === "process" && !terminal ? runs.redactor(run) : undefined,
+    );
+    return c.json(chunk);
+  });
+
+  /** The whole combined log as plain text (for download). */
+  api.get("/runs/:id/log.txt", async (c) => {
+    const run = must(runs.get(c.req.param("id")));
+    const file = runs.dirs(run.id).log;
+    const st = await stat(file).catch(() => null);
+    if (!st) return c.text("");
+    c.header("content-type", "text/plain; charset=utf-8");
+    if (c.req.query("download")) c.header("content-disposition", attachment(`${run.id}.log`));
+    // As for /logs: a running process run's log is not redacted on disk yet.
+    if (run.spec.backend === "process" && !isTerminal(run.state))
+      return c.body(
+        Readable.toWeb(
+          createReadStream(file).pipe(runs.redactor(run).stream({ final: false })),
+        ) as ReadableStream,
+      );
+    c.header("content-length", String(st.size));
+    return c.body(Readable.toWeb(createReadStream(file)) as ReadableStream);
+  });
+
+  // Irreversible: the CLI and the Web UI ask for a typed confirmation before calling it.
+  api.post("/runs/delete", async (c) => {
+    const { ids } = z
+      .object({ ids: z.array(z.string()).min(1).max(5000) })
+      .parse(await c.req.json());
+    return c.json(await runs.delete(ids));
+  });
+
+  api.get("/runs/:id/metrics", async (c) => {
+    const run = must(runs.get(c.req.param("id")));
+    return c.json(await readMetrics(runs.dirs(run.id).metrics));
+  });
+
+  // Outputs of a run on another node stay there and are read through it on demand.
+  api.get("/runs/:id/artifacts", async (c) => {
+    const run = must(runs.get(c.req.param("id")));
+    if (run.remote) return c.json(must(await remoteRecords(() => cluster.artifacts(run))));
+    return c.json(await listArtifacts(runs.dirs(run.id).output));
+  });
+
+  api.get("/runs/:id/files/*", async (c) => {
+    const run = must(runs.get(c.req.param("id")));
+    const rel = decodePath(c.req.path, "/files/");
+    // Run outputs are untrusted content on the daemon's origin: no script, no type sniffing.
+    c.header("content-security-policy", ARTIFACT_CSP);
+    c.header("x-content-type-options", "nosniff");
+    c.header("content-type", contentType(rel));
+    if (c.req.query("download")) c.header("content-disposition", attachment(rel));
+    if (run.remote) {
+      const res = await remoteRecords(() => cluster.file(run, rel));
+      if (!res || res.status === 404) return c.json({ error: "not found" }, 404);
+      c.header("content-length", res.headers.get("content-length") ?? undefined);
+      if (c.req.method === "HEAD") {
+        await res.body?.cancel();
+        return c.body(null);
+      }
+      return c.body(res.body as ReadableStream);
+    }
+    const f = await outputFile(runs.dirs(run.id).output, rel, c.req.raw.signal);
+    if (!f) return c.json({ error: "not found" }, 404);
+    c.header("content-length", String(f.size));
+    if (c.req.method === "HEAD") {
+      await f.body.cancel();
+      return c.body(null);
+    }
+    return c.body(f.body);
+  });
+
+  api.get("/runs/:id/diff", async (c) => {
+    const run = must(runs.get(c.req.param("id")));
+    return c.json(await readDiff(runs.dirs(run.id).diff));
+  });
+
+  api.get("/runs/:id/session", async (c) => {
+    const run = must(runs.get(c.req.param("id")));
+    const submitter = run.spec.agent ? await loadTranscript(run.spec.agent) : null;
+    // A run executed on a worker keeps its Agent home there: only local runs have one here.
+    const agent = run.remote ? null : await loadRunAgentTranscript(runs.dirs(run.id).agent);
+    return c.json<RunSessions>({
+      submitter,
+      submitterError:
+        run.spec.agent && !submitter ? "session transcript not found on this node" : null,
+      agent,
+    });
+  });
+
+  /** Server-sent events: `run` with the full Run on every change. */
+  api.get("/stream", (c) =>
+    streamSSE(c, async (stream) => {
+      const send = (event: string, data: string) => {
+        void stream.writeSSE({ event, data }).catch(() => stream.abort());
+      };
+      const signal = c.req.raw.signal;
+      const onAbort = () => stream.abort();
+      subscribers.add(send);
+      const ping = setInterval(() => send("ping", ""), 15_000);
+      try {
+        await new Promise<void>((resolve) => {
+          stream.onAbort(resolve);
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted || stream.aborted) {
+            onAbort();
+            resolve();
+          }
+        });
+      } finally {
+        clearInterval(ping);
+        subscribers.delete(send);
+        signal.removeEventListener("abort", onAbort);
+      }
+    }),
+  );
+}
+const ARTIFACT_CSP = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'";
+
+/** `Content-Disposition` for a download, with a UTF-8 name and an ASCII fallback. */
+function attachment(path: string): string {
+  const name = path.split("/").pop() || "download";
+  const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
+const TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  svg: "image/svg+xml",
+  webp: "image/webp",
+  pdf: "application/pdf",
+  json: "application/json",
+  jsonl: "text/plain; charset=utf-8",
+  html: "text/plain; charset=utf-8",
+};
+
+function contentType(file: string): string {
+  const ext = file.split(".").pop()?.toLowerCase() ?? "";
+  return TYPES[ext] ?? "text/plain; charset=utf-8";
+}

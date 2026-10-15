@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { visiblePolling } from "./polling.ts";
 
 export interface Async<T> {
   data: T | undefined;
@@ -30,11 +31,7 @@ export function useAsync<T>(
   // biome-ignore lint/correctness/useExhaustiveDependencies: caller controls deps
   useEffect(() => {
     let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const next = () => {
-      const o = optsRef.current;
-      if (live && o.poll && o.pollMs) timer = setTimeout(reload, o.pollMs);
-    };
+    const polling = visiblePolling(reload, () => optsRef.current);
     setLoading(true);
     fnRef.current().then(
       (d) => {
@@ -42,18 +39,18 @@ export function useAsync<T>(
         setData(d);
         setError(null);
         setLoading(false);
-        next();
+        polling.settled();
       },
       (e: Error) => {
         if (!live) return;
         setError(e.message);
         setLoading(false);
-        next();
+        polling.settled();
       },
     );
     return () => {
       live = false;
-      clearTimeout(timer);
+      polling.dispose();
     };
   }, [...deps, tick]);
 
@@ -65,8 +62,20 @@ export function useAsync<T>(
       first.current = false;
       return;
     }
-    if (opts.poll && opts.pollMs) reload();
+    if (opts.poll && opts.pollMs && document.visibilityState !== "hidden") reload();
   }, [opts.poll, opts.pollMs]);
 
   return { data, error, loading, reload };
+}
+
+const subscribeVisibility = (changed: () => void) => {
+  document.addEventListener("visibilitychange", changed);
+  return () => document.removeEventListener("visibilitychange", changed);
+};
+export function usePageVisible(): boolean {
+  return useSyncExternalStore(
+    subscribeVisibility,
+    () => document.visibilityState !== "hidden",
+    () => true,
+  );
 }

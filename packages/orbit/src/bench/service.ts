@@ -2,17 +2,14 @@
 // solve Run's after phase, for verifiers that need its container) on the same lease model as every
 // other run. BenchService advances trials when their runs change, and
 // recovers open trials from the store after a daemon restart.
-import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { cp } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { isDeepStrictEqual } from "node:util";
-import type { AuthStore } from "../auth/index.ts";
+import type { AuthEntry, AuthStore } from "../auth/index.ts";
 import type { OrbitPaths } from "../config/paths.ts";
 import {
   type AdapterTasksResponse,
   type BenchCompare,
-  BenchConsolidate,
   type BenchConsolidateInput,
   type BenchConsolidateResult,
   type BenchJob,
@@ -29,10 +26,9 @@ import {
   Folder,
   type FolderExportResult,
   type FolderMoveResult,
+  isAgentMethod,
   isTerminal,
   type Method,
-  type MethodSummary,
-  type MetricSpec,
   type Outcome,
   type Run,
   type RunDeletion,
@@ -41,29 +37,28 @@ import {
   type Trial,
   trialRunIds,
 } from "../contracts/index.ts";
-import {
-  aggregate,
-  metricValue,
-  pairedDiff,
-  resolveMetrics,
-  taskMeans,
-} from "../contracts/metrics.ts";
+import { metricValue, resolveMetrics } from "../contracts/metrics.ts";
 import { newId, nowIso } from "../lib/ids.ts";
 import { dirBytes } from "../records/index.ts";
 import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { type AgentFailure, runAgentFailure } from "../sessions/index.ts";
 import type { Store } from "../store/index.ts";
 import { gitSource } from "../workspace/snapshot.ts";
+import { classify, cleanupOf, shouldCheckAgentFailure, solveVerdict } from "./classify.ts";
 import {
-  agentFailureIssue,
-  classify,
-  cleanupOf,
-  shouldCheckAgentFailure,
-  solveVerdict,
-} from "./classify.ts";
+  benchGroup,
+  consolidateOptions,
+  planConsolidation,
+  sameMethodSetup,
+} from "./consolidate.ts";
+import { compareJobs, summarize } from "./summary.ts";
+
+export { benchGroup } from "./consolidate.ts";
+export { compareJobs, summarize } from "./summary.ts";
+
 import { AdapterClient, type TrialInput, toRunSpec } from "./protocol.ts";
 import type { BenchmarkRegistry } from "./registry.ts";
-import { applyOverride, loadResources, resolveResources, usageRow } from "./resources.ts";
+import { applyOverride, loadResources, resolveResources, usageRows } from "./resources.ts";
 
 export interface BenchServiceDeps {
   store: Store;
@@ -74,112 +69,6 @@ export interface BenchServiceDeps {
   /** Command running this orbit binary; built-in adapters run as `<self> __adapter <name>`. */
   self?: string[];
   log?: (msg: string) => void;
-}
-
-/** Group of a job's runs, so the run list and notifications see a job as one group. */
-export const benchGroup = (jobId: string) => `bench-${jobId}`;
-
-const isValid = (t: Trial) => t.outcome?.evaluation === "valid";
-
-/** Per method: trial counts and every metric over its valid trials (per task first, then tasks). */
-export function summarize(
-  methods: string[],
-  trials: Trial[],
-  metrics: MetricSpec[] = [],
-): MethodSummary[] {
-  const specs = resolveMetrics(metrics);
-  return methods.map((method) => {
-    const ts = trials.filter((t) => t.method === method);
-    const done = ts.filter((t) => t.outcome);
-    const count = (e: Outcome["evaluation"]) =>
-      done.filter((t) => t.outcome?.evaluation === e).length;
-    const valid = done.filter(isValid);
-    return {
-      method,
-      trials: ts.length,
-      valid: valid.length,
-      invalid: count("invalid"),
-      unknown: count("unknown"),
-      pending: ts.length - done.length,
-      metrics: Object.fromEntries(specs.map((m) => [m.name, aggregate(taskMeans(valid, m.name))])),
-    };
-  });
-}
-
-/** Metrics shared by all jobs, as the first job declares them; its primary stays primary. */
-function sharedMetrics(jobs: BenchJob[]): MetricSpec[] {
-  const [first, ...rest] = jobs.map((j) => resolveMetrics(j.metrics));
-  const shared = (first ?? []).filter((m) => rest.every((ms) => ms.some((x) => x.name === m.name)));
-  return resolveMetrics(shared);
-}
-
-/**
- * Columns `<job>/<method>`, one row per task. Per metric, a cell is the mean over the task's valid
- * trials; column means are over all its tasks and over the tasks every column has (`paired`), and
- * `diff` is the paired difference to the first column, so methods are compared on the same tasks.
- */
-export function compareJobs(jobs: { job: BenchJob; trials: Trial[] }[]): BenchCompare {
-  // Jobs may share a name: fall back to the job id so every column key is unique.
-  const keys = new Set<string>();
-  const columns = jobs.flatMap(({ job, trials }) =>
-    job.spec.methods.map((m) => {
-      let key = jobs.length > 1 ? `${job.spec.name ?? job.id}/${m.name}` : m.name;
-      if (keys.has(key)) key = `${job.id}/${m.name}`;
-      keys.add(key);
-      const own = trials.filter((t) => t.method === m.name);
-      return { key, jobId: job.id, method: m.name, trials: own, valid: own.filter(isValid) };
-    }),
-  );
-  const metrics = sharedMetrics(jobs.map((j) => j.job));
-  const tasks = [...new Set(jobs.flatMap(({ trials }) => trials.map((t) => t.task)))].sort();
-  const means = Object.fromEntries(
-    metrics.map((m) => [m.name, columns.map((c) => taskMeans(c.valid, m.name))]),
-  );
-  const rows = tasks.map((task) => ({
-    task,
-    counts: Object.fromEntries(
-      columns.map((c) => {
-        const ts = c.trials.filter((t) => t.task === task);
-        return [c.key, ts.length ? `${ts.filter(isValid).length}/${ts.length}` : ""];
-      }),
-    ),
-    values: Object.fromEntries(
-      metrics.map((m) => [
-        m.name,
-        Object.fromEntries(
-          columns.map((c, i) => [c.key, means[m.name]?.[i]?.get(task)?.mean ?? null]),
-        ),
-      ]),
-    ),
-  }));
-  const stats: BenchCompare["stats"] = {};
-  for (const m of metrics) {
-    const ms = means[m.name] ?? [];
-    const paired = new Set(tasks.filter((task) => ms.every((x) => x.has(task))));
-    const base = ms[0];
-    stats[m.name] = {
-      pairedTasks: paired.size,
-      columns: Object.fromEntries(
-        columns.map((c, i) => {
-          const x = ms[i] ?? new Map();
-          return [
-            c.key,
-            {
-              all: aggregate(x),
-              paired: aggregate(x, paired),
-              diff: i > 0 && base ? pairedDiff(base, x) : null,
-            },
-          ];
-        }),
-      ),
-    };
-  }
-  return {
-    columns: columns.map(({ key, jobId, method }) => ({ key, jobId, method })),
-    metrics,
-    rows,
-    stats,
-  };
 }
 
 /** Verification could not be set up: keep the solve's issues and add why. */
@@ -326,7 +215,7 @@ export class BenchService {
   }
 
   private checkMethod(m: Method): void {
-    if (m.agent === "oracle" || m.agent === "empty") {
+    if (!isAgentMethod(m)) {
       if (m.auth || m.bundle || m.model)
         throw new UserError(`${m.name}: ${m.agent} takes no auth, model or bundle`);
       return;
@@ -469,85 +358,19 @@ export class BenchService {
   /** Measured solve use per task over the given jobs, with suggested resources (never applied). */
   usage(ids: string[]): BenchUsage {
     if (ids.length === 0) throw new UserError("no jobs given");
-    const runs = new Map<string, Run[]>();
-    const requested = new Map<string, Run["spec"]>();
-    for (const id of ids) {
-      const d = this.job(id);
-      // Only Agent methods show what a task needs; oracle and empty runs say nothing about it.
-      const agents = new Set(
-        d.job.spec.methods
-          .filter((m) => m.agent === "codex" || m.agent === "claude-code")
-          .map((m) => m.name),
-      );
-      for (const t of d.trials) {
-        if (!agents.has(t.method)) continue;
-        const r = t.solveRunId ? this.deps.runs.get(t.solveRunId) : null;
-        if (!r || !isTerminal(r.state)) continue;
-        runs.set(t.task, [...(runs.get(t.task) ?? []), r]);
-        // The latest job's request is what a suggestion is compared against.
-        requested.set(t.task, r.spec);
-      }
-    }
-    const rows = [...runs.keys()].sort().map((task) => {
-      const s = requested.get(task) as Run["spec"];
-      const { cpus, memGB, gpus, gpuMemGB } = s.resources;
-      return usageRow(
-        task,
-        { cpus, memGB, gpus, ...(gpuMemGB ? { gpuMemGB } : {}), timeoutMin: s.timeoutMin },
-        runs.get(task) ?? [],
-      );
-    });
-    return { jobs: ids, rows };
-  }
-
-  private equivalentTransport(a: BenchJob, b: BenchJob): boolean {
-    const left = this.deps.registry.get(a.spec.benchmark);
-    const right = this.deps.registry.get(b.spec.benchmark);
-    if (!left || !right || !isDeepStrictEqual(a.source, b.source)) return false;
-    const env = (v: Record<string, string>) =>
-      Object.fromEntries(Object.entries(v).filter(([k]) => !/^(https?|all|no)_proxy$/i.test(k)));
-    const benchmark = (v: Benchmark) => ({
-      adapter: v.adapter,
-      path: v.path,
-      config: v.config,
-      env: env(v.env),
-      passEnv: v.passEnv,
-      resources: v.resources,
-    });
-    if (!isDeepStrictEqual(benchmark(left), benchmark(right))) return false;
-    if (a.spec.methods.length !== b.spec.methods.length) return false;
-    return a.spec.methods.every((m, i) => {
-      const n = b.spec.methods[i];
-      if (!n || !isDeepStrictEqual({ ...m, auth: undefined }, { ...n, auth: undefined }))
-        return false;
-      if (m.auth === n.auth) return true;
-      const x = m.auth ? this.deps.auth?.get(m.auth) : null;
-      const y = n.auth ? this.deps.auth?.get(n.auth) : null;
-      if (!x || !y || x.secret !== y.secret) return false;
-      const profile = (v: typeof x.profile) => ({
-        harness: v.harness,
-        kind: v.kind,
-        model: v.model,
-        baseUrl: v.baseUrl,
-        env: env(v.env),
-      });
-      return isDeepStrictEqual(profile(x.profile), profile(y.profile));
-    });
+    return {
+      jobs: ids,
+      rows: usageRows(
+        ids.map((id) => this.job(id)),
+        (id) => this.deps.runs.get(id),
+      ),
+    };
   }
 
   /** Merge retries without selecting by score; failed solve replacement requires explicit opt-in. */
   async consolidate(id: string, input: BenchConsolidateInput): Promise<BenchConsolidateResult> {
-    const f = BenchConsolidate.parse(input);
-    if (f.appendTasks && f.pruneInvalid)
-      throw new UserError(
-        "appendTasks preserves invalid artifacts; do not combine it with pruneInvalid",
-      );
-    if (f.replaceFailed && f.pruneInvalid)
-      throw new UserError(
-        "replaceFailed preserves retry artifacts; do not combine it with pruneInvalid",
-      );
-    const sources = [...new Set(f.sources)];
-    if (sources.includes(id)) throw new UserError("target cannot also be a source");
+    const f = consolidateOptions(id, input);
+    const sources = f.sources;
     const failures = new Map<string, AgentFailure>();
     for (const jobId of [id, ...sources]) {
       const snapshot = this.job(jobId);
@@ -579,177 +402,37 @@ export class BenchService {
           oldRuns.set(rid, run);
         }
     }
-    const reclassified: BenchConsolidateResult["reclassified"] = [];
-    for (const d of all)
-      for (const t of d.trials) {
-        const failure = t.solveRunId ? failures.get(t.solveRunId) : null;
-        const run = t.solveRunId ? oldRuns.get(t.solveRunId) : null;
-        if (!failure || !run || !shouldCheckAgentFailure(run)) continue;
-        const issue = agentFailureIssue(failure);
-        let changed = false;
-        // A valid score, or an unknown one (e.g. its verify run was lost), that only measures the setup.
-        for (const outcome of [t.outcome, ...t.history.map((h) => h.outcome)]) {
-          if (outcome?.evaluation !== "valid" && outcome?.evaluation !== "unknown") continue;
-          outcome.evaluation = "invalid";
-          outcome.issues = [...new Set([...outcome.issues, issue])];
-          changed = true;
+    const benchmarks = new Map<string, Benchmark>();
+    const profiles = new Map<string, AuthEntry>();
+    if (f.allowTransportDifferences) {
+      for (const { job } of donors) {
+        if (sameMethodSetup(target.job, job)) continue;
+        for (const name of [target.job.spec.benchmark, job.spec.benchmark]) {
+          const b = this.deps.registry.get(name);
+          if (b) benchmarks.set(name, b);
         }
-        if (changed)
-          reclassified.push({ job: d.job.id, trial: t.id, task: t.task, kind: failure.kind });
-      }
-    const newlyInvalid = new Set(reclassified.map((r) => r.trial));
-    const key = (t: Trial) => JSON.stringify([t.task, t.method, t.seed]);
-    const trials = new Map(target.trials.map((t) => [key(t), structuredClone(t)]));
-    const adopted: BenchConsolidateResult["adopted"] = [];
-    const adoptedKeys = new Set<string>();
-    const taskIds = new Set(target.job.spec.tasks);
-    const originalTaskIds = new Set(taskIds);
-    const resources = { ...target.job.resources };
-    let next = target.trials.length;
-    const ids = new Set(target.trials.map((t) => t.id));
-    for (const d of donors) {
-      if (
-        (!(
-          d.job.spec.benchmark === target.job.spec.benchmark &&
-          isDeepStrictEqual(d.job.spec.methods, target.job.spec.methods)
-        ) &&
-          !(f.allowTransportDifferences && this.equivalentTransport(target.job, d.job))) ||
-        d.job.spec.seeds !== target.job.spec.seeds ||
-        d.job.spec.timeoutMin !== target.job.spec.timeoutMin ||
-        !isDeepStrictEqual(d.job.spec.options, target.job.spec.options) ||
-        !isDeepStrictEqual(d.job.metrics, target.job.metrics)
-      )
-        throw new UserError(`incompatible source job ${d.job.id}`);
-      for (const t of d.trials) {
-        if (adoptedKeys.has(key(t)))
-          throw new UserError(
-            `duplicate ${originalTaskIds.has(t.task) ? "source" : "appended"} trial ${t.task} / ${t.method} / ${t.seed}`,
-          );
-        const prev = trials.get(key(t));
-        if (!prev) {
-          if (!f.appendTasks || originalTaskIds.has(t.task))
-            throw new UserError(`source trial ${t.id} is not in the target matrix`);
-          let newId: string;
-          do {
-            newId = `${id}.${String(++next).padStart(5, "0")}`;
-          } while (ids.has(newId));
-          ids.add(newId);
-          taskIds.add(t.task);
-          const override = d.job.resources?.[t.task];
-          if (override) resources[t.task] = override;
-          trials.set(key(t), { ...t, id: newId, jobId: id });
-          adopted.push({ task: t.task, sourceJob: d.job.id, sourceTrial: t.id, trial: newId });
-          adoptedKeys.add(key(t));
-          continue;
-        }
-        if (!originalTaskIds.has(t.task))
-          throw new UserError(`duplicate appended trial ${t.task} / ${t.method} / ${t.seed}`);
-        const protectedTarget =
-          isValid(prev) || prev.history.some((h) => h.outcome.evaluation === "valid");
-        const retrySucceeded = t.solveRunId && oldRuns.get(t.solveRunId)?.state === "succeeded";
-        const replaceFailed =
-          f.replaceFailed &&
-          retrySucceeded &&
-          prev.solveRunId &&
-          oldRuns.get(prev.solveRunId)?.state === "failed";
-        const retainInvalid =
-          f.replaceFailed &&
-          !protectedTarget &&
-          retrySucceeded &&
-          t.outcome?.evaluation === "invalid" &&
-          !t.history.some((h) => h.outcome.evaluation === "valid");
-        if (isValid(t) || retainInvalid) {
-          if (f.pruneInvalid && newlyInvalid.has(prev.id))
-            throw new UserError(
-              `trial ${prev.id} was just reclassified; review it without sources before pruning`,
-            );
-          if (protectedTarget && !replaceFailed)
-            throw new UserError(`refusing to replace valid trial ${prev.id}`);
-          trials.set(key(t), { ...t, id: prev.id, jobId: id, createdAt: prev.createdAt });
-          adopted.push({ task: t.task, sourceJob: d.job.id, sourceTrial: t.id, trial: prev.id });
-          adoptedKeys.add(key(t));
-        } else if (
-          !f.pruneInvalid ||
-          newlyInvalid.has(t.id) ||
-          t.outcome?.evaluation !== "invalid" ||
-          t.history.some((h) => h.outcome.evaluation === "valid")
-        ) {
-          throw new UserError(`source trial ${t.id} has no valid result to adopt`);
+        for (const [i, method] of target.job.spec.methods.entries()) {
+          const other = job.spec.methods[i];
+          if (method.auth === other?.auth) continue;
+          for (const name of [method.auth, other?.auth]) {
+            const entry = name ? this.deps.auth?.get(name) : null;
+            if (entry && name) profiles.set(name, entry);
+          }
         }
       }
     }
-    if (f.pruneInvalid)
-      for (const t of trials.values()) {
-        if (newlyInvalid.has(t.id)) continue;
-        t.history = t.history.filter((h) => h.outcome.evaluation !== "invalid");
-        if (t.outcome?.evaluation === "invalid") {
-          t.verifyRunId = null;
-          if (!t.history.length) t.solveRunId = null;
-        }
-      }
-    const retained = new Set([...trials.values()].flatMap(trialRunIds));
-    const removedRuns = [...oldRuns.keys()].filter((rid) => !retained.has(rid));
-    const digest = createHash("sha256")
-      .update(
-        JSON.stringify({
-          adopted: [...adopted].sort((a, b) => a.trial.localeCompare(b.trial)),
-          reclassified: [...reclassified].sort((a, b) => a.trial.localeCompare(b.trial)),
-          removedRuns: [...removedRuns].sort(),
-          removedJobs: [...sources].sort(),
-        }),
-      )
-      .digest("hex");
-    if (!f.dryRun && f.expect !== undefined && f.expect !== digest)
-      throw new UserError("plan changed since preview; preview again");
-    const out: BenchConsolidateResult = {
-      digest,
-      dryRun: f.dryRun,
-      adopted,
-      reclassified,
-      removedJobs: sources,
-      removedRuns,
-      leftovers: [],
-    };
+    const { job, trials, moved, ...out } = planConsolidation({
+      target,
+      donors,
+      oldRuns,
+      failures,
+      flags: f,
+      transport: { benchmarks, profiles },
+    });
     if (f.dryRun) return out;
     // No await between validation and this transaction: concurrent HTTP mutations cannot interleave.
-    const moved: Run[] = [];
-    for (const a of adopted) {
-      const t = [...trials.values()].find((t) => t.id === a.trial) as Trial;
-      for (const rid of trialRunIds(t)) {
-        const r = structuredClone(oldRuns.get(rid) as Run);
-        r.folder = target.job.folder;
-        r.spec.group = benchGroup(id);
-        r.spec.tags = {
-          ...r.spec.tags,
-          job: id,
-          trial: t.id,
-          source_job: a.sourceJob,
-          source_trial: a.sourceTrial,
-          source_benchmark: donors.find((d) => d.job.id === a.sourceJob)?.job.spec.benchmark ?? "",
-        };
-        r.note = [
-          r.note,
-          `Consolidated from ${a.sourceJob} / ${a.sourceTrial}; run ID and artifacts retained.`,
-        ]
-          .filter(Boolean)
-          .join("\n");
-        moved.push(r);
-      }
-    }
-    const job = {
-      ...target.job,
-      spec: { ...target.job.spec, tasks: [...taskIds] },
-      resources: Object.keys(resources).length ? resources : null,
-      state: "done" as const,
-      endedAt:
-        [...trials.values()]
-          .map((t) => t.endedAt)
-          .filter((x): x is string => !!x)
-          .sort()
-          .at(-1) ?? target.job.endedAt,
-    };
-    this.deps.store.consolidateJob(job, [...trials.values()], sources, moved);
-    const deleted = await this.deps.runs.delete(removedRuns);
+    this.deps.store.consolidateJob(job, trials, sources, moved);
+    const deleted = await this.deps.runs.delete(out.removedRuns);
     out.leftovers = deleted.leftovers;
     for (const source of sources) {
       const path = join(this.deps.paths.bench, source);
@@ -997,84 +680,84 @@ export class BenchService {
     const t = this.deps.store.getTrial(id);
     const job = t ? this.deps.store.getJob(t.jobId) : null;
     if (!t || !job) return;
-    const runs = this.deps.runs;
-
     if (t.state === "done") {
       this.reconcileCleanup(t);
       return;
     }
-
-    if (t.state === "pending") {
-      if (job.state === "cancelled") return this.skipped(t, "unknown", "job cancelled");
-      let spec: RunSpecInput;
-      try {
-        const { b, trial } = this.context(job, t);
-        const reply = await this.adapter(b).solve(trial);
-        spec = applyOverride(
-          toRunSpec(reply.spec, trial.method, b, "solve"),
-          job.resources?.[t.task],
-          job.spec.timeoutMin,
-        );
-        t.issues = [...t.issues, ...reply.issues];
-      } catch (e) {
-        return this.skipped(t, "invalid", `solve spec: ${(e as Error).message}`);
-      }
-      try {
-        const run = await this.submitRun(job, t, "solve", spec);
-        t.solveRunId = run.id;
-        t.state = "solving";
-        this.deps.store.putTrial(t);
-        await this.cancelIfJobCancelled(job.id, t, run.id);
-      } catch (e) {
-        return this.skipped(t, "invalid", `solve rejected: ${(e as Error).message}`);
-      }
-      return;
-    }
-
-    const solve = t.solveRunId ? runs.get(t.solveRunId) : null;
+    if (t.state === "pending") return this.stepPending(job, t);
+    const solve = t.solveRunId ? this.deps.runs.get(t.solveRunId) : null;
     if (!solve) return this.skipped(t, "unknown", "solve run missing");
+    if (t.state === "solving") return this.stepSolving(job, t, solve);
+    return this.stepVerifying(job, t, solve);
+  }
 
-    if (t.state === "solving") {
-      if (!isTerminal(solve.state)) return this.cancelIfJobCancelled(job.id, t, solve.id);
-      const sv = solveVerdict(solve);
-      // An Agent that could not reach or use its model left nothing worth verifying; an explicit
-      // rescore (history kept) verifies anyway, and an after phase has already verified.
-      const agent = t.history.length === 0 ? await this.agentFailure(solve) : null;
-      if (agent) return this.finish(t, classify(solve, null, null, t.issues, agent));
-      if (!sv.verify || this.cancelled(job.id, t)) {
-        const outcome = classify(solve, null, null, t.issues);
-        if (sv.verify) {
-          outcome.evaluation = "unknown";
-          outcome.issues.push("job cancelled before verification");
-        }
-        return this.finish(t, outcome);
-      }
-      // The verifier ran in the solve container (its after phase): score from the solve run.
-      if (solve.spec.after) return this.score(job, t, solve, solve);
-      let spec: RunSpecInput;
-      try {
-        const { b, trial } = this.context(job, t);
-        const reply = await this.adapter(b).verify(trial, this.ref(solve));
-        spec = toRunSpec(reply.spec, trial.method, b, "verify");
-        // A rescore asks again; the same solve output yields the same issues.
-        t.issues = [...new Set([...t.issues, ...reply.issues])];
-      } catch (e) {
-        return this.finish(t, failed(solve, t.issues, `verify spec: ${(e as Error).message}`));
-      }
-      try {
-        const run = await this.submitRun(job, t, "verify", spec);
-        t.verifyRunId = run.id;
-        t.state = "verifying";
-        this.deps.store.putTrial(t);
-        await this.cancelIfJobCancelled(job.id, t, run.id);
-      } catch (e) {
-        return this.finish(t, failed(solve, t.issues, `verify rejected: ${(e as Error).message}`));
-      }
-      return;
+  private async stepPending(job: BenchJob, t: Trial): Promise<void> {
+    if (job.state === "cancelled") return this.skipped(t, "unknown", "job cancelled");
+    let spec: RunSpecInput;
+    try {
+      const { b, trial } = this.context(job, t);
+      const reply = await this.adapter(b).solve(trial);
+      spec = applyOverride(
+        toRunSpec(reply.spec, trial.method, b, "solve"),
+        job.resources?.[t.task],
+        job.spec.timeoutMin,
+      );
+      t.issues = [...t.issues, ...reply.issues];
+    } catch (e) {
+      return this.skipped(t, "invalid", `solve spec: ${(e as Error).message}`);
     }
+    try {
+      const run = await this.submitRun(job, t, "solve", spec);
+      t.solveRunId = run.id;
+      t.state = "solving";
+      this.deps.store.putTrial(t);
+      await this.cancelIfJobCancelled(job.id, t, run.id);
+    } catch (e) {
+      return this.skipped(t, "invalid", `solve rejected: ${(e as Error).message}`);
+    }
+  }
 
+  private async stepSolving(job: BenchJob, t: Trial, solve: Run): Promise<void> {
+    if (!isTerminal(solve.state)) return this.cancelIfJobCancelled(job.id, t, solve.id);
+    const sv = solveVerdict(solve);
+    // An Agent that could not reach or use its model left nothing worth verifying; an explicit
+    // rescore (history kept) verifies anyway, and an after phase has already verified.
+    const agent = t.history.length === 0 ? await this.agentFailure(solve) : null;
+    if (agent) return this.finish(t, classify(solve, null, null, t.issues, agent));
+    if (!sv.verify || this.cancelled(job.id, t)) {
+      const outcome = classify(solve, null, null, t.issues);
+      if (sv.verify) {
+        outcome.evaluation = "unknown";
+        outcome.issues.push("job cancelled before verification");
+      }
+      return this.finish(t, outcome);
+    }
+    // The verifier ran in the solve container (its after phase): score from the solve run.
+    if (solve.spec.after) return this.score(job, t, solve, solve);
+    let spec: RunSpecInput;
+    try {
+      const { b, trial } = this.context(job, t);
+      const reply = await this.adapter(b).verify(trial, this.ref(solve));
+      spec = toRunSpec(reply.spec, trial.method, b, "verify");
+      // A rescore asks again; the same solve output yields the same issues.
+      t.issues = [...new Set([...t.issues, ...reply.issues])];
+    } catch (e) {
+      return this.finish(t, failed(solve, t.issues, `verify spec: ${(e as Error).message}`));
+    }
+    try {
+      const run = await this.submitRun(job, t, "verify", spec);
+      t.verifyRunId = run.id;
+      t.state = "verifying";
+      this.deps.store.putTrial(t);
+      await this.cancelIfJobCancelled(job.id, t, run.id);
+    } catch (e) {
+      return this.finish(t, failed(solve, t.issues, `verify rejected: ${(e as Error).message}`));
+    }
+  }
+
+  private async stepVerifying(job: BenchJob, t: Trial, solve: Run): Promise<void> {
     // verifying
-    const verify = t.verifyRunId ? runs.get(t.verifyRunId) : null;
+    const verify = t.verifyRunId ? this.deps.runs.get(t.verifyRunId) : null;
     if (!verify)
       return this.finish(t, classify(solve, null, null, [...t.issues, "verify run missing"]));
     if (!isTerminal(verify.state)) return this.cancelIfJobCancelled(job.id, t, verify.id);

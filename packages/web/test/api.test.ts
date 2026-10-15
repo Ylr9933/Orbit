@@ -28,3 +28,19 @@ it("carries the consolidation preview digest through the Web API", async () => {
     expect: plan.digest,
   });
 });
+
+it("loads every cursor page instead of silently capping the run list", async () => {
+  const runs = Array.from({ length: 1125 }, (_, i) => ({ id: `run-${i}` }));
+  const cursor = { id: "run-999", createdAt: "2026-10-16T00:00:00.000Z" };
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ runs: runs.slice(0, 1000), next: cursor })),
+    )
+    .mockResolvedValueOnce(new Response(JSON.stringify({ runs: runs.slice(1000), next: null })));
+  vi.stubGlobal("fetch", fetch);
+  expect(await api.allRuns()).toEqual(runs);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  const url = new URL(fetch.mock.calls[1]?.[0], "http://orbit.test");
+  expect(JSON.parse(url.searchParams.get("before") ?? "")).toEqual(cursor);
+});

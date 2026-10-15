@@ -108,6 +108,14 @@ examples/      bench-adapters/<benchmark>/: external bench adapters (not part of
 | cli, mcp | client, contracts, lib, config |
 | web (`packages/web/src`) | 自身文件；`@zjunlp/orbit` 只能 `import type` 自 `@zjunlp/orbit/contracts`，另可在运行时使用无依赖的 `@zjunlp/orbit/naming`（Run 显示名规则）与 `@zjunlp/orbit/metrics`（bench 指标的取值、聚合与格式化） |
 
+模块内按职责拆分，以上依赖方向不变：`contracts/index.ts` 保留统一导出，schema 分入 runs、resources、auth/notify、
+bench、adapter、cluster、records 和 folders；`RunService` 保留公共 API、调度与共享状态，远端放置/镜像、启动、服务、
+阶段/hooks、process 后端、清理、采样与日志收集由 `runs/` 内函数接收所需依赖。`bench/consolidate.ts` 计算纯归并计划，
+service 负责读取、await 后重新校验、单次 store 事务和清理；汇总/对比在 `bench/summary.ts`，用量行在 `bench/resources.ts`。
+`daemon/routes/` 按 runs、bench、settings、cluster/datasets、folders 注册，鉴权仍在 `createApp`，错误映射共用 `daemon/http.ts`。
+CLI 的运行/试跑/等待共用 `cli/run.ts`，表格与选项解析共用 format/options；私有 JSON 的临时文件、0600 权限和 rename
+统一由 `lib/private-json.ts` 的 `writePrivateJson` 处理。Web 的 Runs / Bench 子组件分别放在 `pages/runs/` 和 `pages/bench/`。
+
 - **源码文档与个人使用记录分开**：`docs/` 只记录通用架构、功能、问题和开发验证。个人实验成绩、批次进度、
   重跑/归并过程、私有资源配置及账号或机器清单放在源码仓库外的用户侧笔记中，不进入任务文档、提交说明或 PR。
   Orbit 的运行记录仍由 daemon 管理；需要给 Run 添加笔记时使用现有 `orbit note` API 路线。
@@ -128,8 +136,9 @@ examples/      bench-adapters/<benchmark>/: external bench adapters (not part of
   资源探测的磁盘也是数据目录所在的盘。
 - **私有状态权限**：新建 `ORBIT_HOME`、数据目录、`runs/`、`cache/`、`cache/bundles/`、bench staging 与
   `<home>/tmp/` 为 0700，SQLite 数据库及 `-wal` / `-shm` 为 0600。daemon 启动时也收紧已有的 home、
-  上述 Orbit 子目录和数据库文件；只改这些路径，不递归进入 Run，不改独立的已有数据根目录，不修改其他用户
-  拥有的路径或跟随符号链接。修改记入 daemon 日志；EPERM / EACCES 不阻止启动，`doctor` 对仍不私有或无法检查
+  上述 Orbit 子目录和数据库文件，以及 auth/notify/nodes/cluster/datasets/benchmarks/daemon JSON、daemon.log、daemon.lock。
+  若 home 本身是当前用户拥有的符号链接，检查并收紧其同属当前用户的目标目录；不跟随根目录下的链接，不递归进入 Run，
+  不改独立的已有数据根目录或其他用户拥有的路径。修改记入 daemon 日志；EPERM / EACCES 不阻止启动，`doctor` 对仍不私有或无法检查
   的路径给 `warn`。这会撤销这些路径原有的组/ACL 访问，适用于 Orbit 的单用户状态。
 - `src/` 根目录下的文件（如 `bin.ts`）是组合根，可引用任意模块，但不能被模块引用。
 - 同类能力只有一份实现：一个 Run 状态机、一个资源账本、一个记录库。
@@ -267,6 +276,9 @@ oomKilled }`，运行中写库（不发变更事件），终态前再采一次�
 `GET/POST cluster/nodes`、`DELETE cluster/nodes/:name`、`GET/POST cluster/expose`、`GET cluster/token`、
 `POST cluster/token/rotate`、`GET/POST datasets`、`DELETE datasets/:name`（§8），`GET folders`、`POST folders/move`、
 `POST folders/export`（文件夹，见下）。`POST runs` 与 `POST bench/jobs` 可带 `?folder=`，`GET runs` 可按 `?folder=` 筛选（含子文件夹）。
+`GET runs` 按 `createdAt DESC, id DESC` 分页，返回 `{ runs, next }`；`next` 是 `{ createdAt, id }` 或 null，
+下一页将其 JSON 编码为 `?before=`，并保留原来的 limit/state/group/folder 条件。游标不依赖该条记录仍在库中；
+整页末尾可能再请求一次空页。客户端 `list()` 仍返回一页数组，新增 `listPage()` 保留游标。
 `POST /api/v1/login-code` 只接受 bearer token（cookie 不可签发），返回 `LoginCode { code, expiresAt }`：
 随机 24 字节、内存保存、30 秒有效、只能兑换一次，重启即失效。`GET /login?code=&next=` 兑换后设置与 token 登录
 相同的 HttpOnly / SameSite=Strict cookie。保留 `GET /login?token=&next=`；两者只跳转到站内路径，拒绝外站、
@@ -288,7 +300,8 @@ Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行�
 
 - **Runs**：按 group 折叠、状态筛选、全文过滤（名称/参数/标签/分支），多选对比，键盘导航。三类条目：单个 Run、
   `-g` 实验组、bench job（显示为 job 行：benchmark、trial 进度、各方法均分；展开为 trial 行，每行 solve → verify
-  状态、分数、有效性，点击进入 trial 页）。顶部按 All / Experiments / Benchmarks 筛选。
+  状态、分数、有效性，点击进入 trial 页）。顶部按 All / Experiments / Benchmarks 筛选。首次加载及 SSE 重连时逐页加载全部 Run；
+  加载期间的 SSE 更新和删除覆盖快照，加载途中断线重连会再取一遍，文件夹计数与筛选不再受 1000 条上限影响。
 - **Trial**（`/bench/<job>/trials/<trial>`）：结果与 issues、solve → verify 时间线与实测用量、重新评分前的历次结果；标签由 adapter 的
   `review` 决定（每个声明的文件一个标签，按 kind 渲染；Grader 来自 `items`；Details 来自 `details` 与未知字段），
   之后固定有 Agent session 与 Outputs（两个 Run 的全部文件）。Markdown 只生成 React 元素，不渲染 HTML、不加载外部图片，
@@ -300,7 +313,10 @@ Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行�
 - **Compare**：`?ids=` / `?group=`，按 seed 聚合 mean ± std、相对基线的变化、曲线叠加、配置差异。
 - **Resources**：GPU 卡片（Orbit 租约 / 外部占用 / 空闲、显存与利用率，以及占用显存的每个进程：用户、
   命令、PID、容器或 Run、已运行多久）、租约与队列、worker 节点表（§8）。
-- **Bench**：job 列表、job 详情（分数矩阵，格子进入 trial 页）、方法对比（§7）。
+- **Bench**：job 列表、job 详情（分数矩阵，格子进入 trial 页）、方法对比（§7）。Merge retries 对话框提供来源 ID 和选项解释，
+  先预览 adopted、reclassified（task/kind）、removed runs/jobs，再输入目标 job ID 并携带 digest 应用；改选项后必须重新预览。
+  使用原生 modal dialog 管理焦点与 Esc，关闭后恢复入口焦点。
+- **轮询**：`useAsync` 与 Logs 在隐藏标签页暂停轮询，重新可见时刷新一次后恢复；进行中的请求仍可完成，SSE 继续接收。
 - **删除**（不可恢复）：`POST runs/delete` 只删已终态且清理完成、不属于 bench trial 的 Run（远端 Run 须镜像同步结束）；
   全部校验通过才动手，删除记录、事件、租约与 Run 目录（容器以 root 写下的文件用该镜像的临时容器清掉；仍删不掉的
   目录在结果中列出）。bench job 只能整体删（`DELETE bench/jobs/:id`，非 running）：trial、全部 solve/verify Run 与

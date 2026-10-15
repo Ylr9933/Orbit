@@ -26,10 +26,13 @@ export function runDuration(r: Run, now = Date.now()): string {
   return duration(end - Date.parse(r.startedAt));
 }
 
-function table(rows: string[][]): string {
+export function table(rows: string[][], trim = false): string {
   const widths = rows[0]?.map((_, i) => Math.max(...rows.map((r) => (r[i] ?? "").length))) ?? [];
   return rows
-    .map((r) => r.map((c, i) => (i === r.length - 1 ? c : c.padEnd(widths[i] ?? 0))).join("  "))
+    .map((r) => {
+      const line = r.map((c, i) => (i === r.length - 1 ? c : c.padEnd(widths[i] ?? 0))).join("  ");
+      return trim ? line.trimEnd() : line;
+    })
     .join("\n");
 }
 
@@ -231,3 +234,5 @@ export function formatUsage(r: Run): string {
   else if (u.oomKills) parts.push(`${u.oomKills} killed for memory`);
   return parts.join(", ");
 }
+
+export const compactTable = (rows: string[][]): string => table(rows, true);

@@ -103,6 +103,18 @@ it.each(["valid", "unknown"] as const)(
   },
 );
 const at = "2026-10-10T00:00:00.000Z";
+
+it("does not read transport registries when the saved method setup already matches", async () => {
+  const f = fixture();
+  writeFileSync(f.paths.benchmarks, "malformed registry");
+  writeFileSync(f.paths.auth, "malformed registry");
+  const plan = await f.bench.consolidate("target", {
+    sources: ["source"],
+    allowTransportDifferences: true,
+  });
+  expect(plan.adopted).toHaveLength(1);
+});
+
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), "orbit-consolidate-"));
   homes.push(home);

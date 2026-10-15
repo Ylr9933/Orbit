@@ -1,12 +1,13 @@
 // Registered benchmark checkouts in one JSON file written only by the daemon. Entries hold paths
 // and non-secret settings; `passEnv` names variables read from the daemon environment at launch.
-import { chmodSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import {
   Benchmark,
   BenchmarkInput,
   type BenchmarkInput as BenchmarkInputT,
 } from "../contracts/index.ts";
 import { nowIso } from "../lib/ids.ts";
+import { writePrivateJson } from "../lib/private-json.ts";
 
 /** Entries written before adapter settings moved into `config` (asi `python`, `instances`). */
 function upgrade(v: unknown): unknown {
@@ -39,12 +40,7 @@ export class BenchmarkRegistry {
   }
 
   private write(all: Benchmark[]): void {
-    const tmp = `${this.file}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify({ version: 1, benchmarks: all }, null, 2)}\n`, {
-      mode: 0o600,
-    });
-    chmodSync(tmp, 0o600);
-    renameSync(tmp, this.file);
+    writePrivateJson(this.file, { version: 1, benchmarks: all });
     this.cached = null;
   }
 

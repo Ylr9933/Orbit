@@ -23,13 +23,34 @@ let source: EventSource | null = null;
 let opened = false;
 let retry: ReturnType<typeof setTimeout> | undefined;
 /** Runs received from the stream while a full load is in flight; they are newer than its snapshot. */
-let during: Map<string, Run> | null = null;
+let during: Map<string, Run | null> | null = null;
+let loading: Promise<void> | null = null;
+let reloadAgain = false;
 
-async function load() {
+function load(): Promise<void> {
+  if (loading) {
+    reloadAgain = true;
+    return loading;
+  }
+  loading = (async () => {
+    do {
+      reloadAgain = false;
+      await loadAll();
+    } while (reloadAgain);
+  })().finally(() => {
+    loading = null;
+  });
+  return loading;
+}
+
+async function loadAll() {
   during = new Map();
   try {
-    const runs = new Map((await api.runs()).map((r) => [r.id, r]));
-    for (const [id, r] of during) runs.set(id, r);
+    const runs = new Map((await api.allRuns()).map((r) => [r.id, r]));
+    for (const [id, r] of during) {
+      if (r) runs.set(id, r);
+      else runs.delete(id);
+    }
     emit({ runs, loaded: true, error: null });
   } catch (e) {
     emit({ loaded: true, error: (e as Error).message });
@@ -52,7 +73,6 @@ function connect() {
   es.addEventListener("run", (ev) => {
     const run = JSON.parse((ev as MessageEvent<string>).data) as Run;
     notifyTransition(state.runs.get(run.id), run, state.runs.values());
-    during?.set(run.id, run);
     upsertRun(run);
   });
   es.addEventListener("deleted", (ev) => {
@@ -86,12 +106,13 @@ export function removeRuns(ids: string[]) {
   const runs = new Map(state.runs);
   for (const id of ids) {
     runs.delete(id);
-    during?.delete(id);
+    during?.set(id, null);
   }
   emit({ runs });
 }
 
 export function upsertRun(run: Run) {
+  during?.set(run.id, run);
   const runs = new Map(state.runs);
   runs.set(run.id, run);
   emit({ runs });
