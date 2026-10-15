@@ -1090,6 +1090,10 @@ export const BenchConsolidateResult = z.object({
       trial: z.string(),
     }),
   ),
+  /** Trials whose non-invalid outcomes became invalid because their Agent could not work. */
+  reclassified: z.array(
+    z.object({ job: z.string(), trial: z.string(), task: z.string(), kind: z.string() }),
+  ),
   removedJobs: z.array(z.string()),
   removedRuns: z.array(z.string()),
   leftovers: z.array(z.string()),

@@ -454,7 +454,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
         const plan = await c.benchConsolidate(id, body);
         if (o.apply) {
           await confirmTyped(
-            `merge ${plan.adopted.length} trials and delete ${plan.removedRuns.length} runs and ${plan.removedJobs.length} source jobs`,
+            `mark ${plan.reclassified.length} trials invalid, merge ${plan.adopted.length} trials and delete ${plan.removedRuns.length} runs and ${plan.removedJobs.length} source jobs`,
             id,
             o.yes,
           );

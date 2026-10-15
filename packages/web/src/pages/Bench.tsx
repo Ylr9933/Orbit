@@ -346,13 +346,13 @@ export function BenchJobDetail({ id }: { id: string }) {
       const plan = await api.benchConsolidate(job.id, body);
       if (
         prompt(
-          `Merge ${plan.adopted.length} trials, delete ${plan.removedRuns.length} obsolete runs and ${plan.removedJobs.length} source jobs? Type ${job.id} to confirm.`,
+          `Mark ${plan.reclassified.length} trials invalid (Agent could not work), merge ${plan.adopted.length} trials, delete ${plan.removedRuns.length} obsolete runs and ${plan.removedJobs.length} source jobs? Type ${job.id} to confirm.`,
         ) !== job.id
       )
         return;
       const result = await api.benchConsolidate(job.id, { ...body, dryRun: false });
       toast(
-        `Merged ${result.adopted.length} trials; ${result.leftovers.length} folders left on disk`,
+        `Merged ${result.adopted.length} trials, marked ${result.reclassified.length} invalid; ${result.leftovers.length} folders left on disk`,
       );
       d.reload();
     } catch (e) {

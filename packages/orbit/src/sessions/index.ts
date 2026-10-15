@@ -352,17 +352,32 @@ const errorText = (v: unknown): string => {
 /**
  * How the Agent that ran inside the run ended, when the CLI could not work (see
  * `harness.agentErrorKind`): the error of Codex's last turn (`task_complete.error`), or Claude Code's
- * last reply when it is an API error. Earlier, retried errors do not count.
+ * last reply when it is an API error. Earlier, retried errors do not count. A Codex turn that never
+ * completed counts when the run's `log` ends with the CLI still reconnecting to its model (it was
+ * stopped, e.g. by the time limit, while the endpoint was down).
  */
-export async function runAgentFailure(agentDir: string): Promise<AgentFailure | null> {
+export async function runAgentFailure(
+  agentDir: string,
+  log?: string,
+): Promise<AgentFailure | null> {
   let text: string | null = null;
+  let code: unknown;
   const codex = (await jsonlBelow(join(agentDir, "codex", "sessions"), 4))[0];
   if (codex) {
+    let open = false;
     for await (const e of jsonLines(codex.file)) {
       const p = e.payload as { type?: unknown; error?: unknown } | undefined;
-      if (e.type === "event_msg" && p?.type === "task_complete")
+      if (e.type !== "event_msg") continue;
+      if (p?.type === "task_started") {
+        open = true;
+        text = null;
+      } else if (p?.type === "task_complete") {
+        open = false;
         text = p.error ? errorText(p.error) : null;
+        code = (p.error as { codex_error_info?: unknown } | null)?.codex_error_info;
+      }
     }
+    if (open && log) return reconnectingAtEnd(log);
   } else {
     const claude = (await jsonlBelow(join(agentDir, "claude", "projects"), 2))[0];
     if (!claude) return null;
@@ -373,8 +388,45 @@ export async function runAgentFailure(agentDir: string): Promise<AgentFailure | 
         ? (content[0] as { text?: unknown } | undefined)
         : undefined;
       text = e.isApiErrorMessage === true ? String(first?.text ?? "API error") : null;
+      code = e.isApiErrorMessage === true ? e.error : undefined;
     }
   }
-  const kind = text ? agentErrorKind(text) : null;
+  const kind = text ? agentErrorKind(text, code) : null;
   return kind && text ? { kind, message: clip(text, 200).text } : null;
+}
+
+/** Codex's stderr while it retries the model connection, e.g. `ERROR: Reconnecting... 3/5`. */
+const RECONNECTING = /^ERROR: Reconnecting\.\.\./;
+
+/**
+ * Whether the run log ends with Codex reconnecting to its model; the reason is taken from the error
+ * lines before (credentials, quota, ...) and is otherwise an unreachable endpoint.
+ */
+async function reconnectingAtEnd(log: string): Promise<AgentFailure | null> {
+  const fh = await open(log, "r").catch(() => null);
+  if (!fh) return null;
+  let tail: string;
+  try {
+    const size = (await fh.stat()).size;
+    const buf = Buffer.alloc(Math.min(size, 16 * 1024));
+    await fh.read(buf, 0, buf.length, size - buf.length);
+    tail = buf.toString("utf8");
+  } finally {
+    await fh.close();
+  }
+  const lines = tail
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const last = lines.at(-1);
+  if (!last || !RECONNECTING.test(last)) return null;
+  const kind = lines
+    .slice(-40)
+    .reverse()
+    .map((l) => (/\bERROR\b/.test(l) ? agentErrorKind(l) : null))
+    .find((k) => k !== null);
+  return {
+    kind: kind ?? "model_unreachable",
+    message: clip(`stopped while reconnecting to the model: ${last}`, 200).text,
+  };
 }

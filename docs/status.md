@@ -1,6 +1,6 @@
 # Orbit status
 
-- **Updated at:** 2026-10-14
+- **Updated at:** 2026-10-15
 - **Basis:** Bench task append, consolidation and Harbor compatibility; repository records contain reusable technical content only.
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none for the current release.
@@ -18,7 +18,7 @@
 - Auth profiles for Codex and Claude Code; notifications (Feishu, DingTalk, WeCom, Slack, webhook; `feishu-app` bot: `orbit feishu init` QR setup, pairing, read-only `/gpu` `/runs` `/show`, curve cards).
 - Bench: solve + verify run per trial, valid-only means (OOM solves invalid); one JSON adapter protocol
   for built-ins and external executables (e.g. ResearchClawBench); per-task resources file; `bench usage`
-  suggestions; `bench consolidate` previews/merges retries and appends new tasks with validity retained; `orbit-bench` skill; `bench rescore` re-verifies from saved solve outputs (history kept). Measured peak memory / CPU / GPU memory on every run. Adapter-declared
+  suggestions; solves whose Agent could not use its model are invalid without a verify run; `bench consolidate` rechecks old marks, previews/merges retries and appends new tasks with validity retained; `orbit-bench` skill; `bench rescore` re-verifies from saved solve outputs (history kept). Measured peak memory / CPU / GPU memory on every run. Adapter-declared
   metrics (`score` built in): per-task then over-task means, task-clustered 95% CI, paired Δ in compare. ASI checks known runner incompatibilities before Agent launch, propagates failures, and shows latest attempt status separately from score validity.
 - Harbor format: separate/shared verifiers, compose services, collect hooks, Harbor's network/image rules; TB-Science 70/70 and TB 4.0 56/66 supported (oracle/empty checked on samples incl. all 5 compose tasks); jobs record the benchmark commit.
 - Multi-node: workers join by token; placement across nodes, code bundles by hash, named datasets, mirrored logs/metrics, proxied artifacts. Guide: [guides/multi-node.md](guides/multi-node.md).

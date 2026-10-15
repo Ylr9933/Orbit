@@ -395,7 +395,7 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 | solve 未启动（镜像构建、租约、认证失败） | invalid（环境问题，不是方法的结果） |
 | solve 失败或超时 | 照常 verify（方法的结果；超时记入 issues） |
 | solve 因内存不足被杀（`usage.oomKilled`，资源申请的问题，不是方法的结果；仍照常 verify 并保留分数） | invalid |
-| solve 内的 Agent 最后一轮以认证、额度、模型不可用或连不上模型结束（`sessions.runAgentFailure` 读 Run 的 Agent home，规则在 `harness.agentErrorKind`；对所有适配器生效，保留分数） | invalid |
+| solve 内的 Agent 最后一轮以认证、额度、模型不可用或连不上模型结束，或最后一轮未结束而 Run 日志停在 Codex 重连模型（如超时被停）（`sessions.runAgentFailure` 读 Run 的 Agent home 与日志尾；`harness.agentErrorKind` 先看结构化错误码——Codex `codex_error_info` 及其 HTTP 状态码、Claude Code 的 `error`——再看文本；对所有适配器生效）：不提交 verify，记 `verify skipped`；after 阶段已评分或显式 rescore 时照常评分并保留分数 | invalid |
 | verify 未启动、超时、内存不足，没有分数，或适配器判为无效（无 reward、scorer 内部错误、judge 不可用、模型不可用且 0 分） | invalid |
 | 其余 | valid |
 
@@ -403,7 +403,8 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 - **重试归并**：`POST /bench/jobs/:id/consolidate` / `orbit bench consolidate <job> [sources...]`
   默认只预览；`--apply` 才执行。只接收全部 trial 已完成、Run 已清理且无后台更新的任务；同 benchmark、methods、options、metrics，
   按 task × method × seed 对齐。归并先重读失败 solve 的会话末轮错误：明确的认证、额度、模型连接故障
-  会纠正旧的 valid 标记（包括同一次 solve 的评分历史），原始分数保留；预览不写回。读取后重新检查终态及归属。
+  会把旧的 valid / unknown 标记改为 invalid（包括同一次 solve 的评分历史），原始分数保留，结果的 `reclassified`
+  列出这些 trial；不带来源时只做这一复核；预览不写回。读取后重新检查终态及归属。
   有效重试只替换无效位置，拒绝覆盖真正有效的成绩（包括 0 分）或从多份有效成绩里挑选。
   `--replace-failed` 显式采用 solve 正常成功的新尝试：允许替换实际 solve 为 failed、但仍有 valid 分数的位置及其历史，
   不以分数高低选择；已正常成功的有效 solve 仍受保护。新尝试若验证 invalid，仅可替换原本无有效分数及有效历史的位置，

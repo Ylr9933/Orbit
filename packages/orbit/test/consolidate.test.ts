@@ -375,6 +375,9 @@ it("reconciles misclassified terminal Agent errors before replacing a valid zero
   const before = f.bench.job("target");
   const plan = await f.bench.consolidate("target", { sources: ["retry-b"] });
   expect(plan.adopted.map((a) => a.task)).toEqual(["b"]);
+  expect(plan.reclassified).toEqual([
+    { job: "target", trial: trial.id, task: "b", kind: "model_unreachable" },
+  ]);
   expect(f.bench.job("target")).toEqual(before);
   // A recovered later turn and ordinary experiment failures must retain the valid-score guard.
   for (const text of [
@@ -393,6 +396,36 @@ it("reconciles misclassified terminal Agent errors before replacing a valid zero
     outcome: { evaluation: "valid", score: 0 },
   });
   expect(f.bench.job("target").trials).toHaveLength(3);
+});
+
+it("marks an unknown outcome invalid without sources when its Agent could not work", async () => {
+  const f = fixture();
+  const run = f.runs.get("target.b-solve"),
+    trial = f.store.getTrial("target.b");
+  if (!run || !trial?.outcome) throw new Error("missing fixture");
+  f.store.putRun({ ...run, state: "failed", exitCode: 1, reason: "exit code 1" });
+  const lost = { ...trial.outcome, evaluation: "unknown" as const, issues: ["verify lost"] };
+  f.store.putTrial({ ...trial, outcome: lost });
+  const dir = join(f.runs.dirs(run.id).agent, "codex/sessions/2026/10/13");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "rollout-fixture.jsonl"),
+    `${JSON.stringify({ type: "event_msg", payload: { type: "task_complete", error: { message: "unexpected status 401 Unauthorized", codex_error_info: { http_connection_failed: { http_status_code: 401 } } } } })}\n`,
+  );
+  const plan = await f.bench.consolidate("target", {});
+  expect(plan.reclassified.map((r) => [r.task, r.kind])).toEqual([
+    ["b", "model_authentication_failed"],
+  ]);
+  expect(f.store.getTrial(trial.id)?.outcome?.evaluation).toBe("unknown");
+  const result = await f.bench.consolidate("target", { dryRun: false });
+  expect(result.removedRuns).toEqual([]);
+  expect(f.store.getTrial(trial.id)?.outcome).toMatchObject({
+    evaluation: "invalid",
+    issues: [
+      "verify lost",
+      "Agent stopped: model_authentication_failed (unexpected status 401 Unauthorized)",
+    ],
+  });
 });
 
 it("rejects a donor whose valid mark hides a terminal model failure", async () => {

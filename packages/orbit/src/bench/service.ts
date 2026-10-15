@@ -544,7 +544,7 @@ export class BenchService {
       for (const t of snapshot.trials) {
         const run = t.solveRunId ? this.deps.runs.get(t.solveRunId) : null;
         if (run?.state !== "failed") continue;
-        const failure = await runAgentFailure(this.deps.runs.dirs(run.id).agent);
+        const failure = await this.agentFailure(run);
         if (failure) failures.set(run.id, failure);
       }
     }
@@ -567,16 +567,22 @@ export class BenchService {
           oldRuns.set(rid, run);
         }
     }
+    const reclassified: BenchConsolidateResult["reclassified"] = [];
     for (const d of all)
       for (const t of d.trials) {
         const failure = t.solveRunId ? failures.get(t.solveRunId) : null;
         if (!failure || !t.solveRunId || oldRuns.get(t.solveRunId)?.state !== "failed") continue;
         const issue = `Agent stopped: ${failure.kind} (${failure.message})`;
+        let changed = false;
+        // A valid score, or an unknown one (e.g. its verify run was lost), that only measures the setup.
         for (const outcome of [t.outcome, ...t.history.map((h) => h.outcome)]) {
-          if (outcome?.evaluation !== "valid") continue;
+          if (outcome?.evaluation !== "valid" && outcome?.evaluation !== "unknown") continue;
           outcome.evaluation = "invalid";
           outcome.issues = [...new Set([...outcome.issues, issue])];
+          changed = true;
         }
+        if (changed)
+          reclassified.push({ job: d.job.id, trial: t.id, task: t.task, kind: failure.kind });
       }
     const key = (t: Trial) => JSON.stringify([t.task, t.method, t.seed]);
     const trials = new Map(target.trials.map((t) => [key(t), structuredClone(t)]));
@@ -666,6 +672,7 @@ export class BenchService {
     const out: BenchConsolidateResult = {
       dryRun: f.dryRun,
       adopted,
+      reclassified,
       removedJobs: sources,
       removedRuns,
       leftovers: [],
@@ -923,6 +930,12 @@ export class BenchService {
     if (this.cancelled(jobId, t)) await this.deps.runs.cancel(runId).catch(() => undefined);
   }
 
+  /** Why the Agent in a solve run could not work (credentials, quota, model endpoint), or null. */
+  private agentFailure(solve: Run): Promise<AgentFailure | null> {
+    const dirs = this.deps.runs.dirs(solve.id);
+    return runAgentFailure(dirs.agent, dirs.log).catch(() => null);
+  }
+
   private skipped(t: Trial, evaluation: Outcome["evaluation"], issue: string): void {
     this.finish(t, {
       execution: "skipped",
@@ -990,6 +1003,13 @@ export class BenchService {
     if (t.state === "solving") {
       if (!isTerminal(solve.state)) return this.cancelIfJobCancelled(job.id, t, solve.id);
       const sv = solveVerdict(solve);
+      // An Agent that could not reach or use its model left nothing worth verifying; an explicit
+      // rescore (history kept) verifies anyway, and an after phase has already verified.
+      const agent =
+        sv.verify && !solve.spec.after && t.history.length === 0
+          ? await this.agentFailure(solve)
+          : null;
+      if (agent) return this.finish(t, classify(solve, null, null, t.issues, agent));
       if (!sv.verify || this.cancelled(job.id, t)) {
         const outcome = classify(solve, null, null, t.issues);
         if (sv.verify) {
@@ -1032,7 +1052,6 @@ export class BenchService {
 
   /** Score a trial whose verification has ended; `verify` is the solve run for an after phase. */
   private async score(job: BenchJob, t: Trial, solve: Run, verify: Run): Promise<void> {
-    const runs = this.deps.runs;
     const inline = verify.id === solve.id;
     const ran = inline
       ? solve.after?.state === "succeeded" || solve.after?.state === "failed"
@@ -1051,7 +1070,7 @@ export class BenchService {
         };
       }
     }
-    const agent = await runAgentFailure(runs.dirs(solve.id).agent).catch(() => null);
+    const agent = await this.agentFailure(solve);
     const outcome = classify(solve, verify, score, t.issues, agent);
     this.recordMetrics(job, verify, outcome);
     this.finish(t, outcome);

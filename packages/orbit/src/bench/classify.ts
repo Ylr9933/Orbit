@@ -76,6 +76,8 @@ export function classify(
   });
   const sv = solveVerdict(solve);
   if (!sv.verify) return out(sv.evaluation ?? "unknown", null, sv.issue ? [sv.issue] : []);
+  // The Agent could not work, so its leftovers are not verified (a rescore still can).
+  if (!verify && agentIssue) return out("invalid", null, [agentIssue, "verify skipped"]);
   if (!verify) return out("unknown", null, ["verify not run"]);
   // Verified in the solve run's container (its after phase), as Harbor's shared verifier mode.
   if (verify.id === solve.id && solve.spec.after) {

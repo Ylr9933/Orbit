@@ -766,6 +766,38 @@ output:
     );
     expect(agentErrorKind("python: No module named numpy")).toBeNull();
     expect(agentErrorKind("Model metadata for x not found")).toBeNull();
+    // Final errors seen from Codex and Claude Code inside runs.
+    for (const [text, kind] of [
+      ["workspace routing discovery failed", "model_unreachable"],
+      ["workspace routing discovery timed out", "model_unreachable"],
+      ["Reconnecting... waiting for network", "model_unreachable"],
+      ["API Error: Connection error.", "model_unreachable"],
+      [
+        "unexpected status 401: Missing bearer or basic authentication in header",
+        "model_authentication_failed",
+      ],
+      ["OAuth token has expired. Please obtain a new token", "model_authentication_failed"],
+      ["You've hit your limit · resets 3pm", "model_quota_exhausted"],
+      ["exceeded retry limit, last status: 429 Too Many Requests", "model_quota_exhausted"],
+      ["Selected model is at capacity. Please try a different model.", "model_unavailable"],
+      ['API Error: 529 {"type":"error","error":{"type":"overloaded_error"}}', "model_unavailable"],
+    ])
+      expect(agentErrorKind(text as string), text).toBe(kind);
+    // Structured codes decide before the text; codes that do not tell leave it to the text.
+    expect(agentErrorKind("boom", { http_connection_failed: { http_status_code: 401 } })).toBe(
+      "model_authentication_failed",
+    );
+    expect(
+      agentErrorKind("boom", { response_stream_disconnected: { http_status_code: null } }),
+    ).toBe("model_unreachable");
+    expect(agentErrorKind("boom", "usage_limit_exceeded")).toBe("model_quota_exhausted");
+    expect(agentErrorKind("boom", "server_overloaded")).toBe("model_unavailable");
+    expect(agentErrorKind("boom", "authentication_failed")).toBe("model_authentication_failed");
+    expect(
+      agentErrorKind("boom", { http_connection_failed: { http_status_code: 400 } }),
+    ).toBeNull();
+    expect(agentErrorKind("boom", "context_window_exceeded")).toBeNull();
+    expect(agentErrorKind("boom", "other")).toBeNull();
   });
 
   it("finds judge and file problems inside an ASI score item", () => {
@@ -939,6 +971,12 @@ describe("outcome classification", () => {
       issues: ["Agent stopped: model_quota_exhausted (usage limit)"],
     });
     expect(classify(run({}), run({}), score, [], null).evaluation).toBe("valid");
+    // Not verified at all: invalid with why, not unknown.
+    expect(classify(run({ state: "failed" }), null, null, [], agent)).toMatchObject({
+      evaluation: "invalid",
+      score: null,
+      issues: ["Agent stopped: model_quota_exhausted (usage limit)", "verify skipped"],
+    });
   });
 
   it("makes an out-of-memory solve invalid and notes memory kills of a surviving run", () => {

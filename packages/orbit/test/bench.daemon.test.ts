@@ -68,7 +68,12 @@ process.stdin.on("end", () => {
     const v = req.trial.method.agent === "oracle" ? "7" : "0";
     const release = req.benchmark.config.usageReleaseFile ?? "";
     const wait = release ? 'while [ ! -f "$ORBIT_TEST_USAGE_RELEASE" ]; do sleep 0.05; done; ' : "sleep 0.5; ";
-    return say({ spec: { backend: "process", resources: { cpus: 1, memGB: 1 }, env: { ORBIT_TEST_USAGE_RELEASE: release }, command: ["sh", "-c", wait + "echo " + v + " > $ORBIT_OUTPUT/answer"] } });
+    // An Agent whose only turn ended because Codex could not reach its model.
+    const turn = JSON.stringify({ type: "event_msg", payload: { type: "task_complete", error: { message: "workspace routing discovery failed", codex_error_info: "other" } } });
+    const fail = req.benchmark.config.agentFail
+      ? "; d=$ORBIT_OUTPUT/../agent/codex/sessions/2026/10/13; mkdir -p $d; echo '" + turn + "' > $d/rollout-x.jsonl; exit 1"
+      : "";
+    return say({ spec: { backend: "process", resources: { cpus: 1, memGB: 1 }, env: { ORBIT_TEST_USAGE_RELEASE: release }, command: ["sh", "-c", wait + "echo " + v + " > $ORBIT_OUTPUT/answer" + fail] } });
   }
   if (req.op === "verify")
     return say({ spec: { backend: "process", command: ["sh", "-c", "cp " + req.solve.output + "/answer $ORBIT_OUTPUT/score"] } });
@@ -373,6 +378,41 @@ describe("bench jobs", () => {
     expect(out.deleted.sort()).toEqual([...ids].sort());
     for (const id of ids) expect(existsSync(join(paths.runs, id))).toBe(false);
     await expect(client.benchJob(job.id)).rejects.toThrow(/not found/);
+  });
+
+  it("does not verify a solve whose Agent could not reach its model, unless rescored", async () => {
+    await client.benchmarkPut({
+      name: "ext-down",
+      adapter: join(home, "adapter.cjs"),
+      path: home,
+      config: { agentFail: "1" },
+    });
+    const job = await client.benchSubmit({
+      benchmark: "ext-down",
+      methods: [{ name: "empty", agent: "empty" }],
+    });
+    const settled = async (ok: (d: Awaited<ReturnType<typeof client.benchJob>>) => boolean) => {
+      let d = await client.benchJob(job.id);
+      for (let i = 0; i < 300 && !ok(d); i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        d = await client.benchJob(job.id);
+      }
+      return d;
+    };
+    const d = await settled((x) => x.job.state === "done");
+    const t = d.trials[0];
+    expect(t).toMatchObject({ verifyRunId: null });
+    expect(t?.outcome).toMatchObject({ execution: "failed", evaluation: "invalid", score: null });
+    expect(t?.outcome?.issues).toEqual([
+      "Agent stopped: model_unreachable (workspace routing discovery failed)",
+      "verify skipped",
+    ]);
+    expect(d.summary[0]?.valid).toBe(0);
+    // An explicit rescore still verifies; the score is kept but not trusted.
+    await client.benchRescore(job.id, {});
+    const r = await settled((x) => x.trials.every((y) => y.state === "done"));
+    expect(r.trials[0]?.verifyRunId).toBeTruthy();
+    expect(r.trials[0]?.outcome).toMatchObject({ evaluation: "invalid", score: 0 });
   });
 
   it("rescores finished trials from the saved solve output and keeps the earlier scoring", async () => {

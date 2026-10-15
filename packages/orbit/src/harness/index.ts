@@ -290,31 +290,82 @@ export function agentCommand(method: Method, instruction: string): string[] {
 }
 
 /**
- * Why an Agent CLI could not do the work, from its error text: credentials, model access, quota or
- * the model endpoint. Null for anything else (a failing experiment is the method's result).
+ * Why an Agent CLI could not do the work, from its structured error code when it has one, else its
+ * error text: credentials, model access, quota or the model endpoint. Null for anything else (a
+ * failing experiment is the method's result).
  */
-export function agentErrorKind(text: string): string | null {
+export function agentErrorKind(text: string, code?: unknown): string | null {
+  const structured = agentErrorCodeKind(code);
+  if (structured) return structured;
   const t = text.toLowerCase();
   if (
-    /invalid_api_key|authentication_error|unauthorized|token_revoked|invalidated oauth token|invalid api key|please run \/login/.test(
+    /invalid_api_key|authentication_error|unauthorized|token_revoked|invalidated oauth token|oauth token has expired|invalid api key|please run \/login|missing bearer/.test(
       t,
     )
   )
     return "model_authentication_failed";
   if (
-    /usage limit|insufficient_quota|exceeded your current quota|credit balance is too low/.test(t)
+    /usage limit|hit your limit|insufficient_quota|exceeded your current quota|credit balance is too low|rate_limit_error|last status: 429/.test(
+      t,
+    )
   )
     return "model_quota_exhausted";
   if (
     t.includes("model") &&
-    /not supported|does not exist|do not have access|model_not_found/.test(t)
+    /not supported|does not exist|may not exist|do not have access|model_not_found|at capacity/.test(
+      t,
+    )
   )
     return "model_unavailable";
+  if (/overloaded_error|internal server error|api error: 5\d\d/.test(t)) return "model_unavailable";
   if (
-    /stream disconnected|error sending request|connection (reset|refused|failed)|workspace routing discovery timed out/.test(
+    /stream disconnected|error sending request|connection (reset|refused|failed|error)|workspace routing discovery|waiting for network|exceeded retry limit|request timed out|unable to connect to api|econnrefused|econnreset|enotfound|etimedout/.test(
       t,
     )
   )
     return "model_unreachable";
   return null;
+}
+
+const STATUS_KINDS: Record<string, string> = {
+  "401": "model_authentication_failed",
+  "403": "model_authentication_failed",
+  "404": "model_unavailable",
+  "429": "model_quota_exhausted",
+};
+
+/**
+ * The structured error code an Agent CLI records with its final error: Codex's `codex_error_info`
+ * (a name, or `{ <name>: { http_status_code } }`) or Claude Code's assistant `error`. Codes that do
+ * not tell (bad requests, context overflow, `other`) leave the decision to the message.
+ */
+function agentErrorCodeKind(code: unknown): string | null {
+  if (typeof code === "string")
+    return (
+      {
+        unauthorized: "model_authentication_failed",
+        authentication_failed: "model_authentication_failed",
+        usage_limit_exceeded: "model_quota_exhausted",
+        billing_error: "model_quota_exhausted",
+        rate_limit: "model_quota_exhausted",
+        server_overloaded: "model_unavailable",
+        internal_server_error: "model_unavailable",
+        server_error: "model_unavailable",
+      }[code] ?? null
+    );
+  if (!code || typeof code !== "object") return null;
+  const [name, detail] = Object.entries(code)[0] ?? [];
+  if (
+    !name ||
+    ![
+      "http_connection_failed",
+      "response_stream_connection_failed",
+      "response_stream_disconnected",
+      "response_too_many_failed_attempts",
+    ].includes(name)
+  )
+    return null;
+  const status = (detail as { http_status_code?: unknown } | null)?.http_status_code;
+  if (typeof status !== "number" || status >= 500) return "model_unreachable";
+  return STATUS_KINDS[String(status)] ?? null;
 }

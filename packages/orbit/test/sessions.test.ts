@@ -185,6 +185,66 @@ describe("how the Agent inside a run ended", () => {
     expect(await runAgentFailure(agent)).toBeNull();
   });
 
+  it("uses the structured Codex error and catches a turn stopped while reconnecting", async () => {
+    const agent = join(root, "fail-codex-open");
+    const dir = join(agent, "codex", "sessions", "2026", "10", "13");
+    mkdirSync(dir, { recursive: true });
+    const ev = (payload: unknown) => ({ type: "event_msg", payload });
+    const f = join(dir, "rollout-b.jsonl");
+    writeFileSync(
+      f,
+      jl([
+        ev({ type: "task_started" }),
+        ev({
+          type: "task_complete",
+          error: {
+            message: "boom",
+            codex_error_info: { http_connection_failed: { http_status_code: 401 } },
+          },
+        }),
+      ]),
+    );
+    expect(await runAgentFailure(agent)).toEqual({
+      kind: "model_authentication_failed",
+      message: "boom",
+    });
+    // The turn never completed: only the run log can tell whether the model was the problem.
+    writeFileSync(f, jl([ev({ type: "task_started" }), ev({ type: "item_completed" })]));
+    const log = join(root, "open-log.txt");
+    expect(await runAgentFailure(agent, log)).toBeNull();
+    writeFileSync(log, "+ python train.py\nepoch 3 loss 0.2\n");
+    expect(await runAgentFailure(agent, log)).toBeNull();
+    writeFileSync(
+      log,
+      [
+        "epoch 3 loss 0.2",
+        "2026-10-13T11:55:27Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request",
+        "ERROR: Reconnecting... waiting for network",
+        "ERROR: Reconnecting... waiting for network",
+        "",
+      ].join("\n"),
+    );
+    expect(await runAgentFailure(agent, log)).toEqual({
+      kind: "model_unreachable",
+      message:
+        "stopped while reconnecting to the model: ERROR: Reconnecting... waiting for network",
+    });
+    writeFileSync(log, "ERROR: unexpected status 401 Unauthorized\nERROR: Reconnecting... 2/5\n");
+    expect(await runAgentFailure(agent, log)).toMatchObject({
+      kind: "model_authentication_failed",
+    });
+    // A later turn that started again resets an earlier error.
+    writeFileSync(
+      f,
+      jl([
+        ev({ type: "task_complete", error: { message: "usage limit" } }),
+        ev({ type: "task_started" }),
+      ]),
+    );
+    writeFileSync(log, "done\n");
+    expect(await runAgentFailure(agent, log)).toBeNull();
+  });
+
   it("reports a Claude Code session whose last reply is an API error", async () => {
     const agent = join(root, "fail-claude");
     const dir = join(agent, "claude", "projects", "-task");
@@ -199,5 +259,7 @@ describe("how the Agent inside a run ended", () => {
     expect(await runAgentFailure(agent)).toMatchObject({ kind: "model_quota_exhausted" });
     writeFileSync(f, jl([reply("Credit balance is too low", true), reply("done", false)]));
     expect(await runAgentFailure(agent)).toBeNull();
+    writeFileSync(f, jl([{ ...reply("API Error", true), error: "authentication_failed" }]));
+    expect(await runAgentFailure(agent)).toMatchObject({ kind: "model_authentication_failed" });
   });
 });
