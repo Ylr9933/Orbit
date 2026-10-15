@@ -85,6 +85,10 @@ export function formatRun(r: Run, summary?: Record<string, number>): string {
       `  lease    ${r.lease.state} ${r.lease.gpuIds.join(", ") || "no GPUs"}${r.spec.services.length ? `, ${r.lease.cpus} CPU, ${r.lease.memGB} GB with services` : ""}`,
     );
   if (r.usage) lines.push(`  usage    ${formatUsage(r)}`);
+  if (r.checkpoint)
+    lines.push(
+      `  checkpoint ${r.checkpoint.state}${r.checkpoint.sizeBytes === null ? "" : ` ${fmtBytes(r.checkpoint.sizeBytes)}`}${r.checkpoint.reason ? `: ${r.checkpoint.reason}` : `; orbit resume ${r.id}`}`,
+    );
   if (r.sizeBytes !== null) lines.push(`  disk     ${fmtBytes(r.sizeBytes)}`);
   if (r.code) {
     const c = r.code;

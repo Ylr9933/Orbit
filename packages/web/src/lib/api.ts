@@ -112,6 +112,8 @@ export const api = {
     return runs;
   },
   run: (id: string) => req<Run>(`/runs/${enc(id)}`),
+  resume: (id: string) =>
+    req<Run>(`/runs/${enc(id)}/resume`, { method: "POST", body: JSON.stringify({}) }),
   cancel: (id: string) => req<Run>(`/runs/${enc(id)}/cancel`, { method: "POST" }),
   deleteRuns: (ids: string[]) =>
     req<RunDeletion>("/runs/delete", { method: "POST", body: JSON.stringify({ ids }) }),

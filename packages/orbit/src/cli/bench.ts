@@ -327,6 +327,11 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
     .option("--seeds <n>", "repetitions per task × method", numericOption("integer"), 1)
     .option("--timeout <min>", "solve timeout per trial in minutes", numericOption("float"))
     .option(
+      "--checkpoint <GB>",
+      "save failed solve filesystem and session up to this size",
+      numericOption("float"),
+    )
+    .option(
       "--option <KEY=VALUE>",
       "adapter option, e.g. promptLevel=b2 for asi",
       (v, p: string[]) => [...p, v],
@@ -344,6 +349,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
           task: string[];
           seeds: number;
           timeout?: number;
+          checkpoint?: number;
           option: string[];
           name?: string;
           folder?: string;
@@ -364,6 +370,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
             seeds: o.seeds,
             options: kv(o.option, "--option"),
             timeoutMin: o.timeout,
+            checkpoint: o.checkpoint === undefined ? undefined : { maxSizeGB: o.checkpoint },
           },
           o.folder,
         );

@@ -207,6 +207,7 @@ export async function receiveRemote(ctx: Context, input: RemoteSubmit): Promise<
   }
   const spec = RunSpec.parse(input.spec);
   if (spec.backend !== "docker") throw new UserError("only docker runs can run on another node");
+  if (spec.checkpoint) throw new UserError("checkpoint runs stay on the submitting node");
   if (spec.mounts.some((m) => m.source)) throw new UserError("host path mounts are not portable");
   if (spec.project && !input.workspace)
     throw new UserError("a project run needs its code snapshot");
@@ -248,6 +249,7 @@ export async function receiveRemote(ctx: Context, input: RemoteSubmit): Promise<
     code: input.code,
     proc: null,
     cleanup: "pending",
+    checkpoint: null,
     remote: false,
     origin: input.origin,
     imageId: null,

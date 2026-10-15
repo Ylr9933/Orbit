@@ -367,6 +367,38 @@ export async function removeContainer(id: string): Promise<boolean> {
   return (await inspectContainer(id).catch(() => undefined)) === null;
 }
 
+/** Writable layer size; shared image layers and mounts are excluded. */
+export async function writableSize(id: string): Promise<number> {
+  const r = await docker(["container", "inspect", "--size", "--format", "{{.SizeRw}}", id]);
+  const size = Number(r.stdout.trim());
+  if (r.code !== 0 || !r.stdout.trim() || !Number.isSafeInteger(size) || size < 0)
+    throw new Error("cannot measure container writable layer");
+  return size;
+}
+
+/** A local checkpoint layer. Credentials in the original container environment are cleared. */
+export async function commitCheckpoint(
+  id: string,
+  tag: string,
+  clearEnv: string[],
+  labels: Record<string, string>,
+): Promise<string> {
+  const changes = [
+    ...clearEnv.map((key) => `ENV ${key}=`),
+    ...Object.entries(labels).map(([key, value]) => `LABEL ${key}=${value}`),
+  ];
+  const r = await docker(["commit", ...changes.flatMap((c) => ["--change", c]), id, tag], 600_000);
+  const image = r.stdout.trim();
+  if (r.code !== 0 || !/^sha256:[a-f0-9]{64}$/.test(image))
+    throw new Error("cannot commit container checkpoint");
+  return image;
+}
+
+export async function removeCheckpoint(tag: string): Promise<boolean> {
+  const r = await docker(["image", "rm", tag], 120_000);
+  return r.code === 0 || /no such image/i.test(r.stderr);
+}
+
 /** Copy `src` out of a container to `dest` on the host; returns an error line or null. */
 export async function copyFromContainer(
   id: string,

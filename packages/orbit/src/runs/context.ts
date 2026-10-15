@@ -29,6 +29,7 @@ export interface RunContext {
   cleanup(run: Run): Promise<void>;
   cleanupProcess(run: Run): Promise<boolean>;
   cleanupServices(run: Run): Promise<boolean>;
+  captureCheckpoint(id: string, containerId: string, executionMin: number): Promise<void>;
   collect(run: Run, containerId: string): Promise<void>;
   containerCgroups(ids: string[]): Promise<string[]>;
   containerSpec(run: Run, dirs: RunDirs, image: string): docker.ContainerSpec;

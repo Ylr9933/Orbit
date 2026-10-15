@@ -18,6 +18,8 @@ import {
   type Run,
   type RunDeletion,
   type RunEvent,
+  RunResume,
+  type RunResumeInput,
   RunSpec,
   type RunSpecInput,
   type RunState,
@@ -32,6 +34,7 @@ import { resolveAgentRef } from "../sessions/index.ts";
 import type { RunFilter, Store } from "../store/index.ts";
 import type { DatasetRegistry } from "../workspace/datasets.ts";
 import { snapshotProject } from "../workspace/snapshot.ts";
+import * as checkpoint from "./checkpoint.ts";
 import * as cleanup from "./cleanup.ts";
 import type { RunContext } from "./context.ts";
 import { NotFoundError, UserError } from "./errors.ts";
@@ -114,6 +117,8 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
   private stopped = false;
   /** Runs with an active launch/watch task in this process. */
   private readonly active = new Map<string, Control>();
+  private readonly restoring = new Map<string, number>();
+  private readonly deleting = new Set<string>();
 
   private readonly deps: RunServiceDeps;
 
@@ -137,6 +142,8 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       cleanup: (run) => this.cleanup(run),
       cleanupProcess: (run) => this.cleanupProcess(run),
       cleanupServices: (run) => this.cleanupServices(run),
+      captureCheckpoint: (id, containerId, executionMin) =>
+        checkpoint.capture(this.context, id, containerId, executionMin),
       collect: (run, containerId) => this.collect(run, containerId),
       containerCgroups: (ids) => this.containerCgroups(ids),
       containerSpec: (run, dirs, image) => this.containerSpec(run, dirs, image),
@@ -279,8 +286,17 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
    * mirror of a remote run, whose mirroring is over); runs of a bench trial go with their job.
    */
   deleteBlocker(run: Run, forJob = false): string | null {
+    if (this.deleting.has(run.id)) return `${run.id}: deletion is in progress`;
+    if (this.restoring.has(run.id)) return `${run.id}: checkpoint is being restored`;
     if (!isTerminal(run.state))
       return `${run.id} is ${run.state}; cancel it and wait for it to end`;
+    if (
+      run.checkpoint?.imageId &&
+      this.store
+        .listRuns({ states: ["queued", "starting", "running"], limit: 10_000 })
+        .some((r) => r.spec.image === run.checkpoint?.imageId)
+    )
+      return `${run.id}: checkpoint is used by an active restored run`;
     if (run.cleanup !== "done")
       return `${run.id}: cleanup is ${run.cleanup}; its container or processes may still exist`;
     if (this.active.has(run.id)) return `${run.id} is still being finalized`;
@@ -306,11 +322,23 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     });
     const blocked = runs.map((r) => this.deleteBlocker(r, opts.forJob)).filter(Boolean);
     if (blocked.length) throw new UserError(blocked.join("; "));
-    this.store.deleteRuns(unique);
-    const leftovers: string[] = [];
-    for (const r of runs) if (!(await this.removeDir(r))) leftovers.push(this.dirs(r.id).root);
-    this.emit("deleted", unique);
-    return { deleted: unique, leftovers };
+    for (const id of unique) this.deleting.add(id);
+    try {
+      for (const r of runs) {
+        if (
+          r.checkpoint?.imageId &&
+          !(await docker.removeCheckpoint(checkpoint.checkpointTag(r.id)))
+        )
+          throw new UserError(`${r.id}: checkpoint image removal failed; run records retained`);
+      }
+      this.store.deleteRuns(unique);
+      const leftovers: string[] = [];
+      for (const r of runs) if (!(await this.removeDir(r))) leftovers.push(this.dirs(r.id).root);
+      this.emit("deleted", unique);
+      return { deleted: unique, leftovers };
+    } finally {
+      for (const id of unique) this.deleting.delete(id);
+    }
   }
 
   /** Remove a run directory; files a container wrote as root are removed from a container. */
@@ -326,7 +354,10 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     return this.store.events(id, afterSeq);
   }
 
-  async submit(input: RunSpecInput, opts: { folder?: string } = {}): Promise<Run> {
+  async submit(
+    input: RunSpecInput,
+    opts: { folder?: string; restoreFrom?: Run } = {},
+  ): Promise<Run> {
     const spec = RunSpec.parse(input);
     const folder = Folder.safeParse(opts.folder ?? "");
     if (!folder.success) throw new UserError(folder.error.issues[0]?.message ?? "invalid folder");
@@ -361,6 +392,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       code,
       proc: null,
       cleanup: "pending",
+      checkpoint: null,
       remote: false,
       origin: null,
       imageId: null,
@@ -374,6 +406,14 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       startedAt: null,
       endedAt: null,
     };
+    if (opts.restoreFrom) {
+      try {
+        await checkpoint.restore(this.context, opts.restoreFrom, run);
+      } catch (e) {
+        rmSync(dirs.root, { recursive: true, force: true });
+        throw new UserError(`checkpoint restore failed: ${(e as Error).message}`);
+      }
+    }
     this.save(
       run,
       "submitted",
@@ -391,6 +431,31 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
     }
     void this.tick();
     return run;
+  }
+
+  async resume(id: string, input: RunResumeInput = {}): Promise<Run> {
+    const run = this.mustGet(id);
+    if (
+      this.deleting.has(id) ||
+      run.remote ||
+      run.origin ||
+      !isTerminal(run.state) ||
+      run.cleanup !== "done" ||
+      this.active.has(id)
+    )
+      throw new UserError("resume requires a local finished run with confirmed cleanup");
+    const { command } = RunResume.parse(input);
+    const spec = checkpoint.resumeSpec(run, command);
+    this.restoring.set(id, (this.restoring.get(id) ?? 0) + 1);
+    try {
+      if (!(await docker.imageExists(spec.image as string)))
+        throw new UserError("checkpoint image is no longer available on this node");
+      return await this.submit(spec, { folder: run.folder, restoreFrom: run });
+    } finally {
+      const remaining = (this.restoring.get(id) ?? 1) - 1;
+      if (remaining) this.restoring.set(id, remaining);
+      else this.restoring.delete(id);
+    }
   }
 
   async cancel(id: string): Promise<Run> {

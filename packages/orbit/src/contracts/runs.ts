@@ -148,6 +148,32 @@ export const serviceLease = (s: Pick<ServiceSpec, "cpus" | "memGB">) => ({
   memGB: s.memGB ?? 1,
 });
 
+export const CheckpointPolicy = z.object({
+  /** Maximum saved writable layer plus checkpoint files, excluding shared base layers. */
+  maxSizeGB: z.number().positive().max(100).default(4),
+});
+export type CheckpointPolicy = z.infer<typeof CheckpointPolicy>;
+
+export const RunResume = z.object({
+  /** Override the Agent resume command, e.g. to inspect the restored environment without an API. */
+  command: z.array(z.string()).min(1).optional(),
+});
+export type RunResumeInput = z.input<typeof RunResume>;
+
+export const RunCheckpoint = z.object({
+  state: z.enum(["ready", "failed"]),
+  imageId: z.string().nullable(),
+  sizeBytes: z.number().nullable(),
+  /** Command execution only; snapshot and artifact collection time is excluded. */
+  executionMin: z.number().nonnegative().optional(),
+  session: z
+    .object({ harness: z.enum(["codex", "claude-code"]), sessionId: z.string() })
+    .nullable(),
+  createdAt: z.string(),
+  reason: z.string().nullable(),
+});
+export type RunCheckpoint = z.infer<typeof RunCheckpoint>;
+
 export const RunSpec = z
   .object({
     name: z.string().max(200).optional(),
@@ -170,6 +196,8 @@ export const RunSpec = z
     /** Run as root instead of the host user (files in outputs are then root-owned). */
     root: z.boolean().default(false),
     timeoutMin: z.number().positive().optional(),
+    /** Save local filesystem and native session state before failure cleanup. */
+    checkpoint: CheckpointPolicy.optional(),
     tags: z.record(z.string(), z.string()).default({}),
     /** Values that define this run within its group (e.g. sweep params); used by compare views. */
     params: z.record(z.string(), z.string()).default({}),
@@ -252,6 +280,18 @@ export const RunSpec = z
     },
   )
   .superRefine((s, ctx) => {
+    if (
+      s.checkpoint &&
+      (s.backend !== "docker" ||
+        s.services.length ||
+        s.mounts.some((m) => m.mode === "rw") ||
+        (s.project && !s.snapshot))
+    )
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "checkpoints require local Docker runs without services, external writable mounts or a live project mount",
+      });
     const problem = servicesProblem(s);
     if (problem) ctx.addIssue({ code: "custom", message: problem });
     if ((s.after || s.hooks.length) && s.backend !== "docker")
@@ -383,6 +423,7 @@ export const Run = z.object({
   /** Process runs: host pid and its start time (clock ticks) to tell it from a reused pid. */
   proc: z.object({ pid: z.number().int(), start: z.string() }).nullable().default(null),
   cleanup: z.enum(["pending", "done", "failed"]),
+  checkpoint: RunCheckpoint.nullable().default(null),
   /** True on the primary for a run placed on another node: this record mirrors that node's run. */
   remote: z.boolean().default(false),
   /** On a worker: the primary node that submitted the run. */

@@ -48,6 +48,7 @@ export function remoteBlocker(spec: RunSpec, node: RemoteNode): string | null {
     return `pinned to ${spec.resources.node}`;
   if (!node.resources) return "not reachable yet";
   if (spec.backend === "process") return "process runs stay on the submitting node";
+  if (spec.checkpoint) return "checkpoint runs stay on the submitting node";
   if (spec.services.length) return "runs with services stay on the submitting node";
   const host = spec.mounts.find((m) => m.source);
   if (host) return `host path mount ${host.source} stays on the submitting node`;

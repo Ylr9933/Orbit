@@ -17,6 +17,7 @@ import { keepsContainer } from "./phases.ts";
 type Context = Pick<
   RunContext,
   | "collect"
+  | "captureCheckpoint"
   | "containerCgroups"
   | "control"
   | "dirs"
@@ -62,11 +63,25 @@ export async function watch(
   let exitCode: number;
   let collected = false;
   const spec = ctx.mustGet(id).spec;
+  const checkpointFailure = async () => {
+    if (!spec.checkpoint || exitCode === 0 || ctl.cancel === "cancel") return false;
+    const startedAt = ctx.mustGet(id).startedAt;
+    const executionMin = startedAt ? Math.max(0, Date.now() - Date.parse(startedAt)) / 60_000 : 0;
+    await docker.stopContainer(containerId);
+    await ctx.waitStopped(containerId);
+    await ctx.captureCheckpoint(id, containerId, executionMin);
+    if (spec.after)
+      ctx.skipAfter(id, "solve interrupted; checkpoint attempted before verification");
+    return true;
+  };
   if (keepsContainer(spec)) {
     const main = await ctx.waitMain(id, containerId);
     exitCode = main.exitCode;
     ctx.disarmTimeout(id);
-    if (main.running) {
+    if (await checkpointFailure()) {
+      await ctx.collect(ctx.mustGet(id), containerId);
+      collected = true;
+    } else if (main.running) {
       // As Harbor: hooks in the run's container first; without an after phase it is stopped
       // before the services' hooks run.
       const go = () => ctl.cancel !== "cancel";
@@ -85,7 +100,11 @@ export async function watch(
         await ctx.waitStopped(containerId);
       }
     } else if (spec.after) ctx.skipAfter(id, "the container stopped with the command");
-  } else exitCode = await ctx.waitStopped(containerId);
+  } else {
+    exitCode = await ctx.waitStopped(containerId);
+    ctx.disarmTimeout(id);
+    await checkpointFailure();
+  }
   ctx.disarmTimeout(id);
   // Evidence first: let the log follower reach EOF before the container is removed.
   const complete = await Promise.race([drained, sleep(LOG_DRAIN_TIMEOUT_MS).then(() => false)]);

@@ -71,6 +71,9 @@ export function registerRunsRoutes(api: Hono, deps: AppDeps): void {
 
   api.get("/runs/:id", (c) => c.json(must(runs.get(c.req.param("id")))));
   api.post("/runs/:id/cancel", async (c) => c.json(await runs.cancel(c.req.param("id"))));
+  api.post("/runs/:id/resume", async (c) =>
+    c.json(await runs.resume(c.req.param("id"), await c.req.json()), 201),
+  );
   api.put("/runs/:id/note", async (c) => {
     const { note } = z.object({ note: z.string().max(100_000) }).parse(await c.req.json());
     return c.json(runs.setNote(c.req.param("id"), note));

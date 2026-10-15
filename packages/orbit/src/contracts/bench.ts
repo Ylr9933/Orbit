@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { EnvName, ProfileName } from "./common.ts";
 import { Folder } from "./folders.ts";
+import { CheckpointPolicy } from "./runs.ts";
 
 /** Adapters shipped with Orbit (`orbit __adapter <name>`). */
 export const BUILTIN_ADAPTERS = ["harbor", "asi"] as const;
@@ -102,6 +103,7 @@ export const BenchJobSpec = z.object({
   seeds: z.number().int().min(1).max(100).default(1),
   /** Adapter options, e.g. asi `promptLevel` (default b1). */
   options: z.record(z.string(), z.string()).default({}),
+  checkpoint: CheckpointPolicy.optional(),
   /** Override the per-task solve timeout. */
   timeoutMin: z.number().positive().optional(),
 });

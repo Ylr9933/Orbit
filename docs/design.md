@@ -259,6 +259,21 @@ submitterError, agent }`；Web Session 页两种都有时左右两栏（左提�
 daemon 重启时仅对仍在运行的任务重新计时。bench 的超时 issue 与用量统计只识别调度器的完整超时原因，
 不匹配日志或其他错误文本中的 timeout 字样。
 
+**失败快照与续跑**（`runs/checkpoint.ts`）：`RunSpec.checkpoint { maxSizeGB }` 显式启用本地 Docker
+失败快照；bench job 的同名字段只传给 solve Run。命令非 0 退出且不是用户取消时，先停止容器，在 hooks / after
+评测之前保存变更层为本机 `orbit-checkpoint/<run>:saved` 镜像，单独复制 `/orbit`、项目工作区和 after copy 输入；
+移除副本的凭据和旧阶段文件，清空镜像配置中的注入密钥变量。共享基础镜像不重复归档；上限按 writable layer
+和副本文件的逻辑字节数估算，不等同于全部 Docker 磁盘用量。`Run.checkpoint` 独立记录 ready / failed、镜像内容 ID、
+大小、会话 ID、执行耗时和原因；保存失败仍执行原有采集、清理和租约释放。该失败路径跳过 hooks / after。
+不支持 process、服务容器、外部可写挂载和非快照项目；只读挂载继续引用原路径。快照 Run 不能派发到 worker。
+
+`POST runs/:id/resume`（`RunResume { command? }`）与 `orbit resume <id> [--command '<shell>']` 在原 Run
+终态且清理完成后创建普通的新 Run，`parentId` 指向原 Run；镜像和快照文件只从 daemon 中读取并在入队前还原。
+缺省使用原生 session ID 续接直接启动的 Codex / Claude 命令，保留 model / effort；command 覆盖用于离线检查，
+不运行 hooks / after。续跑请求重新注入当前 auth，沿用原执行时间的剩余预算；不恢复进程内存、tmpfs 或连接。
+原记录不变，新的 Run 不属于原 bench trial，也不自动计分。Web 概览显示快照及续接入口。删除原 Run / job 时
+删除快照镜像；仍有排队或运行中的恢复 Run 时拒绝删除来源。使用与限制见 [checkpoints](guides/checkpoints.md)。
+
 **实测用量**（`Run.usage`，`runs/usage.ts`）：执行节点每 5 s 采样一次运行中的 Run：docker Run 读容器的
 cgroup v2（`memory.peak`/`memory.current`、`cpu.stat`、`memory.events` 的 `oom_kill`）；process Run 读其进程组
 的 `/proc` RSS 与 CPU 时间，加上带 `orbit.parent` 标签的子容器的 cgroup；租到 GPU 时按这些进程的 host pid 匹配

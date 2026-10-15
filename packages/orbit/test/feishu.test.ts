@@ -50,6 +50,7 @@ function run(id: string, state: Run["state"]): Run {
     code: null,
     proc: null,
     cleanup: "done",
+    checkpoint: null,
     remote: false,
     origin: null,
     note: "",

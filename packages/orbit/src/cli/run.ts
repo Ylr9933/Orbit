@@ -30,6 +30,7 @@ export interface RunOpts {
   snapshot: boolean;
   root?: boolean;
   timeout?: number;
+  checkpoint?: number;
   tag: string[];
   json?: boolean;
   wait?: boolean;
@@ -83,6 +84,11 @@ export function addRunOptions(cmd: Command): Command {
       "mount the Agent CLI with this credential profile (orbit auth list)",
     )
     .option("--no-snapshot", "mount the project read-only instead of snapshotting it")
+    .option(
+      "--checkpoint <GB>",
+      "save a failure checkpoint up to this size (shared image layers excluded)",
+      num,
+    )
     .option("--root", "run as root instead of your user")
     .option("--timeout <min>", "stop the run after this many minutes", num)
     .option("-t, --tag <KEY=VALUE>", "tag", collect, [])
@@ -198,6 +204,7 @@ export async function buildSpec(
     snapshot: o.snapshot,
     root: o.root ?? false,
     timeoutMin: o.timeout,
+    checkpoint: o.checkpoint === undefined ? undefined : { maxSizeGB: o.checkpoint },
     tags: kv(o.tag, "--tag"),
     params,
     agent: detectAgent(),

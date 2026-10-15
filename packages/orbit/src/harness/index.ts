@@ -289,6 +289,32 @@ export function agentCommand(method: Method, instruction: string): string[] {
   throw new Error(`${method.agent} is not an Agent CLI`);
 }
 
+export function resumeAgentCommand(
+  command: string[],
+  session: { harness: "codex" | "claude-code"; sessionId: string },
+): string[] {
+  const prompt =
+    "Continue the interrupted task from the saved state. Inspect existing files and avoid repeating completed work.";
+  if (session.harness === "codex" && command[0] === "codex" && command[1] === "exec")
+    return [
+      "codex",
+      "exec",
+      "resume",
+      ...(command[2] === "resume" ? command.slice(3, -2) : command.slice(2, -1)),
+      session.sessionId,
+      prompt,
+    ];
+  if (session.harness === "claude-code" && command[0] === "claude" && command.includes("-p")) {
+    const flags = command.slice(1, -1);
+    const previous = flags.indexOf("--resume");
+    if (previous !== -1) flags.splice(previous, 2);
+    return ["claude", ...flags, "--resume", session.sessionId, prompt];
+  }
+  throw new Error(
+    "automatic continuation requires a direct Orbit Agent command; provide a command instead",
+  );
+}
+
 /**
  * Why an Agent CLI could not do the work, from its structured error code when it has one, else its
  * error text: credentials, model access, quota or the model endpoint. Null for anything else (a

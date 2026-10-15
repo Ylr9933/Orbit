@@ -45,6 +45,7 @@ import {
   RunDeletion,
   RunEvents,
   RunList,
+  type RunResumeInput,
   RunSessions,
   type RunSpecInput,
   type RunState,
@@ -130,6 +131,8 @@ export class OrbitClient {
   };
   get = (id: string) => this.call(Run, `/runs/${enc(id)}`);
   cancel = (id: string) => this.call(Run, `/runs/${enc(id)}/cancel`, { method: "POST" });
+  resume = (id: string, body: RunResumeInput = {}) =>
+    this.call(Run, `/runs/${enc(id)}/resume`, { method: "POST", body, timeoutMs: 600_000 });
   note = (id: string, note: string) =>
     this.call(Run, `/runs/${enc(id)}/note`, { method: "PUT", body: { note } });
   wait = (id: string, timeoutSec = 60) =>

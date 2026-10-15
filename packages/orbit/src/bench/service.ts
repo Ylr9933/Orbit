@@ -598,6 +598,7 @@ export class BenchService {
     return this.deps.runs.submit(
       {
         ...spec,
+        ...(phase === "solve" && job.spec.checkpoint ? { checkpoint: job.spec.checkpoint } : {}),
         // Scoring reads run outputs from this node's disk, so benchmark runs stay here.
         resources: { ...spec.resources, node: this.deps.runs.nodeName },
         name: `${t.task} · ${t.method}${job.spec.seeds > 1 ? ` #${t.seed}` : ""} · ${phase}`,

@@ -1,7 +1,7 @@
 # Orbit status
 
-- **Updated at:** 2026-10-15
-- **Basis:** Domain modules split behind stable APIs; pure bench merge planning, paginated Web runs, merge preview dialog, visible-tab polling and private state checks for owned home symlinks.
+- **Updated at:** 2026-10-16
+- **Basis:** Opt-in failed-run filesystem checkpoints and native session continuation; local Docker restore checked with killed containers and daemon restart.
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none for the current release.
 
@@ -10,7 +10,7 @@
 - The npm package [`@zjunlp/orbit`](https://www.npmjs.com/package/@zjunlp/orbit) includes Web, shared skills and generated third-party licenses; one-command native plugins for Claude Code, Codex, dsh and pi. Isolated real installs and skill loading verified. [Plugin guide](../plugin/README.md) · [Release guide](guides/releasing.md).
 - `pnpm verify` (Biome, tsc, boundaries, vitest, builds). Auto-started local daemon (127.0.0.1, token/cookie, one-time browser login, private sqlite/state, one writer per home); `orbit run / sweep / ps / show / logs / wait [-g] / cancel / note / resources / doctor / web / auth / notify / bench / node / data`.
 - Resource leases with a queue (with reasons); use outside Orbit is respected (busy GPUs, measured CPU use, `MemAvailable`). Docker executor: code snapshot, CDI GPU mapping checked against the lease,
-  execution-only timeouts; logs, metrics and outputs collected before cleanup. Process backend for native runners, with a labelling, GPU-limiting docker shim.
+  execution-only timeouts; logs, metrics and outputs collected before cleanup. Opt-in bounded failure checkpoints and `orbit resume` (local Docker, files/session; no process memory or services). [Guide](guides/checkpoints.md). Process backend with a labelling, GPU-limiting docker shim.
 - Session linking; Web UI: complete paginated runs with SSE, run detail, trial page, compare, resources, settings, bench; typed-confirmation deletion and digest-confirmed merge dialog; polling pauses in hidden tabs.
 - Who holds each GPU (user, command, PID, container/Run, memory, runtime; else unknown) in Web and CLI.
 - Pre-flight `orbit run|sweep --check` (data, output disk, image, placement); `--smoke '<cmd>'` gates submission.
@@ -25,7 +25,7 @@
 
 ## Main gaps
 
-- ASI / TB-Science scores not yet compared with official Harbor runs (only oracle-level); codex lacks Harbor's `unified_exec`; no GPU-type placement, allowlist networks, multi-step tasks or MCP servers for Harbor tasks. R4 not run on two real machines; no bundle cache eviction.
+- ASI / TB-Science scores not yet compared with official Harbor runs (only oracle-level); codex lacks Harbor's `unified_exec`; no GPU-type placement, allowlist networks, multi-step tasks or MCP servers for Harbor tasks. R4 not run on two real machines; no bundle cache eviction. Checkpoint native session continuation still needs a real model run.
 - Per-user daemons on one machine (busy 7717 → free port) can lease the same free GPU at once; fix when needed with a shared per-GPU lock.
 - Bench metrics: tests and fake adapters only; group notifications may fire between solve and verify. Untried: some auth kinds, real IM webhooks (the Feishu app was checked on a phone). No MCP server or dsh/pi session capture/in-container harnesses; no overcommit.
 

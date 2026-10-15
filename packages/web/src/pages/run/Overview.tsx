@@ -15,6 +15,7 @@ import {
 import { CopyButton, Link, StateIcon, stateColor, toast } from "../../components/ui.tsx";
 import { api, type Metrics, type Run, type RunEvent } from "../../lib/api.ts";
 import {
+  bytes,
   dateTime,
   duration,
   isActive,
@@ -47,6 +48,7 @@ export function Overview({
   return (
     <div className="page-pad">
       <Outcome run={run} />
+      <Checkpoint run={run} />
       <div className="grid-2" style={{ marginTop: 14 }}>
         <div className="col" style={{ gap: 14 }}>
           <Lifecycle run={run} events={events.data ?? []} now={now} />
@@ -59,6 +61,50 @@ export function Overview({
           <LogPeek run={run} onTab={onTab} />
         </div>
       </div>
+    </div>
+  );
+}
+
+function Checkpoint({ run }: { run: Run }) {
+  const [busy, setBusy] = useState(false);
+  const checkpoint = run.checkpoint;
+  if (!checkpoint) return null;
+  const ready = checkpoint.state === "ready" && run.cleanup === "done";
+  return (
+    <div className="callout" style={{ marginTop: 12 }}>
+      <div className="grow">
+        {checkpoint.state === "ready" ? (
+          <>
+            Checkpoint saved
+            {checkpoint.sizeBytes === null ? "" : ` (${bytes(checkpoint.sizeBytes)})`}. Files and
+            session can be restored; running processes are restarted.
+            {checkpoint.session
+              ? " Continue in a new standalone run; benchmark results stay unchanged."
+              : ` Inspect with orbit resume ${run.id} --command '<command>'.`}
+          </>
+        ) : (
+          <>Checkpoint failed: {checkpoint.reason}</>
+        )}
+      </div>
+      {ready && checkpoint.session && (
+        <button
+          type="button"
+          className="btn sm"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              const next = await api.resume(run.id);
+              window.location.assign(`/runs/${next.id}`);
+            } catch (e) {
+              toast((e as Error).message);
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Restoring…" : "Continue session"}
+        </button>
+      )}
     </div>
   );
 }

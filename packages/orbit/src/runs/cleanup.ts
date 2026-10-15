@@ -118,6 +118,7 @@ export async function cleanup(ctx: Context, run: Run): Promise<void> {
 
 export async function measure(ctx: Context, id: string): Promise<void> {
   const bytes = await dirBytes(ctx.dirs(id).root);
+  if (ctx.stopped) return;
   const run = ctx.store.getRun(id);
   if (bytes === null || !run || run.sizeBytes === bytes) return;
   run.sizeBytes = bytes;

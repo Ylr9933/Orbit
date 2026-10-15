@@ -189,6 +189,26 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
   });
 
   program
+    .command("resume <id>")
+    .description(
+      "restore a checkpoint into a new standalone run and continue its native Agent session",
+    )
+    .option(
+      "--command <shell>",
+      "run this shell command instead (e.g. inspect files without calling a model)",
+    )
+    .option("-w, --wait", "wait for completion")
+    .option("--json", "print JSON")
+    .action(async (id: string, o: { command?: string; wait?: boolean; json?: boolean }) => {
+      const c = await client();
+      const run = await c.resume(id, {
+        command: o.command === undefined ? undefined : ["sh", "-c", o.command],
+      });
+      if (o.wait) return waitAll(c, [run.id], Boolean(o.json));
+      print(o.json, run, () => formatRun(run));
+    });
+
+  program
     .command("ps")
     .description("list runs (active by default)")
     .option("-a, --all", "include finished runs")

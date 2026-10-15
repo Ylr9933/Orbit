@@ -216,6 +216,7 @@ function run(id: string, state: Run["state"], group?: string): Run {
     code: null,
     proc: null,
     cleanup: "done",
+    checkpoint: null,
     remote: false,
     origin: null,
     imageId: null,
