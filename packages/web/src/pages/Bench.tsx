@@ -333,7 +333,7 @@ export function BenchJobDetail({ id }: { id: string }) {
         "Allow equivalent benchmark/auth profiles that differ only in proxy or host networking?",
       );
       const replaceFailed = confirm(
-        "Also replace failed solve attempts, even if previously scored valid, with successful retries? Invalid retry verification is retained only over non-valid results. Successful valid attempts stay protected.",
+        "Also replace failed solve attempts, even if previously scored valid, with successful retries? Completed invalid retries, including failed solves, are retained only over results with no valid history. Successful valid attempts stay protected.",
       );
       const body = {
         sources,

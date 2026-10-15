@@ -182,7 +182,7 @@ export class OrbitClient {
       body: spec,
       timeoutMs: 600_000,
     });
-  /** Preview/apply retries; replaceFailed explicitly retains successful solves of failed attempts. */
+  /** Preview/apply retries; replaceFailed adopts successful solves and preserves completed invalid attempts over non-valid slots. */
   benchConsolidate = (id: string, body: BenchConsolidateInput) =>
     this.call(BenchConsolidateResult, `/bench/jobs/${enc(id)}/consolidate`, {
       method: "POST",

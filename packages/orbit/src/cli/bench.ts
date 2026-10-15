@@ -418,7 +418,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
     .option("--append-tasks", "append new tasks, keeping invalid outcomes and artifacts")
     .option(
       "--replace-failed",
-      "adopt successful solves over failed attempts, retaining invalid verification results",
+      "adopt successful solves over failed attempts; retain completed invalid retries over non-valid slots",
     )
     .option(
       "--allow-transport-differences",
