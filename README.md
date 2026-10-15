@@ -447,7 +447,7 @@ space. Folders organize runs and bench jobs without moving files: `orbit run --f
 | **Embodied environments** | Vision: extend execution and resource abstractions to simulation, robots and experimental equipment. Device backends are not implemented yet. |
 | **Learning and evolution from trajectories** | Records and review are available for agents to analyze and refine the next experiment. Automated learning, policy updates and evaluation feedback loops are future research directions. |
 
-Orbit is in early development (0.1.0). See [project status](docs/status.md) for validation limits and near-term work, and [design](docs/design.md) for the architecture.
+Orbit is in early development (0.1.1). See [project status](docs/status.md) for validation limits and near-term work, and [design](docs/design.md) for the architecture.
 
 <a id="documentation"></a>
 

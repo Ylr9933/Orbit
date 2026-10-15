@@ -7,7 +7,7 @@
 
 ## Available
 
-- Published [`@zjunlp/orbit@0.1.0`](https://www.npmjs.com/package/@zjunlp/orbit) with Web, shared skills and generated third-party licenses; one-command native plugins for Claude Code, Codex, dsh and pi. Isolated real installs and skill loading verified. [Plugin guide](../plugin/README.md) · [Release guide](guides/releasing.md).
+- The npm package [`@zjunlp/orbit`](https://www.npmjs.com/package/@zjunlp/orbit) includes Web, shared skills and generated third-party licenses; one-command native plugins for Claude Code, Codex, dsh and pi. Isolated real installs and skill loading verified. [Plugin guide](../plugin/README.md) · [Release guide](guides/releasing.md).
 - `pnpm verify` (Biome, tsc, boundaries, vitest, builds). Auto-started local daemon (127.0.0.1, token/cookie, one-time browser login, private sqlite/state, one writer per home); `orbit run / sweep / ps / show / logs / wait [-g] / cancel / note / resources / doctor / web / auth / notify / bench / node / data`.
 - Resource leases with a queue (with reasons); use outside Orbit is respected (busy GPUs, measured CPU use, `MemAvailable`). Docker executor: code snapshot, CDI GPU mapping checked against the lease,
   execution-only timeouts; logs, metrics and outputs collected before cleanup. Process backend for native runners, with a labelling, GPU-limiting docker shim.
