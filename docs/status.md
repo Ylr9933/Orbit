@@ -1,6 +1,6 @@
 # Orbit status
 
-- **Updated at:** 2026-10-16
+- **Updated at:** 2026-10-15
 - **Basis:** State/bench and security corrections plus hot-path optimizations: SQL bench summaries/completion, background cancellation, cached lookups, shared HTTP subscriptions and isolated snapshot objects with submodule warnings.
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none for the current release.

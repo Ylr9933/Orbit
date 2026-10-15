@@ -1,5 +1,5 @@
 # Security hardening
-branch: fix/opt3-security · status: completed · updated: 2026-10-16
+branch: fix/opt3-security · status: completed · updated: 2026-10-15
 
 ## Goal
 Close the browser-login, artifact-read, live-log, state-permission, webhook-input and bundle-upload gaps in optimization batch 3.
