@@ -1,6 +1,6 @@
 # Orbit status
 
-- **Updated at:** 2026-10-16
+- **Updated at:** 2026-10-15
 - **Basis:** Domain modules split behind stable APIs; pure bench merge planning, paginated Web runs, merge preview dialog, visible-tab polling and private state checks for owned home symlinks.
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none for the current release.
