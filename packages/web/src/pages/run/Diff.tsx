@@ -78,10 +78,17 @@ export function DiffTab({ run }: { run: Run }) {
           ))}
         </div>
       </div>
+      {Boolean(c.skippedSubmodules?.length) && (
+        <div className="warnbox">
+          Submodule contents are not snapshotted: {c.skippedSubmodules.join(", ")}
+        </div>
+      )}
       {!files.length ? (
         <Empty title="No uncommitted changes">
-          The container ran exactly commit <code>{c.commit?.slice(0, 12)}</code> of{" "}
-          <code>{c.repo}</code>.
+          {c.skippedSubmodules?.length
+            ? "The snapshot is based on commit "
+            : "The container ran exactly commit "}
+          <code>{c.commit?.slice(0, 12)}</code> of <code>{c.repo}</code>.
         </Empty>
       ) : (
         <div className="split-pane">

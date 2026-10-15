@@ -88,6 +88,10 @@ export function formatRun(r: Run, summary?: Record<string, number>): string {
     lines.push(
       `  code     ${c.repo}${c.subdir ? `/${c.subdir}` : ""} @ ${c.commit?.slice(0, 12) ?? "(no commit)"}${c.dirty ? ` +${c.changedFiles.length} changed` : ""}`,
     );
+    if (c.skippedSubmodules.length)
+      lines.push(
+        `  warning  submodule contents are not snapshotted: ${c.skippedSubmodules.join(", ")}`,
+      );
   }
   lines.push(
     `  time     created ${r.createdAt}  ran ${runDuration(r)}  exit ${r.exitCode ?? "-"}  cleanup ${r.cleanup}`,

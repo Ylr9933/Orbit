@@ -1,7 +1,7 @@
 # Orbit status
 
 - **Updated at:** 2026-10-16
-- **Basis:** State/bench corrections plus security hardening: one-time browser login, safe redirects and file streaming, live-log redaction, private state permissions, stdin webhooks and bounded uploads.
+- **Basis:** State/bench and security corrections plus hot-path optimizations: SQL bench summaries/completion, background cancellation, cached lookups, shared HTTP subscriptions and isolated snapshot objects with submodule warnings.
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none for the current release.
 
@@ -20,7 +20,7 @@
   for built-ins and external executables (e.g. ResearchClawBench); per-task resources and timeout resolved before adapter planning; `bench usage`
   suggestions; solves whose Agent could not use its model are invalid without a verify run; `bench consolidate` checks preview digests and preserves newly invalid evidence; startup repairs stale trial cleanup; retries and task append retain validity; `orbit-bench` skill; `bench rescore` re-verifies from saved solve outputs (history kept). Measured peak memory / CPU / GPU memory on every run. Adapter-declared
   metrics (`score` built in): per-task then over-task means, task-clustered 95% CI, paired Δ in compare. ASI checks known runner incompatibilities before Agent launch, propagates failures, and shows latest attempt status separately from score validity.
-- Harbor format: separate/shared verifiers share the executable test command and stdout capture; compose services, collect hooks, Harbor's network/image rules; TB-Science 70/70 and TB 4.0 56/66 supported (oracle/empty checked on samples incl. all 5 compose tasks); jobs record the benchmark commit.
+- Harbor format: direct flat-task lookup with nested ID compatibility; separate/shared verifiers share the executable test command and stdout capture; compose services, collect hooks, Harbor's network/image rules; TB-Science 70/70 and TB 4.0 56/66 supported (oracle/empty checked on samples incl. all 5 compose tasks); jobs record the benchmark commit.
 - Multi-node: workers join by token; placement across nodes, size-limited code bundles by hash, named datasets, mirrored logs/metrics, artifact streaming from verified descriptors. Guide: [guides/multi-node.md](guides/multi-node.md).
 
 ## Main gaps

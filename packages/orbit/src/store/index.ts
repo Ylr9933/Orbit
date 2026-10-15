@@ -4,12 +4,14 @@ import {
   BenchJob,
   type FolderStat,
   Lease,
+  type MethodSummary,
   Run,
   RunEvent,
   type RunState,
   Trial,
   trialRunIds,
 } from "../contracts/index.ts";
+import { aggregate, resolveMetrics, taskMeans } from "../contracts/metrics.ts";
 import { nowIso } from "../lib/ids.ts";
 
 const MIGRATIONS = [
@@ -71,6 +73,7 @@ const MIGRATIONS = [
    CREATE INDEX trial_runs_trial ON trial_runs(trial_id);
    INSERT OR IGNORE INTO trial_runs SELECT solve_run, id FROM trials WHERE solve_run IS NOT NULL;
    INSERT OR IGNORE INTO trial_runs SELECT verify_run, id FROM trials WHERE verify_run IS NOT NULL;`,
+  `CREATE INDEX trials_open_job ON trials(job_id) WHERE state != 'done';`,
 ];
 
 /** Mirroring progress of a run placed on another node (primary only). */
@@ -405,6 +408,84 @@ export class Store {
       .prepare("SELECT doc FROM bench_jobs ORDER BY created_at DESC, id DESC LIMIT ?")
       .all(limit) as { doc: string }[];
     return rows.map((r) => BenchJob.parse(JSON.parse(r.doc)));
+  }
+
+  jobSummaries(jobs: BenchJob[]): Map<string, MethodSummary[]> {
+    if (jobs.length === 0) return new Map();
+    const rows = this.db
+      .prepare(
+        `WITH fields AS MATERIALIZED (
+           SELECT id, job_id, jsonb_extract(doc, '$.method', '$.task', '$.outcome.evaluation',
+             '$.outcome.score', '$.outcome.maxScore', '$.outcome.metrics') AS data
+           FROM trials WHERE job_id IN (SELECT value FROM json_each(?))
+         ), selected AS MATERIALIZED (
+           SELECT id, job_id, json_extract(data, '$[0]') AS method,
+             json_extract(data, '$[2]') AS evaluation,
+             jsonb_extract(data, '$[1]', '$[3]', '$[4]', '$[5]') AS metric_data FROM fields
+         )
+         SELECT job_id, method,
+           COUNT(*) AS trials, COALESCE(SUM(evaluation = 'valid'), 0) AS valid,
+           COALESCE(SUM(evaluation = 'invalid'), 0) AS invalid,
+           COALESCE(SUM(evaluation = 'unknown'), 0) AS unknown,
+           SUM(evaluation IS NULL) AS pending,
+           json_group_array(metric_data ORDER BY id) FILTER (WHERE evaluation = 'valid') AS metric_data
+         FROM selected GROUP BY job_id, method`,
+      )
+      .all(JSON.stringify(jobs.map((j) => j.id))) as unknown as {
+      job_id: string;
+      method: string;
+      metric_data: string;
+      trials: number;
+      valid: number;
+      invalid: number;
+      unknown: number;
+      pending: number;
+    }[];
+    const byJob = Map.groupBy(rows, (r) => r.job_id);
+    return new Map(
+      jobs.map((job) => {
+        const byMethod = new Map((byJob.get(job.id) ?? []).map((r) => [r.method, r]));
+        return [
+          job.id,
+          job.spec.methods.map(({ name: method }) => {
+            const counts = byMethod.get(method);
+            const data = JSON.parse(counts?.metric_data ?? "[]") as [
+              string,
+              number | null,
+              number,
+              Record<string, number> | null,
+            ][];
+            // Preserve the detail view's order and floating-point arithmetic, without trial docs.
+            const valid = data.map(([task, score, maxScore, metrics]) => ({
+              task,
+              outcome: { score, maxScore, metrics: metrics ?? undefined },
+            }));
+            return {
+              method,
+              trials: counts?.trials ?? 0,
+              valid: counts?.valid ?? 0,
+              invalid: counts?.invalid ?? 0,
+              unknown: counts?.unknown ?? 0,
+              pending: counts?.pending ?? 0,
+              metrics: Object.fromEntries(
+                resolveMetrics(job.metrics).map((m) => [
+                  m.name,
+                  aggregate(taskMeans(valid, m.name)),
+                ]),
+              ),
+            };
+          }),
+        ];
+      }),
+    );
+  }
+
+  hasOpenTrials(jobId: string): boolean {
+    return Boolean(
+      this.db
+        .prepare("SELECT 1 FROM trials WHERE job_id = ? AND state != 'done' LIMIT 1")
+        .get(jobId),
+    );
   }
 
   /** Remove a job and its trials (its runs are removed through RunService). */

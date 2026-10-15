@@ -153,6 +153,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
 
   constructor(deps: RunServiceDeps) {
     super();
+    this.setMaxListeners(20);
     this.deps = deps;
     this.store = deps.store;
     this.paths = deps.paths;
@@ -330,6 +331,14 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
         ? `snapshot ${code.commit?.slice(0, 8) ?? "(no commit)"}${code.dirty ? " +dirty" : ""}, ${code.fileCount} files`
         : "no snapshot",
     );
+    if (code?.skippedSubmodules.length) {
+      const event = this.store.addEvent(
+        run.id,
+        "warning",
+        `submodule contents are not snapshotted: ${code.skippedSubmodules.join(", ")}`,
+      );
+      this.changed(run, event);
+    }
     void this.tick();
     return run;
   }

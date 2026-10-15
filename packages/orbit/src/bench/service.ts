@@ -355,14 +355,12 @@ export class BenchService {
   }
 
   jobs(limit = 200): BenchJobList {
+    const jobs = this.deps.store.listJobs(limit);
+    const summaries = this.deps.store.jobSummaries(jobs);
     return {
-      jobs: this.deps.store.listJobs(limit).map((job) => ({
+      jobs: jobs.map((job) => ({
         ...job,
-        summary: summarize(
-          job.spec.methods.map((m) => m.name),
-          this.deps.store.trials(job.id),
-          job.metrics,
-        ),
+        summary: summaries.get(job.id) ?? [],
       })),
     };
   }
@@ -851,19 +849,20 @@ export class BenchService {
     job.state = "cancelled";
     job.endedAt = nowIso();
     this.deps.store.putJob(job);
-    for (const t of this.deps.store.trials(id)) {
-      if (t.state === "done") continue;
+    const trials = this.deps.store.trials(id).filter((t) => t.state !== "done");
+    for (const t of trials) {
       const runId =
         t.state === "solving" ? t.solveRunId : t.state === "verifying" ? t.verifyRunId : null;
       if (runId) await this.deps.runs.cancel(runId).catch(() => undefined);
-      await this.advance(t.id);
     }
+    this.advanceAll(trials.map((t) => t.id));
     return job;
   }
 
   // ---- trial state machine ----
 
   private onRun(run: Run): void {
+    if (!("bench" in run.spec.tags) && !run.spec.group?.startsWith("bench-")) return;
     const t = this.deps.store.trialByRun(run.id);
     if (t) void this.advance(t.id);
   }
@@ -945,10 +944,7 @@ export class BenchService {
       } catch (e) {
         this.deps.log?.(`bench trial ${t.id}: staging cleanup: ${(e as Error).message}`);
       }
-      if (
-        job.state === "running" &&
-        this.deps.store.trials(job.id).every((x) => x.state === "done")
-      ) {
+      if (job.state === "running" && !this.deps.store.hasOpenTrials(job.id)) {
         job.state = "done";
         job.endedAt = nowIso();
         this.deps.store.putJob(job);

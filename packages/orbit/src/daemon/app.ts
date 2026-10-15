@@ -80,6 +80,22 @@ export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
   const api = new Hono();
   const loginCodes = new Map<string, number>();
+  const waiters = new Map<string, Set<(run: Run) => void>>();
+  const subscribers = new Set<(event: string, data: string) => void>();
+  runs.on("change", ({ run }) => {
+    if (isTerminal(run.state) && run.cleanup !== "pending")
+      for (const finish of waiters.get(run.id) ?? []) finish(run);
+    if (subscribers.size) {
+      const data = JSON.stringify(run);
+      for (const send of subscribers) send("run", data);
+    }
+  });
+  runs.on("deleted", (ids) => {
+    if (subscribers.size) {
+      const data = JSON.stringify({ ids });
+      for (const send of subscribers) send("deleted", data);
+    }
+  });
 
   api.use("*", async (c, next) => {
     if (tokenMatches(c.req.header("authorization"), deps.token)) return next();
@@ -155,17 +171,21 @@ export function createApp(deps: AppDeps): Hono {
     const run = must(runs.get(id));
     if (isTerminal(run.state) && run.cleanup !== "pending") return c.json(run);
     const done = await new Promise<Run>((resolve) => {
-      const onChange = ({ run: r }: { run: Run }) => {
-        if (r.id === id && isTerminal(r.state) && r.cleanup !== "pending") finish(r);
-      };
+      const signal = c.req.raw.signal;
+      const own = waiters.get(id) ?? new Set<(run: Run) => void>();
       const t = setTimeout(() => finish(runs.get(id) ?? run), timeoutMs);
+      const onAbort = () => finish(run);
       const finish = (r: Run) => {
         clearTimeout(t);
-        runs.off("change", onChange);
+        signal.removeEventListener("abort", onAbort);
+        own.delete(finish);
+        if (own.size === 0) waiters.delete(id);
         resolve(r);
       };
-      runs.on("change", onChange);
-      c.req.raw.signal.addEventListener("abort", () => finish(run));
+      own.add(finish);
+      waiters.set(id, own);
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
     });
     return c.json(done);
   });
@@ -428,19 +448,27 @@ export function createApp(deps: AppDeps): Hono {
   /** Server-sent events: `run` with the full Run on every change. */
   api.get("/stream", (c) =>
     streamSSE(c, async (stream) => {
-      const onChange = ({ run }: { run: Run }) => {
-        void stream.writeSSE({ event: "run", data: JSON.stringify(run) });
+      const send = (event: string, data: string) => {
+        void stream.writeSSE({ event, data }).catch(() => stream.abort());
       };
-      const onDeleted = (ids: string[]) => {
-        void stream.writeSSE({ event: "deleted", data: JSON.stringify({ ids }) });
-      };
-      runs.on("change", onChange);
-      runs.on("deleted", onDeleted);
-      const ping = setInterval(() => void stream.writeSSE({ event: "ping", data: "" }), 15_000);
-      await new Promise<void>((resolve) => stream.onAbort(resolve));
-      clearInterval(ping);
-      runs.off("change", onChange);
-      runs.off("deleted", onDeleted);
+      const signal = c.req.raw.signal;
+      const onAbort = () => stream.abort();
+      subscribers.add(send);
+      const ping = setInterval(() => send("ping", ""), 15_000);
+      try {
+        await new Promise<void>((resolve) => {
+          stream.onAbort(resolve);
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted || stream.aborted) {
+            onAbort();
+            resolve();
+          }
+        });
+      } finally {
+        clearInterval(ping);
+        subscribers.delete(send);
+        signal.removeEventListener("abort", onAbort);
+      }
     }),
   );
 

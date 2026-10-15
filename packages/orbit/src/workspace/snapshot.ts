@@ -1,6 +1,14 @@
-import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, lstat, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import type { CodeSnapshot } from "../contracts/index.ts";
@@ -52,14 +60,27 @@ export async function snapshotProject(
   const ls = await git(root, ["ls-files", "-co", "--exclude-standard", "-z"]);
   if (ls.code !== 0) throw new Error(`git ls-files failed: ${ls.stderr.trim()}`);
   const files = ls.stdout.split("\0").filter(Boolean);
+  const staged = await git(root, ["ls-files", "--stage", "-z"]);
+  if (staged.code !== 0) throw new Error(`git ls-files failed: ${staged.stderr.trim()}`);
+  const submodules = new Set(
+    staged.stdout
+      .split("\0")
+      .filter((entry) => entry.startsWith("160000 "))
+      .map((entry) => entry.slice(entry.indexOf("\t") + 1)),
+  );
 
   let bytes = 0;
   let fileCount = 0;
   await mkdir(dest, { recursive: true });
   for (const f of files) {
+    if (submodules.has(f)) continue;
     const src = join(root, f);
     const st = await lstat(src).catch(() => null);
     if (!st) continue; // tracked but deleted in the working tree
+    if (st.isDirectory()) {
+      submodules.add(f.replace(/\/$/, ""));
+      continue;
+    }
     const out = join(dest, f);
     await mkdir(dirname(out), { recursive: true });
     if (st.isSymbolicLink()) {
@@ -76,17 +97,33 @@ export async function snapshotProject(
     fileCount++;
   }
 
-  // Diff of the whole working tree (including untracked files) against HEAD, via a throwaway index.
-  const tmpIndex = join(tmpdir(), `orbit-index-${randomBytes(8).toString("hex")}`);
+  // Both the index and newly written blobs stay outside the user's repository.
   const realIndex = await gitOut(root, [
     "rev-parse",
     "--path-format=absolute",
     "--git-path",
     "index",
   ]);
-  if (realIndex) await copyFile(realIndex, tmpIndex).catch(() => undefined);
-  const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
+  const realObjects = await gitOut(root, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-path",
+    "objects",
+  ]);
+  if (!realObjects) throw new Error("git object directory not found");
+  const temp = await mkdtemp(join(tmpdir(), "orbit-snapshot-"));
   try {
+    const tmpIndex = join(temp, "index");
+    const objects = join(temp, "objects");
+    await mkdir(objects);
+    if (realIndex) await copyFile(realIndex, tmpIndex).catch(() => undefined);
+    const alternates = process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES;
+    const env = {
+      ...process.env,
+      GIT_INDEX_FILE: tmpIndex,
+      GIT_OBJECT_DIRECTORY: objects,
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: `${JSON.stringify(realObjects)}${alternates ? `:${alternates}` : ""}`,
+    };
     const add = await git(root, ["add", "-A"], env);
     if (add.code !== 0) throw new Error(`git add (temp index) failed: ${add.stderr.trim()}`);
     const diff = await git(
@@ -115,10 +152,11 @@ export async function snapshotProject(
       branch,
       dirty: changedFiles.length > 0,
       changedFiles,
+      skippedSubmodules: [...submodules].sort(),
       fileCount,
       bytes,
     };
   } finally {
-    await rm(tmpIndex, { force: true });
+    await rm(temp, { recursive: true, force: true });
   }
 }

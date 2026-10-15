@@ -561,6 +561,8 @@ export const CodeSnapshot = z.object({
   dirty: z.boolean(),
   /** Files changed relative to HEAD (tracked modifications + untracked). */
   changedFiles: z.array(z.string()),
+  /** Gitlinks and nested repositories whose contents were excluded from the snapshot. */
+  skippedSubmodules: z.array(z.string()).default([]),
   fileCount: z.number().int(),
   bytes: z.number().int(),
 });

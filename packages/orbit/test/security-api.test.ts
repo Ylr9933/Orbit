@@ -1,4 +1,5 @@
 // Real HTTP handlers and temporary files, with explicit run-service fixtures and no daemon or executor.
+import { EventEmitter } from "node:events";
 import {
   appendFileSync,
   mkdirSync,
@@ -45,11 +46,11 @@ const run = Run.parse({
 });
 const dirs = runDirs(paths, run.id);
 mkdirSync(dirs.output, { recursive: true });
-const runs = {
+const runs = Object.assign(new EventEmitter(), {
   get: (id: string) => (id === run.id ? run : null),
   dirs: () => dirs,
   redactor: () => new Redactor([secret]),
-} as unknown as RunService;
+}) as unknown as RunService;
 const app = createApp({ token, runs, paths, webDir: null, startedAt: run.createdAt } as AppDeps);
 const worker = createWorkerApp({
   runs,

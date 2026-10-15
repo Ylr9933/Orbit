@@ -223,7 +223,10 @@ network?, collect }`，在 `command` 结束（或到时被停）后于**同一�
 先跑一个试跑 Run；成功才提交正式 Run，其 `parentId` 指向试跑。等待在 CLI 中进行，daemon 不保存“待提交”状态。
 
 **代码快照**：记录 `HEAD` commit、未提交 diff 与未跟踪文件列表；复制 `git ls-files -co --exclude-standard`
-的文件到快照目录。数据和权重不进快照，用命名 dataset 只读挂载。
+的文件到快照目录。生成 diff 的临时 index 与新 blob 都放在临时目录，以原仓库的绝对 objects 路径作为
+alternate（兼容 linked worktree），结束或失败后删除，不向用户仓库的对象库写入。
+子模块 gitlink 和 `ls-files` 返回的目录不递归复制，路径记入 `CodeSnapshot.skippedSubmodules`（旧记录默认 `[]`）；
+提交时发出 warning 事件，CLI show 与 Web Code 页提示子模块内容未被快照。数据和权重不进快照，用命名 dataset 只读挂载。
 
 **容器**：GPU 优先用 CDI（`--device nvidia.com/gpu=<UUID>`，检测到 `/etc/cdi` 或 `/var/run/cdi` 中的
 NVIDIA spec 时），否则 `--gpus device=<UUID>`；启动后核对 `nvidia-smi -L` 与租约一致。默认以宿主用户
@@ -276,6 +279,8 @@ URL 解析后 pathname 以 `//` 开头的目标（含 `/.//x` 与同源绝对 UR
 `nosniff` 返回，避免产物中的 HTML 以 Web UI 的身份执行脚本。非法百分号编码返回 400；数字查询参数
 （`limit`、`offset`、`after`、`timeout`）必须是非负安全整数，否则返回 400，省略或空值仍取默认值。
 `wait` 在 Run 终态且清理结束后返回；CLI `wait -g` 与 `rm -g` 使用相同的 10000 条组内 Run 查询上限。
+HTTP wait 按 Run ID 保存等待者，与全部 SSE 订阅共用一个 Run change 监听器；SSE 删除通知也共用一个监听器。
+完成、超时或断开后删除对应等待者、计时器与 abort 回调，不随请求数量增加 RunService 监听器。
 运行中的 process 日志按原始字节偏移分页；每次多读窗口前后最多 `maxSecretBytes - 1` 字节作脱敏上下文，
 只返回请求窗口，并暂缓 EOF 附近可能尚未写完的密钥尾部。`next` 可能暂时不前进；整份日志下载也不输出这段尾部。
 
@@ -401,11 +406,16 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
   `adapter` 为内置名（`harbor`、`asi`）或适配器可执行文件的绝对路径；`config` 是适配器自己的非密钥设置（如 asi 的
   `python`、`instances`）；`env` 进入两个 Run；`passEnv` 只记变量名（如评审模型的 API key），只给 verify Run，启动时
   从 daemon 环境读取，不落盘。登记时先调用一次适配器的 `tasks`，失败则不保存。
-- **Job / Trial**：sqlite 表 `bench_jobs`、`bench_trials`。每个 trial 独立推进：`pending → solving → verifying → done`；
+  registry 按文件 mtime 缓存解析结果；替换、删除与 daemon 自己的写入也使缓存失效，返回值仍与缓存隔离。
+- **Job / Trial**：sqlite 表 `bench_jobs`、`trials`。每个 trial 独立推进：`pending → solving → verifying → done`；
   job 和全部 trial 在同一事务内提交；`BenchService` 监听 Run 变化推进，daemon 重启后从库中恢复未完成的 trial。
   trial 结束时 staging 删除失败只记日志，继续完成 job 状态更新。solve 与 verify 都是普通 Run
   （同一租约、队列、记录、Web 详情），`group = bench-<job>`，tags `{bench, job, trial, phase}`；verify Run
   `priority = 1`，排队时先于新的 solve 调度。
+  非 bench Run 的事件在查询 trial 前跳过。trial 完成时通过未完成 trial 的部分索引判断 job 是否完成；job 列表用一次
+  SQL 聚合查询取得各方法计数和有效 trial 的精简指标字段，再用共享指标函数计算逐任务均值与跨任务统计，
+  保留原来的浮点累加顺序与响应形状，不加载或 zod 解析完整 trial。
+  取消先保存 cancelled job 并取消关联 Run，再在后台串行推进 trial；HTTP 不等待适配器评分，CLI / Web 仍显示 job 状态。
 - **重新评分**（`POST /bench/jobs/:id/rescore`，`orbit bench rescore <job> [-t task] [-m method] [--trial id]`，
   Web job 页与 trial 页的 Rescore）：不重跑 Agent。只对已结束 job 中已完成、solve 输出仍在本机且需要 verify 的
   trial；当前 `{verifyRunId, outcome, endedAt}` 移入 `Trial.history`，trial 回到 `solving`（solve Run 不变），
@@ -504,7 +514,9 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 内置适配器：
 
 1. **Harbor 格式**（`bench/harbor.ts`，TB-Science）：任务目录含 `task.toml`、`instruction.md`、`environment/`、
-   `tests/`、`solution/`。solve Run 用 `[environment] docker_image`（Harbor 优先用它），否则从 `environment/Dockerfile`
+   `tests/`、`solution/`。solve / verify 按 ID 直接定位平铺任务，只解析选中的任务；嵌套短名与重名的相对路径 ID
+   保留 listing 的四层目录发现规则，但只扫描目录元数据。score 直接读取 verifier 输出。
+   solve Run 用 `[environment] docker_image`（Harbor 优先用它），否则从 `environment/Dockerfile`
    构建，以 root 与 `workdir`（缺省为镜像 WORKDIR）运行；资源、超时来自 `task.toml`；Agent 方法给出 `agentTask`
    （`instruction.md`），oracle 把 `solution/` 挂到 `/solution` 执行 `solve.sh`。顶层 `artifacts` 声明的路径在 solve
    结束时采集（`RunSpec.collect`，写入 `output/collected/<abs path>`）。verifier 模式按 Harbor 规则解析：显式

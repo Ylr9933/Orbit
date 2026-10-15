@@ -341,9 +341,9 @@ export function parseHarborTask(dir: string, id: string): HarborTask {
   };
 }
 
-/** Task directories (containing task.toml) under `root/tasks` or `root`; ids are directory names. */
-export function findHarborTasks(root: string): HarborTask[] {
-  const base = existsSync(join(root, "tasks")) ? join(root, "tasks") : root;
+const taskBase = (root: string) => (existsSync(join(root, "tasks")) ? join(root, "tasks") : root);
+
+function harborTaskDirs(base: string): string[] {
   const dirs: string[] = [];
   const walk = (d: string, depth: number) => {
     if (existsSync(join(d, "task.toml"))) {
@@ -364,6 +364,13 @@ export function findHarborTasks(root: string): HarborTask[] {
     }
   };
   walk(base, 4);
+  return dirs;
+}
+
+/** Task directories (containing task.toml) under `root/tasks` or `root`; ids are directory names. */
+export function findHarborTasks(root: string): HarborTask[] {
+  const base = taskBase(root);
+  const dirs = harborTaskDirs(base);
   const counts = new Map<string, number>();
   for (const d of dirs) counts.set(basename(d), (counts.get(basename(d)) ?? 0) + 1);
   return dirs.map((d) => {
@@ -566,8 +573,28 @@ export function harborReward(verifierDir: string): ScoreReply {
 }
 
 function harborTask(root: string, id: string): HarborTask {
-  const t = findHarborTasks(root).find((x) => x.id === id);
-  if (!t) throw new Error(`task not found: ${id}`);
+  const base = taskBase(root);
+  let dir: string | undefined;
+  if (existsSync(join(base, "task.toml"))) {
+    if (id === basename(base)) dir = base;
+  } else if (
+    id === basename(id) &&
+    !id.startsWith(".") &&
+    existsSync(join(base, id, "task.toml"))
+  ) {
+    dir = join(base, id);
+  } else {
+    // Nested tasks use a short basename when unique, a relative path when names collide.
+    const matches = harborTaskDirs(base).filter((d) => basename(d) === basename(id));
+    dir = matches.find((d) => (matches.length > 1 ? relative(base, d) : basename(d)) === id);
+  }
+  if (!dir) throw new Error(`task not found: ${id}`);
+  let t: HarborTask;
+  try {
+    t = parseHarborTask(dir, id);
+  } catch (e) {
+    t = brokenTask(dir, id, `task.toml: ${(e as Error).message}`);
+  }
   if (!t.supported) throw new Error(`task ${id} is not supported: ${t.reason}`);
   return t;
 }

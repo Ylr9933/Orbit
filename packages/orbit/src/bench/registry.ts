@@ -1,6 +1,6 @@
 // Registered benchmark checkouts in one JSON file written only by the daemon. Entries hold paths
 // and non-secret settings; `passEnv` names variables read from the daemon environment at launch.
-import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import {
   Benchmark,
   BenchmarkInput,
@@ -18,15 +18,24 @@ function upgrade(v: unknown): unknown {
 
 export class BenchmarkRegistry {
   private readonly file: string;
+  private cached: { version: string; benchmarks: Benchmark[] } | null = null;
 
   constructor(file: string) {
     this.file = file;
   }
 
   private read(): Benchmark[] {
-    if (!existsSync(this.file)) return [];
+    const stat = statSync(this.file, { bigint: true, throwIfNoEntry: false });
+    if (!stat) {
+      this.cached = null;
+      return [];
+    }
+    const version = `${stat.mtimeNs}:${stat.ctimeNs}:${stat.ino}:${stat.size}`;
+    if (this.cached?.version === version) return this.cached.benchmarks;
     const raw = JSON.parse(readFileSync(this.file, "utf8")) as { benchmarks?: unknown[] };
-    return (raw.benchmarks ?? []).map((b) => Benchmark.parse(upgrade(b)));
+    const benchmarks = (raw.benchmarks ?? []).map((b) => Benchmark.parse(upgrade(b)));
+    this.cached = { version, benchmarks };
+    return benchmarks;
   }
 
   private write(all: Benchmark[]): void {
@@ -36,14 +45,15 @@ export class BenchmarkRegistry {
     });
     chmodSync(tmp, 0o600);
     renameSync(tmp, this.file);
+    this.cached = null;
   }
 
   list(): Benchmark[] {
-    return this.read();
+    return structuredClone(this.read());
   }
 
   get(name: string): Benchmark | null {
-    return this.read().find((b) => b.name === name) ?? null;
+    return structuredClone(this.read().find((b) => b.name === name) ?? null);
   }
 
   put(input: BenchmarkInputT): Benchmark {
