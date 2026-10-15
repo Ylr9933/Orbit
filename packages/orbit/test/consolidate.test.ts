@@ -180,7 +180,7 @@ it("rejects duplicate valid results, incompatible jobs and active runs without p
   const before = f.bench.job("target");
   await expect(
     f.bench.consolidate("target", { sources: ["source", "second"], dryRun: false }),
-  ).rejects.toThrow(/replace valid/);
+  ).rejects.toThrow(/replace valid|duplicate source/);
   expect(f.bench.job("target")).toEqual(before);
   const source = f.store.getJob("source");
   if (!source) throw new Error("missing fixture");
@@ -409,4 +409,113 @@ it("rejects a donor whose valid mark hides a terminal model failure", async () =
   await expect(
     f.bench.consolidate("target", { sources: ["source"], dryRun: false }),
   ).rejects.toThrow(/no valid result/);
+});
+
+it("replaces a scored failed solve only by opt-in over HTTP, regardless of score", async () => {
+  const f = fixture();
+  f.job("retry-b", ["b"]);
+  f.trial("retry-b", "b", true);
+  const run = f.runs.get("target.b-solve"),
+    trial = f.store.getTrial("target.b");
+  if (!run || !trial?.outcome) throw new Error("missing fixture");
+  f.store.putRun({ ...run, state: "failed", reason: "timeout after 480 min", exitCode: 143 });
+  const outcome = { ...trial.outcome, execution: "failed", score: 1, issues: ["solve timed out"] };
+  f.store.putTrial({ ...trial, outcome, history: [{ verifyRunId: null, outcome, endedAt: at }] });
+  const before = f.bench.job("target");
+  f.store.close();
+  stores.splice(stores.indexOf(f.store), 1);
+  daemon = await startDaemon(f.paths, { port: 0 });
+  const c = await tryConnect(f.paths);
+  if (!c) throw new Error("daemon unreachable");
+  await expect(c.benchConsolidate("target", { sources: ["retry-b"] })).rejects.toThrow(
+    /replace valid/,
+  );
+  const body = { sources: ["retry-b"], replaceFailed: true };
+  expect((await c.benchConsolidate("target", body)).adopted.map((t) => t.task)).toEqual(["b"]);
+  expect(await c.benchJob("target")).toEqual(before);
+  const result = await c.benchConsolidate("target", { ...body, dryRun: false });
+  expect(result.leftovers).toEqual([]);
+  const after = await c.benchJob("target");
+  expect(after.trials.find((t) => t.task === "b")).toMatchObject({
+    id: trial.id,
+    solveRunId: "retry-b.b-solve",
+    outcome: { execution: "succeeded", evaluation: "valid", score: 0 },
+  });
+  expect(after.trials.filter((t) => t.task !== "b")).toEqual(
+    before.trials.filter((t) => t.task !== "b"),
+  );
+  expect(readFileSync(join(f.paths.runs, "retry-b.b-solve/orbit/output/answer"), "utf8")).toContain(
+    "retained artifact",
+  );
+  expect((await c.get("retry-b.b-solve")).spec.tags.source_job).toBe("retry-b");
+  expect(existsSync(join(f.paths.runs, run.id))).toBe(false);
+});
+
+it("retains an invalid retry with a successful solve over a non-valid target without pruning", async () => {
+  const f = fixture();
+  const retry = f.trial("source", "a", false),
+    verify = f.runs.get("source.a-verify");
+  if (!retry.outcome || !verify) throw new Error("missing fixture");
+  const outcome = { ...retry.outcome, score: 0, issues: ["verify timed out"] };
+  f.store.putTrial({ ...retry, outcome });
+  f.store.putRun({ ...verify, state: "failed", reason: "timeout after 10 min", exitCode: 143 });
+  const before = f.bench.job("target");
+  await expect(f.bench.consolidate("target", { sources: ["source"] })).rejects.toThrow(
+    /no valid result/,
+  );
+  const body = { sources: ["source"], replaceFailed: true };
+  expect((await f.bench.consolidate("target", body)).adopted).toHaveLength(1);
+  expect(f.bench.job("target")).toEqual(before);
+  await f.bench.consolidate("target", { ...body, dryRun: false });
+  expect(f.store.getTrial("target.a")).toMatchObject({
+    solveRunId: retry.solveRunId,
+    verifyRunId: retry.verifyRunId,
+    outcome,
+  });
+  expect(f.runs.get(retry.solveRunId as string)?.spec.tags.source_job).toBe("source");
+  expect(existsSync(join(f.paths.runs, verify.id, "orbit/output/answer"))).toBe(true);
+  expect(f.store.getJob("source")).toBeNull();
+});
+
+it("protects successful valid targets and rejects invalid replacement solves, pruning and duplicate sources", async () => {
+  const f = fixture();
+  f.job("retry-b", ["b"]);
+  f.trial("retry-b", "b", true);
+  const before = f.bench.job("target");
+  await expect(
+    f.bench.consolidate("target", { sources: ["retry-b"], replaceFailed: true, dryRun: false }),
+  ).rejects.toThrow(/replace valid/);
+  await expect(
+    f.bench.consolidate("target", {
+      sources: ["source"],
+      replaceFailed: true,
+      pruneInvalid: true,
+      dryRun: false,
+    }),
+  ).rejects.toThrow(/preserves retry artifacts/);
+  const source = f.trial("source", "a", false),
+    run = f.runs.get("source.a-solve");
+  if (!source.outcome || !run) throw new Error("missing fixture");
+  for (const state of ["failed", "lost"] as const) {
+    f.store.putRun({ ...run, state });
+    await expect(
+      f.bench.consolidate("target", { sources: ["source"], replaceFailed: true, dryRun: false }),
+    ).rejects.toThrow(/no valid result/);
+  }
+  f.store.putRun(run);
+  f.store.putTrial({ ...source, outcome: { ...source.outcome, evaluation: "unknown" } });
+  await expect(
+    f.bench.consolidate("target", { sources: ["source"], replaceFailed: true, dryRun: false }),
+  ).rejects.toThrow(/no valid result/);
+  f.store.putTrial(source);
+  f.job("second", ["a"]);
+  f.trial("second", "a", false);
+  await expect(
+    f.bench.consolidate("target", {
+      sources: ["source", "second"],
+      replaceFailed: true,
+      dryRun: false,
+    }),
+  ).rejects.toThrow(/duplicate source/);
+  expect(f.bench.job("target")).toEqual(before);
 });

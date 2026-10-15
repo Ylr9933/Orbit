@@ -417,6 +417,10 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
     .description("recheck Agent failures, merge valid retries, and remove consumed source jobs")
     .option("--append-tasks", "append new tasks, keeping invalid outcomes and artifacts")
     .option(
+      "--replace-failed",
+      "adopt successful solves over failed attempts, retaining invalid verification results",
+    )
+    .option(
       "--allow-transport-differences",
       "allow proxy/network aliases of the same checkout and credentials",
     )
@@ -430,6 +434,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
         sources: string[],
         o: {
           appendTasks?: boolean;
+          replaceFailed?: boolean;
           allowTransportDifferences?: boolean;
           pruneInvalid?: boolean;
           apply?: boolean;
@@ -441,6 +446,7 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
         const body = {
           sources,
           appendTasks: !!o.appendTasks,
+          replaceFailed: !!o.replaceFailed,
           allowTransportDifferences: !!o.allowTransportDifferences,
           pruneInvalid: !!o.pruneInvalid,
           dryRun: true,

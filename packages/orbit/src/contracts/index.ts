@@ -1073,6 +1073,8 @@ export const BenchConsolidate = z.strictObject({
   appendTasks: z.boolean().default(false),
   /** Allow proxy/host-network aliases of the same checkout and credential. */
   allowTransportDifferences: z.boolean().default(false),
+  /** Adopt successful solves over failed attempts; retain invalid retries over non-valid slots. */
+  replaceFailed: z.boolean().default(false),
   sources: z.array(z.string().min(1)).default([]),
   pruneInvalid: z.boolean().default(false),
   dryRun: z.boolean().default(true),

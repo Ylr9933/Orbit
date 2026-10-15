@@ -405,6 +405,9 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
   按 task × method × seed 对齐。归并先重读失败 solve 的会话末轮错误：明确的认证、额度、模型连接故障
   会纠正旧的 valid 标记（包括同一次 solve 的评分历史），原始分数保留；预览不写回。读取后重新检查终态及归属。
   有效重试只替换无效位置，拒绝覆盖真正有效的成绩（包括 0 分）或从多份有效成绩里挑选。
+  `--replace-failed` 显式采用 solve 正常成功的新尝试：允许替换实际 solve 为 failed、但仍有 valid 分数的位置及其历史，
+  不以分数高低选择；已正常成功的有效 solve 仍受保护。新尝试若验证 invalid，仅可替换原本无有效分数及有效历史的位置，
+  保留其 invalid 状态、错误和全部产物，不可和 `--prune-invalid` 同用。同一次归并拒绝多个来源替换同一位置。
   保留目标 trial ID、来源 Run ID、原产物与 source_job/source_trial 标签；daemon 在单事务内更新归属并移除来源 job，
   再调用已有 RunService 删除废弃 Run。`--prune-invalid` 清除无效 Run 与无效评分历史，保留任务位置及失败原因。
   `--append-tasks` 追加尚未出现的任务（同 methods × seeds），更新任务列表并保留新增 trial 的有效/无效/未知结果及产物；

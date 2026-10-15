@@ -523,12 +523,16 @@ export class BenchService {
     });
   }
 
-  /** Valid retries replace invalid slots; scores of valid trials are never selected or overwritten. */
+  /** Merge retries without selecting by score; failed solve replacement requires explicit opt-in. */
   async consolidate(id: string, input: BenchConsolidateInput): Promise<BenchConsolidateResult> {
     const f = BenchConsolidate.parse(input);
     if (f.appendTasks && f.pruneInvalid)
       throw new UserError(
         "appendTasks preserves invalid artifacts; do not combine it with pruneInvalid",
+      );
+    if (f.replaceFailed && f.pruneInvalid)
+      throw new UserError(
+        "replaceFailed preserves retry artifacts; do not combine it with pruneInvalid",
       );
     const sources = [...new Set(f.sources)];
     if (sources.includes(id)) throw new UserError("target cannot also be a source");
@@ -577,6 +581,7 @@ export class BenchService {
     const key = (t: Trial) => JSON.stringify([t.task, t.method, t.seed]);
     const trials = new Map(target.trials.map((t) => [key(t), structuredClone(t)]));
     const adopted: BenchConsolidateResult["adopted"] = [];
+    const adoptedKeys = new Set<string>();
     const taskIds = new Set(target.job.spec.tasks);
     const originalTaskIds = new Set(taskIds);
     const resources = { ...target.job.resources };
@@ -596,6 +601,10 @@ export class BenchService {
       )
         throw new UserError(`incompatible source job ${d.job.id}`);
       for (const t of d.trials) {
+        if (adoptedKeys.has(key(t)))
+          throw new UserError(
+            `duplicate ${originalTaskIds.has(t.task) ? "source" : "appended"} trial ${t.task} / ${t.method} / ${t.seed}`,
+          );
         const prev = trials.get(key(t));
         if (!prev) {
           if (!f.appendTasks || originalTaskIds.has(t.task))
@@ -610,15 +619,31 @@ export class BenchService {
           if (override) resources[t.task] = override;
           trials.set(key(t), { ...t, id: newId, jobId: id });
           adopted.push({ task: t.task, sourceJob: d.job.id, sourceTrial: t.id, trial: newId });
+          adoptedKeys.add(key(t));
           continue;
         }
         if (!originalTaskIds.has(t.task))
           throw new UserError(`duplicate appended trial ${t.task} / ${t.method} / ${t.seed}`);
-        if (isValid(t)) {
-          if (isValid(prev) || prev.history.some((h) => h.outcome.evaluation === "valid"))
+        const protectedTarget =
+          isValid(prev) || prev.history.some((h) => h.outcome.evaluation === "valid");
+        const retrySucceeded = t.solveRunId && oldRuns.get(t.solveRunId)?.state === "succeeded";
+        const replaceFailed =
+          f.replaceFailed &&
+          retrySucceeded &&
+          prev.solveRunId &&
+          oldRuns.get(prev.solveRunId)?.state === "failed";
+        const retainInvalid =
+          f.replaceFailed &&
+          !protectedTarget &&
+          retrySucceeded &&
+          t.outcome?.evaluation === "invalid" &&
+          !t.history.some((h) => h.outcome.evaluation === "valid");
+        if (isValid(t) || retainInvalid) {
+          if (protectedTarget && !replaceFailed)
             throw new UserError(`refusing to replace valid trial ${prev.id}`);
           trials.set(key(t), { ...t, id: prev.id, jobId: id, createdAt: prev.createdAt });
           adopted.push({ task: t.task, sourceJob: d.job.id, sourceTrial: t.id, trial: prev.id });
+          adoptedKeys.add(key(t));
         } else if (
           !f.pruneInvalid ||
           t.outcome?.evaluation !== "invalid" ||

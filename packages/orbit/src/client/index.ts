@@ -182,7 +182,7 @@ export class OrbitClient {
       body: spec,
       timeoutMs: 600_000,
     });
-  /** Preview/apply retries or new tasks; recheck terminal Agent errors before trusting old validity. */
+  /** Preview/apply retries; replaceFailed explicitly retains successful solves of failed attempts. */
   benchConsolidate = (id: string, body: BenchConsolidateInput) =>
     this.call(BenchConsolidateResult, `/bench/jobs/${enc(id)}/consolidate`, {
       method: "POST",

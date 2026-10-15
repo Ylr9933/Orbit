@@ -332,10 +332,14 @@ export function BenchJobDetail({ id }: { id: string }) {
       const allowTransportDifferences = confirm(
         "Allow equivalent benchmark/auth profiles that differ only in proxy or host networking?",
       );
+      const replaceFailed = confirm(
+        "Also replace failed solve attempts, even if previously scored valid, with successful retries? Invalid retry verification is retained only over non-valid results. Successful valid attempts stay protected.",
+      );
       const body = {
         sources,
         appendTasks,
         allowTransportDifferences,
+        replaceFailed,
         pruneInvalid: false,
         dryRun: true,
       };
