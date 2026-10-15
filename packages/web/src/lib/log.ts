@@ -1,6 +1,13 @@
 // Log text processing: split into display lines, collapse carriage-return progress bars,
 // classify Orbit system lines and likely errors.
+
+import type { LogChunk } from "@zjunlp/orbit/contracts";
 import Anser from "anser";
+
+/** A withheld live tail must wait for the next poll, even when the file has more bytes. */
+export function canReadMoreLogs(chunk: LogChunk): boolean {
+  return chunk.next > chunk.offset && chunk.next < chunk.size;
+}
 
 export interface LogLine {
   /** 1-based line number. */

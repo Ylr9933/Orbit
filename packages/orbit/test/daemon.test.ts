@@ -1,10 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { tryConnect } from "../src/client/index.ts";
 import { readDaemonInfo } from "../src/config/daemon-info.ts";
-import { orbitPaths } from "../src/config/paths.ts";
+import { ensureHome, orbitPaths, privateStateCheck } from "../src/config/paths.ts";
 import { Run } from "../src/contracts/index.ts";
 import { type StartedDaemon, startDaemon } from "../src/daemon/server.ts";
 import { Store } from "../src/store/index.ts";
@@ -14,6 +14,12 @@ const paths = orbitPaths({ ORBIT_HOME: home });
 let daemon: StartedDaemon;
 
 beforeAll(async () => {
+  ensureHome(paths);
+  chmodSync(paths.home, 0o775);
+  chmodSync(paths.runs, 0o775);
+  const oldStore = new Store(paths.db);
+  oldStore.close();
+  chmodSync(paths.db, 0o644);
   daemon = await startDaemon(paths, { port: 0, tickMs: 200 });
   const store = new Store(paths.db);
   try {
@@ -52,6 +58,7 @@ describe("daemon", () => {
   it("publishes its endpoint with a private token file", () => {
     expect(readDaemonInfo(paths)?.url).toBe(daemon.url);
     expect(statSync(paths.daemonFile).mode & 0o777).toBe(0o600);
+    expect(privateStateCheck(paths).warn).toBe(false);
   });
 
   it("serves health and resources to an authorized client", async () => {
@@ -132,6 +139,8 @@ describe("daemon", () => {
     expect((await fetch(`${daemon.url}/api/v1/health`, { headers: { cookie } })).status).toBe(200);
     expect((await login("//evil.example")).headers.get("location")).toBe("/");
     expect((await login("https://evil.example")).headers.get("location")).toBe("/");
+    expect((await login("/.//evil.example")).headers.get("location")).toBe("/");
+    expect((await login(`${daemon.url}//evil.example`)).headers.get("location")).toBe("/");
   });
 
   it("refuses cross-site writes that rely on the cookie", async () => {
@@ -144,5 +153,17 @@ describe("daemon", () => {
     // Same-origin browser requests and bearer clients reach the route (404: no such run).
     expect((await post({ cookie, origin: daemon.url })).status).toBe(404);
     expect((await post({ authorization: `Bearer ${token}` })).status).toBe(404);
+  });
+
+  it("redeems browser login codes over HTTP with the same session cookie", async () => {
+    const client = await tryConnect(paths);
+    if (!client) throw new Error("fixture daemon not reachable");
+    const { code } = await client.loginCode();
+    const redeem = () => fetch(`${daemon.url}/login?code=${code}`, { redirect: "manual" });
+    const response = await redeem();
+    expect(response.status).toBe(302);
+    const cookie = response.headers.get("set-cookie")?.split(";")[0] ?? "";
+    expect((await fetch(`${daemon.url}/api/v1/health`, { headers: { cookie } })).status).toBe(200);
+    expect((await redeem()).status).toBe(401);
   });
 });

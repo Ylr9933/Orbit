@@ -1,8 +1,7 @@
 // The cluster API a node serves to its primary on the exposed address. It only reaches runs that
 // arrived from a primary, and code bundles; local runs and secrets are not exposed.
-import { createReadStream, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { Readable } from "node:stream";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import {
@@ -126,10 +125,18 @@ export function createWorkerApp(deps: WorkerDeps): Hono {
   );
   api.get("/runs/:id/files/*", async (c) => {
     const run = own(c);
-    const f = await outputFile(runs.dirs(run.id).output, decodePath(c.req.path, "/files/"));
+    const f = await outputFile(
+      runs.dirs(run.id).output,
+      decodePath(c.req.path, "/files/"),
+      c.req.raw.signal,
+    );
     if (!f) return c.json({ error: "not found" }, 404);
     c.header("content-length", String(f.size));
-    return c.body(Readable.toWeb(createReadStream(f.file)) as ReadableStream);
+    if (c.req.method === "HEAD") {
+      await f.body.cancel();
+      return c.body(null);
+    }
+    return c.body(f.body);
   });
 
   app.route(CLUSTER_PREFIX, api);

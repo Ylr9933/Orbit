@@ -258,7 +258,8 @@ export function registerNotify(program: Command, client: () => Promise<OrbitClie
     .command("add <name>")
     .description("create or replace a target")
     .requiredOption("--kind <kind>", "feishu | dingtalk | wecom | slack | webhook | feishu-app")
-    .option("--url <url>", "webhook URL")
+    .option("--url <url>", "webhook URL (visible in process arguments; prefer --url-stdin)")
+    .option("--url-stdin", "read the webhook URL from stdin (hidden at a terminal)")
     .option("--url-env <VAR>", "read the webhook URL from this environment variable")
     .option("--app-id <id>", "feishu-app: the app id (cli_...)")
     .option("--secret-env <VAR>", "feishu-app: read the app secret from this environment variable")
@@ -272,6 +273,7 @@ export function registerNotify(program: Command, client: () => Promise<OrbitClie
           kind: NotifyTarget["kind"];
           url?: string;
           urlEnv?: string;
+          urlStdin?: boolean;
           appId?: string;
           secretEnv?: string;
           secretStdin?: boolean;
@@ -280,6 +282,10 @@ export function registerNotify(program: Command, client: () => Promise<OrbitClie
         },
       ) => {
         const on = o.on.split(",").filter(Boolean) as NotifyEvent[];
+        if (o.url !== undefined)
+          console.error(
+            "warning: --url exposes the webhook URL in process arguments; use --url-stdin or --url-env",
+          );
         let t: NotifyTarget;
         if (o.kind === "feishu-app") {
           if (!o.appId) throw new Error("give --app-id");
@@ -300,8 +306,10 @@ export function registerNotify(program: Command, client: () => Promise<OrbitClie
             on,
           });
         } else {
-          const url = o.url ?? (o.urlEnv ? process.env[o.urlEnv] : undefined);
-          if (!url) throw new Error("give --url or --url-env");
+          const url = o.urlStdin
+            ? await readStdinSecret("Paste the webhook URL")
+            : (o.url ?? (o.urlEnv ? process.env[o.urlEnv]?.trim() : undefined));
+          if (!url) throw new Error("give --url-stdin or --url-env VAR (it must be set), or --url");
           t = await (await client()).notifyPut({ name, kind: o.kind, url, on });
         }
         print(o.json, t, () =>

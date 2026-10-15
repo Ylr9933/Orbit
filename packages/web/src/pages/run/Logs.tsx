@@ -13,7 +13,7 @@ import { Empty, Kbd, Loading } from "../../components/ui.tsx";
 import { api, logUrl, type Run } from "../../lib/api.ts";
 import { bytes, isActive } from "../../lib/format.ts";
 import { useHotkeys } from "../../lib/hotkeys.ts";
-import { ansiSpans, type LogLine, toLines } from "../../lib/log.ts";
+import { ansiSpans, canReadMoreLogs, type LogLine, toLines } from "../../lib/log.ts";
 import { setHash, setQuery, useLocation } from "../../lib/router.ts";
 
 /** Load at most this much of a log into the browser; older bytes are available via download. */
@@ -101,7 +101,7 @@ function useLog(run: Run) {
           error: null,
         };
         if (alive.current) setSt(s);
-        if (c.next >= c.size) break;
+        if (!canReadMoreLogs(c)) break;
       }
     } catch (e) {
       // Shown only until something loads; a live run's next poll retries.

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseDiff, splitRows } from "../src/lib/diff.ts";
 import { ema, stats } from "../src/lib/ema.ts";
 import { folderError, folderTree } from "../src/lib/folders.ts";
-import { collapseCR, stripAnsi, toLines } from "../src/lib/log.ts";
+import { canReadMoreLogs, collapseCR, stripAnsi, toLines } from "../src/lib/log.ts";
 
 const PATCH = `diff --git a/train.py b/train.py
 index 111..222 100644
@@ -42,6 +42,13 @@ describe("parseDiff", () => {
 });
 
 describe("log", () => {
+  it("pauses at a withheld secret tail but continues through redacted empty windows", () => {
+    expect(canReadMoreLogs({ offset: 0, next: 20, size: 100, text: "", eof: false })).toBe(true);
+    expect(canReadMoreLogs({ offset: 80, next: 80, size: 100, text: "", eof: false })).toBe(false);
+    expect(
+      canReadMoreLogs({ offset: 80, next: 100, size: 100, text: "[redacted]", eof: true }),
+    ).toBe(false);
+  });
   it("collapses carriage-return progress bars", () => {
     expect(collapseCR("10%\r50%\r100%")).toBe("100%");
   });

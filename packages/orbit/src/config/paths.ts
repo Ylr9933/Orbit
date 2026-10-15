@@ -1,6 +1,19 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fchmodSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, hostname } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
+import type { DoctorCheck } from "../contracts/index.ts";
 
 export const DEFAULT_PORT = 7717;
 
@@ -113,10 +126,77 @@ export function orbitPaths(env: NodeJS.ProcessEnv = process.env): OrbitPaths {
 export function ensureHome(paths: OrbitPaths): void {
   mkdirSync(paths.home, { recursive: true, mode: 0o700 });
   mkdirSync(paths.data, { recursive: true, mode: 0o700 });
-  mkdirSync(paths.runs, { recursive: true });
+  mkdirSync(paths.runs, { recursive: true, mode: 0o700 });
   mkdirSync(paths.tmp, { recursive: true, mode: 0o700 });
   mkdirSync(paths.bench, { recursive: true, mode: 0o700 });
-  mkdirSync(paths.bundles, { recursive: true });
+  mkdirSync(paths.bundles, { recursive: true, mode: 0o700 });
+}
+
+function privatePaths(paths: OrbitPaths): { path: string; mode: number }[] {
+  return [
+    ...[paths.home, paths.runs, dirname(paths.bundles), paths.bundles, paths.bench, paths.tmp].map(
+      (path) => ({ path, mode: 0o700 }),
+    ),
+    ...[paths.db, `${paths.db}-wal`, `${paths.db}-shm`].map((path) => ({ path, mode: 0o600 })),
+  ];
+}
+
+/** Only Orbit's own top-level state paths, never the contents of runs or a shared data root. */
+export function tightenPrivateState(paths: OrbitPaths, log = console.error): void {
+  for (const { path, mode } of privatePaths(paths)) {
+    try {
+      const st = lstatSync(path);
+      if (st.isSymbolicLink() || st.uid !== process.getuid?.()) {
+        log(
+          `orbit permissions: skipped ${path} (symlink or owned by another user); run orbit doctor`,
+        );
+        continue;
+      }
+      const before = st.mode & 0o7777;
+      if (before === mode) continue;
+      const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const opened = fstatSync(fd);
+        if (opened.uid !== st.uid || opened.ino !== st.ino || opened.dev !== st.dev) {
+          log(`orbit permissions: skipped ${path} (changed while checking); run orbit doctor`);
+          continue;
+        }
+        fchmodSync(fd, mode);
+      } finally {
+        closeSync(fd);
+      }
+      log(`orbit permissions: ${path} ${before.toString(8)} -> ${mode.toString(8)}`);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") continue;
+      if (code !== "EPERM" && code !== "EACCES" && code !== "ELOOP") throw e;
+      log(`orbit permissions: cannot tighten ${path} (${code}); run orbit doctor`);
+    }
+  }
+}
+
+export function privateStateCheck(paths: OrbitPaths): DoctorCheck {
+  const warnings: string[] = [];
+  for (const { path, mode } of privatePaths(paths)) {
+    try {
+      const st = lstatSync(path);
+      if (st.isSymbolicLink() || st.uid !== process.getuid?.())
+        warnings.push(`${path}: symlink or owned by another user`);
+      else if ((st.mode & 0o7777) !== mode)
+        warnings.push(
+          `${path}: mode ${(st.mode & 0o7777).toString(8)}, expected ${mode.toString(8)}`,
+        );
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT")
+        warnings.push(`${path}: ${(e as Error).message}`);
+    }
+  }
+  return {
+    name: "private state",
+    ok: true,
+    warn: warnings.length > 0,
+    detail: warnings.join("; ") || "Orbit directories are 0700; database files are 0600",
+  };
 }
 
 export interface RunDirs {

@@ -33,6 +33,7 @@ import {
   Health,
   Ledger,
   LogChunk,
+  LoginCode,
   Metrics,
   NodeList,
   NodeResources,
@@ -86,6 +87,7 @@ export class OrbitClient {
   }
 
   health = () => this.call(Health, "/health");
+  loginCode = () => this.call(LoginCode, "/login-code", { method: "POST" });
   resources = () => this.call(NodeResources, "/resources");
   doctor = () => this.call(DoctorReport, "/doctor");
   ledger = () => this.call(Ledger, "/ledger");

@@ -1,8 +1,10 @@
-import { createReadStream } from "node:fs";
+import { constants, createReadStream } from "node:fs";
 import { lstat, open, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
+import { Readable } from "node:stream";
 import type { Artifacts, LogChunk, Metrics } from "../contracts/index.ts";
+import type { Redactor } from "../lib/redact.ts";
 
 export const MAX_LOG_CHUNK = 1024 * 1024;
 const MAX_DIFF_BYTES = 5 * 1024 * 1024;
@@ -15,28 +17,33 @@ export async function readLog(
   offset: number,
   limit: number,
   terminal: boolean,
+  redactor?: Redactor,
 ): Promise<LogChunk> {
   const size = (await stat(file).catch(() => null))?.size ?? 0;
   const len = Math.min(Math.max(1, limit), MAX_LOG_CHUNK);
   let start = offset < 0 ? Math.max(0, size + offset) : Math.min(offset, size);
-  const end = Math.min(size, start + len);
+  const context = Math.max(0, (redactor?.maxLength ?? 0) - 1);
+  const end = Math.min(terminal ? size : Math.max(0, size - context), start + len);
   let text = "";
   if (end > start) {
     const fh = await open(file, "r");
     try {
-      const buf = Buffer.alloc(end - start);
-      await fh.read(buf, 0, buf.length, start);
+      const readStart = Math.max(0, start - context);
+      const buf = Buffer.alloc(Math.min(size, end + context) - readStart);
+      const { bytesRead } = await fh.read(buf, 0, buf.length, readStart);
       // Never split a UTF-8 sequence: trim a partial trailing character, and skip a partial leading one.
-      let from = 0;
+      let from = start - readStart;
+      let to = Math.min(end - readStart, bytesRead);
       if (offset < 0 && start > 0) {
-        const nl = buf.indexOf(10);
-        if (nl >= 0 && nl < buf.length - 1) from = nl + 1;
+        const nl = buf.indexOf(10, from);
+        if (nl >= 0 && nl < to - 1) from = nl + 1;
       }
-      while (from < buf.length && ((buf[from] ?? 0) & 0xc0) === 0x80) from++;
-      let to = buf.length;
-      if (end < size) to = safeUtf8End(buf);
-      text = buf.subarray(from, to).toString("utf8");
-      start += from;
+      while (from < to && ((buf[from] ?? 0) & 0xc0) === 0x80) from++;
+      if (end < size || !terminal) to = from + safeUtf8End(buf.subarray(from, to));
+      text = redactor
+        ? redactor.applyWindow(buf.subarray(0, bytesRead), from, to)
+        : buf.subarray(from, to).toString("utf8");
+      start = readStart + from;
       return {
         offset: start,
         next: start + (to - from),
@@ -147,23 +154,37 @@ export function safeJoin(dir: string, rel: string): string | null {
   return p === root || p.startsWith(root + sep) ? p : null;
 }
 
-/**
- * A regular file under `dir` named by a request path, or null. Symlinks are resolved first, so a
- * link written by a run cannot expose files outside its output directory.
- */
+/** Open and verify the same descriptor that serves the response; never reopen a checked path. */
 export async function outputFile(
   dir: string,
   rel: string,
-): Promise<{ file: string; size: number } | null> {
+  signal?: AbortSignal,
+): Promise<{ body: ReadableStream<Uint8Array>; size: number } | null> {
   const file = safeJoin(dir, rel);
   if (!file) return null;
-  const [root, real] = await Promise.all([
-    realpath(dir).catch(() => null),
-    realpath(file).catch(() => null),
-  ]);
-  if (!root || !real || (real !== root && !real.startsWith(root + sep))) return null;
-  const st = await stat(real).catch(() => null);
-  return st?.isFile() ? { file: real, size: st.size } : null;
+  const root = await realpath(dir).catch(() => null);
+  if (!root) return null;
+  const fh = await open(
+    file,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  ).catch(() => null);
+  if (!fh) return null;
+  let streaming = false;
+  try {
+    const [st, real] = await Promise.all([fh.stat(), realpath(`/proc/self/fd/${fh.fd}`)]);
+    if (!st.isFile() || !real.startsWith(root + sep)) return null;
+    const stream =
+      st.size === 0
+        ? Readable.from([])
+        : fh.createReadStream({ start: 0, end: st.size - 1, autoClose: true, signal });
+    const body = Readable.toWeb(stream, {
+      strategy: { size: (chunk: Buffer) => chunk.length },
+    }) as ReadableStream<Uint8Array>;
+    streaming = st.size > 0;
+    return { body, size: st.size };
+  } finally {
+    if (!streaming) await fh.close();
+  }
 }
 
 /** The URL-encoded rest of `path` after `marker`; a malformed escape is a user error. */

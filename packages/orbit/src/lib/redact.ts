@@ -19,8 +19,9 @@ export class Redactor {
     return this.secrets.length === 0;
   }
 
+  /** Maximum UTF-8 byte length, for log windows read by byte offset. */
   get maxLength(): number {
-    return this.secrets[0]?.length ?? 0;
+    return Math.max(0, ...this.secrets.map((s) => Buffer.byteLength(s)));
   }
 
   apply(text: string): string {
@@ -29,11 +30,30 @@ export class Redactor {
     return out;
   }
 
+  /** Redact a byte window using its surrounding context, keeping offsets in the original file. */
+  applyWindow(buf: Buffer, from: number, to: number): string {
+    const matches: [number, number][] = [];
+    for (const secret of this.secrets) {
+      const value = Buffer.from(secret);
+      for (let at = buf.indexOf(value); at >= 0; at = buf.indexOf(value, at + 1))
+        if (at < to && at + value.length > from) matches.push([at, at + value.length]);
+    }
+    matches.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    let cursor = from;
+    let out = "";
+    for (const [start, end] of matches) {
+      if (end <= cursor) continue;
+      if (start >= cursor) out += buf.subarray(cursor, start).toString("utf8") + REDACTED;
+      cursor = end;
+    }
+    return out + buf.subarray(Math.min(cursor, to), to).toString("utf8");
+  }
+
   /**
    * A streaming redactor. It holds back the last `maxLength - 1` characters of each chunk so a secret
    * split across chunks is still caught.
    */
-  stream(): Transform {
+  stream({ final = true }: { final?: boolean } = {}): Transform {
     let carry = "";
     const keep = Math.max(0, this.maxLength - 1);
     const decoder = new StringDecoder("utf8");
@@ -44,7 +64,7 @@ export class Redactor {
         carry = text.slice(cut);
         done(null, text.slice(0, cut));
       },
-      flush: (done) => done(null, this.apply(carry + decoder.end())),
+      flush: (done) => done(null, final ? this.apply(carry + decoder.end()) : ""),
     });
   }
 }

@@ -43,9 +43,11 @@ describe("output files", () => {
   symlinkSync(join(tmp, "secret.txt"), join(out, "escape"));
   symlinkSync(join(out, "sub", "a.txt"), join(out, "inside"));
 
-  it("serves regular files inside the directory and refuses links that escape it", async () => {
-    expect((await outputFile(out, "sub/a.txt"))?.size).toBe(1);
-    expect(await outputFile(out, "inside")).not.toBeNull();
+  it("serves regular files inside the directory and refuses final-component symlinks", async () => {
+    const file = await outputFile(out, "sub/a.txt");
+    expect(file?.size).toBe(1);
+    expect(await new Response(file?.body).text()).toBe("a");
+    expect(await outputFile(out, "inside")).toBeNull();
     expect(await outputFile(out, "escape")).toBeNull();
     expect(await outputFile(out, "../secret.txt")).toBeNull();
     expect(await outputFile(out, "sub")).toBeNull();

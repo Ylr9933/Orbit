@@ -152,3 +152,54 @@ describe("run specs with services", () => {
     expect(msg({ ...ws, project: "/p" })).toMatch(/outside \/orbit/);
   });
 });
+
+describe("container path validation", () => {
+  const parse = (extra: object) =>
+    RunSpec.safeParse({ image: "fixture", command: ["true"], ...extra });
+
+  it.each(["/./orbit", "/orbit/../orbit", "/.//orbit/output", "//orbit", "/./", "/data/../safe"])(
+    "refuses reserved or traversing mount target %s",
+    (target) => {
+      expect(parse({ mounts: [{ source: "/fixture", target }] }).success).toBe(false);
+    },
+  );
+
+  it("compares normalized mount targets and protects workspace only when it is reserved", () => {
+    for (const target of ["/data/.", "/./data/", "//data//"])
+      expect(
+        parse({
+          mounts: [
+            { source: "/a", target: "/data" },
+            { source: "/b", target },
+          ],
+        }).success,
+      ).toBe(false);
+    const mounts = [{ source: "/fixture", target: "/./workspace//data" }];
+    expect(parse({ mounts }).success).toBe(true);
+    expect(parse({ mounts, project: "/project" }).success).toBe(false);
+    const result = parse({
+      mounts: [{ source: "/fixture", target: "/./data//files/" }],
+      collect: ["/./results//file/"],
+    });
+    expect(result.success && result.data.mounts[0]?.target).toBe("/data/files");
+    expect(result.success && result.data.collect).toEqual(["/results/file"]);
+  });
+
+  it("normalizes collect paths in all phases while retaining the raw traversal rejection", () => {
+    for (const path of ["/results/../results", "/../results", "relative"]) {
+      expect(parse({ collect: [path] }).success).toBe(false);
+      expect(
+        parse({ services: [{ name: "sim", image: "fixture", collect: [path] }] }).success,
+      ).toBe(false);
+      expect(parse({ after: { command: ["true"], timeoutMin: 1, collect: [path] } }).success).toBe(
+        false,
+      );
+    }
+    const result = parse({
+      services: [{ name: "sim", image: "fixture", collect: ["/./results//"] }],
+      after: { command: ["true"], timeoutMin: 1, collect: ["/./results//"] },
+    });
+    expect(result.success && result.data.services[0]?.collect).toEqual(["/results"]);
+    expect(result.success && result.data.after?.collect).toEqual(["/results"]);
+  });
+});

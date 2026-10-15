@@ -8,7 +8,7 @@ import { BenchmarkRegistry } from "../bench/registry.ts";
 import { BenchService } from "../bench/service.ts";
 import { ClusterService } from "../cluster/service.ts";
 import { removeDaemonInfo, writeDaemonInfo } from "../config/daemon-info.ts";
-import { ensureHome, type OrbitPaths } from "../config/paths.ts";
+import { ensureHome, type OrbitPaths, tightenPrivateState } from "../config/paths.ts";
 import {
   API_PREFIX,
   isTerminal,
@@ -93,7 +93,9 @@ export async function startDaemon(
   const release = acquireProcessLock(join(paths.home, "daemon.lock"));
   let store: Store | undefined;
   try {
+    tightenPrivateState(paths);
     store = new Store(paths.db);
+    tightenPrivateState(paths);
     return await startLockedDaemon(paths, opts, store, release);
   } catch (e) {
     store?.close();

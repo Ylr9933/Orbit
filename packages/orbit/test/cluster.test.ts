@@ -1,18 +1,23 @@
 // Multi-node building blocks without daemons: bundle hashing and transfer, placement rules, node
 // configuration parsing and the dataset registry.
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
+import { gzipSync } from "node:zlib";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseDataset } from "../src/cli/cluster.ts";
 import { parseListen } from "../src/cluster/registry.ts";
@@ -76,6 +81,60 @@ describe("bundles", () => {
     // A small tree is packed in milliseconds; Node discards a finished child's unread output.
     await new Promise((r) => setTimeout(r, 300));
     expect(await receiveBundle(join(tmp, "late-cache"), h, body)).toBe(join(tmp, "late-cache", h));
+  });
+
+  it("aborts oversized compressed uploads and removes staging", async () => {
+    const root = join(tmp, "compressed-limit");
+    const body = Readable.from([gzipSync("fixture"), Buffer.alloc(700), Buffer.alloc(700)]);
+    await expect(receiveBundle(root, "1".repeat(64), body, 1024)).rejects.toThrow(
+      /compressed bundle exceeds/,
+    );
+    expect(body.destroyed).toBe(true);
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  it("also rejects oversized sparse trees even when the tar stream fits", async () => {
+    const src = tree("sparse");
+    const sparse = join(src, "sparse-file");
+    writeFileSync(sparse, "");
+    truncateSync(sparse, 128 * 1024);
+    const archive = execFileSync("tar", ["--sparse", "-czf", "-", "-C", src, "."]);
+    const root = join(tmp, "sparse-limit");
+    await expect(
+      receiveBundle(root, "4".repeat(64), Readable.from([archive]), 32 * 1024),
+    ).rejects.toThrow(/bundle exceeds/);
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  it("stops compressed expansion during extraction, before hashing, and removes staging", async () => {
+    const src = tree("expansion");
+    writeFileSync(join(src, "large"), Buffer.alloc(128 * 1024, 97));
+    const root = join(tmp, "unpacked-limit");
+    const body = packBundle(src);
+    await expect(receiveBundle(root, "2".repeat(64), body, 32 * 1024)).rejects.toThrow(
+      /unpacked bundle exceeds/,
+    );
+    expect(body.destroyed).toBe(true);
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  it("accepts a bounded Web stream and does not hide upload errors", async () => {
+    const src = tree("bounded");
+    const hash = await treeHash(src);
+    const body = Readable.toWeb(packBundle(src)) as ReadableStream<Uint8Array>;
+    const dest = await receiveBundle(join(tmp, "bounded-cache"), hash, body, 32 * 1024);
+    expect(await treeHash(dest)).toBe(hash);
+    const root = join(tmp, "broken-upload");
+    const broken = Readable.from(
+      (async function* () {
+        yield gzipSync("fixture").subarray(0, 5);
+        throw new Error("fixture upload failed");
+      })(),
+    );
+    await expect(receiveBundle(root, "3".repeat(64), broken)).rejects.toThrow(
+      /fixture upload failed/,
+    );
+    expect(readdirSync(root)).toEqual([]);
   });
 });
 

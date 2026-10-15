@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { z } from "zod";
 
 export { autoRunName, runDisplayName } from "./naming.ts";
@@ -80,6 +81,12 @@ export const Health = z.object({
 });
 export type Health = z.infer<typeof Health>;
 
+export const LoginCode = z.object({
+  code: z.string().regex(/^[0-9a-f]{48}$/),
+  expiresAt: z.iso.datetime(),
+});
+export type LoginCode = z.infer<typeof LoginCode>;
+
 export const ApiError = z.object({ error: z.string() });
 export type ApiError = z.infer<typeof ApiError>;
 
@@ -99,6 +106,13 @@ export const ResourceRequest = z.object({
 export type ResourceRequest = z.infer<typeof ResourceRequest>;
 
 const hasDotDot = (p: string) => p.split("/").includes("..");
+const ContainerPath = z
+  .string()
+  .refine(
+    (p) => p.startsWith("/") && !hasDotDot(p),
+    "container paths must be absolute without `..`",
+  )
+  .transform((p) => posix.normalize(p).replace(/\/+$/, "") || "/");
 /** Container paths Orbit mounts itself: the run directory, and the code at /workspace. */
 const RESERVED_TARGET = /^\/(orbit)?(\/|$)/;
 const WORKSPACE_TARGET = /^\/workspace(\/|$)/;
@@ -108,7 +122,7 @@ export const Mount = z
   .object({
     source: z.string().optional(),
     dataset: z.string().optional(),
-    target: z.string(),
+    target: ContainerPath,
     mode: z.enum(["ro", "rw"]).default("ro"),
   })
   .refine((m) => Boolean(m.source) !== Boolean(m.dataset), {
@@ -288,7 +302,7 @@ export const ServiceSpec = z
     securityOpt: z.array(z.string()).default([]),
     pidsLimit: z.number().int().positive().optional(),
     /** Absolute paths copied to `output/services/<name>/<path>` once the run has stopped. */
-    collect: z.array(z.string()).default([]),
+    collect: z.array(ContainerPath).default([]),
   })
   .refine((s) => Boolean(s.image) !== Boolean(s.dockerfile), {
     message: "a service needs exactly one of image or dockerfile",
@@ -326,7 +340,7 @@ export const AfterPhase = z
     /** Network during the phase; default: unchanged. */
     network: z.boolean().optional(),
     /** Absolute paths copied to `output/after/<path>` once the phase has ended. */
-    collect: z.array(z.string()).default([]),
+    collect: z.array(ContainerPath).default([]),
   })
   .refine(
     (a) =>
@@ -393,7 +407,7 @@ export const RunSpec = z
     /** Higher runs are scheduled first; equal priorities keep submission order. */
     priority: z.number().int().default(0),
     /** Absolute container paths copied to `output/collected/<path>` after exit, before removal. */
-    collect: z.array(z.string()).default([]),
+    collect: z.array(ContainerPath).default([]),
     /**
      * Variables copied from the daemon environment at launch (never stored). Values of names that
      * look secret (KEY, TOKEN, SECRET, PASSWORD) are redacted from logs.
@@ -439,7 +453,7 @@ export const RunSpec = z
   })
   .refine(
     (s) => {
-      const targets = s.mounts.map((m) => m.target.replace(/\/+$/, "") || "/");
+      const targets = s.mounts.map((m) => m.target);
       return (
         targets.every(
           (t) =>
@@ -685,6 +699,7 @@ export const RunEvents = z.object({ events: z.array(RunEvent) });
 /** A chunk of the combined stdout/stderr log. Offsets are byte offsets in the log file. */
 export const LogChunk = z.object({
   offset: z.number().int(),
+  /** May equal offset below size while a running log's trailing secret bytes are withheld. */
   next: z.number().int(),
   size: z.number().int(),
   text: z.string(),

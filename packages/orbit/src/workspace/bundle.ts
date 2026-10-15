@@ -6,8 +6,9 @@ import { createHash } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, readlink, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { PassThrough, Readable } from "node:stream";
+import { PassThrough, Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { createGunzip } from "node:zlib";
 
 export const MAX_BUNDLE_BYTES = 2 * 1024 ** 3;
 export const isBundleHash = (h: string) => /^[0-9a-f]{64}$/.test(h);
@@ -60,6 +61,9 @@ export function packBundle(dir: string): Readable {
     err += d.toString();
   });
   const out = new PassThrough();
+  out.on("close", () => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  });
   child.stdout.pipe(out, { end: false });
   child.on("error", (e) => out.destroy(e));
   child.on("close", (code) => {
@@ -71,6 +75,16 @@ export function packBundle(dir: string): Readable {
 
 export const bundleDir = (root: string, hash: string) => join(root, hash);
 
+function byteLimit(maxBytes: number, kind: string): Transform {
+  let bytes = 0;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, done) {
+      bytes += chunk.length;
+      done(bytes > maxBytes ? new Error(`${kind} bundle exceeds ${maxBytes} bytes`) : null, chunk);
+    },
+  });
+}
+
 /**
  * Unpack a tar stream into `root/<hash>` after checking that its tree hashes to `hash`. Idempotent:
  * an existing bundle is kept (a concurrent upload of the same content is not an error).
@@ -79,29 +93,49 @@ export async function receiveBundle(
   root: string,
   hash: string,
   body: Readable | ReadableStream<Uint8Array>,
+  maxBytes = MAX_BUNDLE_BYTES,
 ): Promise<string> {
   if (!isBundleHash(hash)) throw new Error(`bad bundle hash: ${hash}`);
   const dest = bundleDir(root, hash);
   if (existsSync(dest)) return dest;
-  await mkdir(root, { recursive: true });
+  await mkdir(root, { recursive: true, mode: 0o700 });
   const tmp = await mkdtemp(join(root, `.in-${hash.slice(0, 8)}-`));
   try {
-    const child = spawn("tar", ["-xzf", "-", "--no-same-owner", "-C", tmp], {
+    const child = spawn("tar", ["-xf", "-", "--no-same-owner", "-C", tmp], {
       stdio: ["pipe", "ignore", "pipe"],
     });
     let err = "";
     child.stderr.on("data", (d: Buffer) => {
-      err += d.toString();
+      err = (err + d.toString()).slice(-16_384);
     });
-    const done = new Promise<number>((resolve) => child.on("close", (c) => resolve(c ?? 1)));
+    const done = new Promise<number>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", (c) => resolve(c ?? 1));
+    });
     const input =
       body instanceof Readable
         ? body
         : Readable.fromWeb(body as import("node:stream/web").ReadableStream);
-    await pipeline(input, child.stdin).catch(() => {});
-    const code = await done;
-    if (code !== 0) throw new Error(`tar failed (${code}): ${err.trim()}`);
-    const got = await treeHash(tmp);
+    try {
+      await Promise.all([
+        pipeline(
+          input,
+          byteLimit(maxBytes, "compressed"),
+          createGunzip(),
+          byteLimit(maxBytes, "unpacked"),
+          child.stdin,
+        ),
+        done.then((code) => {
+          if (code !== 0) throw new Error(`tar failed (${code}): ${err.trim()}`);
+        }),
+      ]);
+    } catch (e) {
+      input.destroy();
+      child.kill("SIGKILL");
+      await done.catch(() => {});
+      throw e;
+    }
+    const got = await treeHash(tmp, maxBytes);
     if (got !== hash) throw new Error(`bundle hash mismatch: expected ${hash}, got ${got}`);
     try {
       await rename(tmp, dest);

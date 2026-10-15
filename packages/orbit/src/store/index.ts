@@ -1,3 +1,4 @@
+import { closeSync, openSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import {
   BenchJob,
@@ -104,6 +105,13 @@ export class Store {
   private readonly commits: (() => void)[][] = [];
 
   constructor(file: string) {
+    if (file !== ":memory:") {
+      try {
+        closeSync(openSync(file, "wx", 0o600));
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      }
+    }
     this.db = new DatabaseSync(file);
     try {
       this.db.exec("PRAGMA busy_timeout = 5000;");

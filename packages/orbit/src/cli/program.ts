@@ -542,7 +542,7 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
         const chunk = await c.logs(id, offset);
         if (chunk.text) process.stdout.write(chunk.text);
         offset = chunk.next;
-        if (chunk.next < chunk.size) continue;
+        if (chunk.next > chunk.offset && chunk.next < chunk.size) continue;
         if (!o.follow || chunk.eof) break;
         const run = await c.get(id);
         if (isTerminal(run.state) && run.cleanup !== "pending") {
@@ -663,12 +663,14 @@ export function createProgram(deps: ProgramDeps, paths: OrbitPaths = orbitPaths(
     .action(async (id: string | undefined, o: { open?: boolean }) => {
       const c = await client();
       const next = id ? `&next=${encodeURIComponent(`/runs/${id}`)}` : "";
-      const url = `${c.info.url}/login?token=${c.info.token}${next}`;
-      console.log(url);
-      if (o.open)
+      console.log(`${c.info.url}/login?token=${c.info.token}${next}`);
+      if (o.open) {
+        const { code } = await c.loginCode();
+        const url = `${c.info.url}/login?code=${code}${next}`;
         spawn("xdg-open", [url], { detached: true, stdio: "ignore" })
           .on("error", () => {})
           .unref();
+      }
     });
 
   return program;

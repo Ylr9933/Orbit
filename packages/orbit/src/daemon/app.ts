@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { accessSync, constants, createReadStream, existsSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -27,6 +28,7 @@ import {
   type Health,
   isTerminal,
   type Ledger,
+  type LoginCode,
   NodeAddInput,
   type NodeStatus,
   NotifyPairInput,
@@ -77,6 +79,7 @@ export function createApp(deps: AppDeps): Hono {
   const { runs, auth, notifyStore, notifier, feishu, bench, benchmarks, cluster, datasets } = deps;
   const app = new Hono();
   const api = new Hono();
+  const loginCodes = new Map<string, number>();
 
   api.use("*", async (c, next) => {
     if (tokenMatches(c.req.header("authorization"), deps.token)) return next();
@@ -92,6 +95,17 @@ export function createApp(deps: AppDeps): Hono {
   api.get("/health", (c) =>
     c.json<Health>({ ok: true, version: VERSION, pid: process.pid, startedAt: deps.startedAt }),
   );
+  api.post("/login-code", (c) => {
+    if (!tokenMatches(c.req.header("authorization"), deps.token))
+      return c.json({ error: "bearer token required" }, 401);
+    const now = Date.now();
+    for (const [code, expires] of loginCodes) if (expires <= now) loginCodes.delete(code);
+    const code = randomBytes(24).toString("hex");
+    const expires = now + 30_000;
+    loginCodes.set(code, expires);
+    c.header("cache-control", "no-store");
+    return c.json<LoginCode>({ code, expiresAt: new Date(expires).toISOString() });
+  });
   api.get("/resources", async (c) => c.json(await runs.resources(true)));
   api.get("/doctor", async (c) => c.json(await runDoctor(deps.paths)));
   api.get("/ledger", async (c) =>
@@ -166,10 +180,15 @@ export function createApp(deps: AppDeps): Hono {
     const run = must(runs.get(c.req.param("id")));
     const offset = num(c.req.query("offset"), 0);
     const limit = num(c.req.query("limit"), 256 * 1024);
-    const chunk = await readLog(runs.dirs(run.id).log, offset, limit, isTerminal(run.state));
     // Process runs write straight to the log; it is redacted in place only when they end.
-    if (run.spec.backend === "process" && !isTerminal(run.state))
-      chunk.text = runs.redactor(run).apply(chunk.text);
+    const terminal = isTerminal(run.state);
+    const chunk = await readLog(
+      runs.dirs(run.id).log,
+      offset,
+      limit,
+      terminal,
+      run.spec.backend === "process" && !terminal ? runs.redactor(run) : undefined,
+    );
     return c.json(chunk);
   });
 
@@ -184,7 +203,9 @@ export function createApp(deps: AppDeps): Hono {
     // As for /logs: a running process run's log is not redacted on disk yet.
     if (run.spec.backend === "process" && !isTerminal(run.state))
       return c.body(
-        Readable.toWeb(createReadStream(file).pipe(runs.redactor(run).stream())) as ReadableStream,
+        Readable.toWeb(
+          createReadStream(file).pipe(runs.redactor(run).stream({ final: false })),
+        ) as ReadableStream,
       );
     c.header("content-length", String(st.size));
     return c.body(Readable.toWeb(createReadStream(file)) as ReadableStream);
@@ -222,12 +243,20 @@ export function createApp(deps: AppDeps): Hono {
       const res = await remoteRecords(() => cluster.file(run, rel));
       if (!res || res.status === 404) return c.json({ error: "not found" }, 404);
       c.header("content-length", res.headers.get("content-length") ?? undefined);
+      if (c.req.method === "HEAD") {
+        await res.body?.cancel();
+        return c.body(null);
+      }
       return c.body(res.body as ReadableStream);
     }
-    const f = await outputFile(runs.dirs(run.id).output, rel);
+    const f = await outputFile(runs.dirs(run.id).output, rel, c.req.raw.signal);
     if (!f) return c.json({ error: "not found" }, 404);
     c.header("content-length", String(f.size));
-    return c.body(Readable.toWeb(createReadStream(f.file)) as ReadableStream);
+    if (c.req.method === "HEAD") {
+      await f.body.cancel();
+      return c.body(null);
+    }
+    return c.body(f.body);
   });
 
   api.get("/runs/:id/diff", async (c) => {
@@ -417,16 +446,26 @@ export function createApp(deps: AppDeps): Hono {
 
   app.route(API_PREFIX, api);
 
-  // Web UI: `/login?token=...` sets an HttpOnly cookie, then the SPA uses the API with it.
   app.get("/login", (c) => {
-    if (!sameSecret(c.req.query("token"), deps.token))
-      return c.text("invalid token; run `orbit web`", 401);
+    c.header("cache-control", "no-store");
+    c.header("referrer-policy", "no-referrer");
+    const code = c.req.query("code");
+    const expires = code ? loginCodes.get(code) : undefined;
+    if (code) loginCodes.delete(code);
+    const valid = code
+      ? expires !== undefined && expires > Date.now()
+      : sameSecret(c.req.query("token"), deps.token);
+    if (!valid) return c.text("invalid or expired login; run `orbit web`", 401);
     setCookie(c, COOKIE, deps.token, { httpOnly: true, sameSite: "Strict", path: "/" });
     // Only same-origin paths, so the login link cannot redirect elsewhere.
     const next = c.req.query("next") ?? "/";
     const origin = new URL(c.req.url).origin;
     const to = URL.canParse(next, origin) ? new URL(next, origin) : null;
-    return c.redirect(to?.origin === origin ? to.pathname + to.search + to.hash : "/");
+    return c.redirect(
+      to?.origin === origin && !to.pathname.startsWith("//") && !next.includes("\\")
+        ? to.pathname + to.search + to.hash
+        : "/",
+    );
   });
   if (deps.webDir && existsSync(deps.webDir)) {
     const root = deps.webDir;

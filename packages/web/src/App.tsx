@@ -109,15 +109,12 @@ export function App() {
     return (
       <div style={{ height: "100%", display: "grid", placeItems: "center" }}>
         <Empty title="Sign in to this Orbit daemon" icon={<IconLogo size={40} />}>
+          <p>To sign in, run this command in a terminal on this machine:</p>
           <p>
-            The Web UI uses a login link that carries the daemon token. In a terminal on this
-            machine run
+            <code>orbit web --open</code>
           </p>
           <p>
-            <code>orbit web</code>
-          </p>
-          <p>
-            and open the printed URL (or use <code>orbit web --open</code>).
+            To copy a login link instead, run <code>orbit web</code> and open the printed URL.
           </p>
         </Empty>
       </div>

@@ -126,6 +126,11 @@ examples/      bench-adapters/<benchmark>/: external bench adapters (not part of
   `orbit config data <dir>` 写配置（比环境变量可靠：自动拉起的 daemon 总能读到），重启 daemon 生效，已有 Run 不自动搬。
   `doctor` 报告数据目录与 Docker `DockerRootDir` 的剩余空间，在系统盘上或空间不足（少于磁盘的 10%，下限 50 GB、上限 500 GB）时给 `warn`。
   资源探测的磁盘也是数据目录所在的盘。
+- **私有状态权限**：新建 `ORBIT_HOME`、数据目录、`runs/`、`cache/`、`cache/bundles/`、bench staging 与
+  `<home>/tmp/` 为 0700，SQLite 数据库及 `-wal` / `-shm` 为 0600。daemon 启动时也收紧已有的 home、
+  上述 Orbit 子目录和数据库文件；只改这些路径，不递归进入 Run，不改独立的已有数据根目录，不修改其他用户
+  拥有的路径或跟随符号链接。修改记入 daemon 日志；EPERM / EACCES 不阻止启动，`doctor` 对仍不私有或无法检查
+  的路径给 `warn`。这会撤销这些路径原有的组/ACL 访问，适用于 Orbit 的单用户状态。
 - `src/` 根目录下的文件（如 `bin.ts`）是组合根，可引用任意模块，但不能被模块引用。
 - 同类能力只有一份实现：一个 Run 状态机、一个资源账本、一个记录库。
 - Docker、sqlite 句柄不出现在 contracts 中。
@@ -168,7 +173,8 @@ createdAt/startedAt/endedAt, cleanup: pending|done|failed, usage? }`
 - 执行结果（state/exitCode）、清理状态（cleanup）、评测有效性（bench 中）是三个独立字段。
 - `remote`：主节点上的镜像记录，Run 实际在 `node` 上执行；`origin`：worker 上替主节点执行的 Run 的主节点名（§8）。
 - mount 二选一：`source`（本机绝对路径）或 `dataset`（命名数据集，在执行节点解析为本地路径）；
-  `target` 为绝对路径、互不重复、不含 `..`，且不能落在 `/orbit` 下（有 project 时也不能落在 `/workspace` 下）。`collect` 路径同样不含 `..`。
+  `target` 为绝对路径、互不重复、不含 `..`，且不能落在 `/orbit` 下（有 project 时也不能落在 `/workspace` 下）。
+  mount target 与各阶段 `collect` 路径先拒绝原始 `..`，再按 POSIX 规范化；保留路径与 mount 重复检查使用规范化后的值。
 - `env` 的值随 Run 记录保存，只放非密钥配置；密钥用 `passEnv`（只记变量名，启动时从 daemon 环境读取，
   值按名字规则在日志中脱敏）。CLI：`-e KEY=VALUE` / `--pass-env VAR`。
 
@@ -251,18 +257,27 @@ oomKilled }`，运行中写库（不发变更事件），终态前再采一次�
 
 ## 5. HTTP API 与 Web
 
-`/api/v1`：`health`、`resources`、`doctor`、`ledger`（资源 + 活动租约 + 排队原因）、`GET/POST runs`、
+`/api/v1`：`health`、`POST login-code`、`resources`、`doctor`、`ledger`（资源 + 活动租约 + 排队原因）、`GET/POST runs`、
 `runs/:id`、`runs/:id/{cancel,note,wait,events,logs,log.txt,metrics,artifacts,files/*,diff,session}`、
 `POST runs/check`（运行前检查）、`POST runs/delete`、`stream`（SSE：`run` 变化推送，`deleted` 删除推送）、`GET/POST auth`、`DELETE auth/:name`、`POST auth/:name/test`、
 `GET/POST notify`、`DELETE notify/:name`、`POST notify/:name/{test,pair}`，bench 路由（§7），
 `GET/POST cluster/nodes`、`DELETE cluster/nodes/:name`、`GET/POST cluster/expose`、`GET cluster/token`、
 `POST cluster/token/rotate`、`GET/POST datasets`、`DELETE datasets/:name`（§8），`GET folders`、`POST folders/move`、
-`POST folders/export`（文件夹，见下）。`POST runs` 与 `POST bench/jobs` 可带 `?folder=`，`GET runs` 可按 `?folder=` 筛选（含子文件夹）。`GET /login?token=&next=` 设置 cookie 后跳转到站内路径（拒绝 `//`、外站）。
-`orbit web [id]` 打印带 token 的登录 URL（`--open` 时用浏览器打开）并定位到 Run。
-`files/*` 只读输出目录内的普通文件（解析符号链接后仍须在目录内），以 `Content-Security-Policy: sandbox`、
+`POST folders/export`（文件夹，见下）。`POST runs` 与 `POST bench/jobs` 可带 `?folder=`，`GET runs` 可按 `?folder=` 筛选（含子文件夹）。
+`POST /api/v1/login-code` 只接受 bearer token（cookie 不可签发），返回 `LoginCode { code, expiresAt }`：
+随机 24 字节、内存保存、30 秒有效、只能兑换一次，重启即失效。`GET /login?code=&next=` 兑换后设置与 token 登录
+相同的 HttpOnly / SameSite=Strict cookie。保留 `GET /login?token=&next=`；两者只跳转到站内路径，拒绝外站、
+URL 解析后 pathname 以 `//` 开头的目标（含 `/.//x` 与同源绝对 URL）以及反斜杠。签发和登录响应禁止缓存。
+`orbit web [id] --open` 先签发 code，浏览器启动参数只携带 code；终端打印的链接仍用 token，方便稍后复制粘贴
+（30 秒 code 不适合打印后长期使用）。两种方式都支持定位到 Run，Web 后续请求仍使用 cookie。
+`files/*` 以 `O_RDONLY | O_NOFOLLOW` 打开文件，校验同一 fd 为普通文件，且 `/proc/self/fd/<fd>` 的 realpath
+仍位于输出根目录内，然后直接从该 fd 发送（完成或取消时关闭），daemon 与 worker 共用；拒绝最后一级符号链接。
+以 `Content-Security-Policy: sandbox`、
 `nosniff` 返回，避免产物中的 HTML 以 Web UI 的身份执行脚本。非法百分号编码返回 400；数字查询参数
 （`limit`、`offset`、`after`、`timeout`）必须是非负安全整数，否则返回 400，省略或空值仍取默认值。
 `wait` 在 Run 终态且清理结束后返回；CLI `wait -g` 与 `rm -g` 使用相同的 10000 条组内 Run 查询上限。
+运行中的 process 日志按原始字节偏移分页；每次多读窗口前后最多 `maxSecretBytes - 1` 字节作脱敏上下文，
+只返回请求窗口，并暂缓 EOF 附近可能尚未写完的密钥尾部。`next` 可能暂时不前进；整份日志下载也不输出这段尾部。
 
 Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行详情、GitHub 的 diff 视图）：
 
@@ -349,6 +364,8 @@ Agent 的 home 放在 `/orbit/agent/{codex,claude}`（`CODEX_HOME`、`CLAUDE_CON
 `on` ⊆ `succeeded | failed | group`。单个 Run（无 group）结束时按状态通知；group 中的 Run 不单独通知，
 该 group 不再有排队/运行中的 Run 时发一条汇总（成功/失败计数、失败的 Run 与原因）。失败通知附原因与日志最后几行
 （已脱敏）。发送失败只记 daemon 日志，不影响 Run。Web 可开启浏览器通知（页面打开时）。
+`orbit notify add --url-stdin` 从 stdin 读取 webhook URL（终端不回显）；`--url-env VAR` 保留。
+兼容 `--url`，但 stderr 警告 URL 会出现在进程参数中。见[通知指南](guides/notifications.md)。
 
 **飞书应用**（`feishu-app`；推送在 `notify/feishu.ts`，用 OpenAPI 的 `fetch`，不用 SDK；接收在 `feishu/`）：
 - daemon 为每个应用保持一条**出向**长连接（官方 `@larksuiteoapi/node-sdk` 的 `WSClient`，仅在有该类目标时懒加载；
@@ -533,7 +550,7 @@ cwd 默认为代码快照（有快照时），否则 `project`，再否则 Run �
 `runs/shim.ts`）：给 runner 启动的容器加 `orbit.parent=<run>` 标签，把 `--gpus` 换成租约中的 GPU（没有租到 GPU 则拒绝），
 有 auth 时注入 Agent CLI 与凭据挂载，`hostNetwork` 时 build 用宿主网络，其余参数原样传给真实 docker。
 取消 / 超时向进程组发 SIGTERM（宽限后 SIGKILL）并停止子容器；只有进程组与带标签的子容器都消失才释放租约。
-daemon 重启后按 pid + 启动时间重新接管进程。运行中的 process Run 日志在 API 中不返回（写完后统一脱敏）。
+daemon 重启后按 pid + 启动时间重新接管进程。运行中的 process Run 日志通过 API 读取时按 §5 脱敏，结束后在磁盘上统一脱敏。
 
 **接口**：API `GET/POST /benchmarks`、`DELETE /benchmarks/:name`、`GET /benchmarks/:name/tasks`、
 `GET/POST /bench/jobs`、`GET /bench/jobs/:id`、`POST /bench/jobs/:id/{cancel,rescore}`、`GET /bench/compare?jobs=a,b`；
@@ -578,6 +595,8 @@ Tailscale / 内网 / SSH 隧道；cluster token 等同于在该节点运行容�
 
 **代码**：工作区快照、仓库外的 Dockerfile 目录、agent bundle 按目录树内容哈希（路径、类型、可执行位、
 链接目标、文件 sha256）打包传输，worker 校验哈希后缓存在 `cache/bundles/<hash>`，已有则跳过上传。
+上传时同时限制压缩字节数和解压后的 tar 字节数（含元数据）不超过 `MAX_BUNDLE_BYTES`（2 GiB），
+提取出的文件总大小也须通过同一上限的树校验；超限或上传失败会停止解包进程、取消输入流并删除临时目录。
 Dockerfile 在仓库内时用快照中的文件（gitignored 文件不在快照中）；本机运行同样如此（以快照为构建上下文，镜像与提交时的代码一致；快照中没有该 Dockerfile 时才用原文件）。Run 记录镜像名（`image`）与启动时的镜像内容 ID（`imageId`，`sha256:…`）。
 
 **数据**：`orbit data add <name> <path>` 在每个节点各自登记同名数据集；mount `{dataset, target}` 在执行

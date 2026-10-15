@@ -1,4 +1,4 @@
-import type { OrbitPaths } from "../config/paths.ts";
+import { type OrbitPaths, privateStateCheck } from "../config/paths.ts";
 import type { DoctorCheck, DoctorReport, Harness } from "../contracts/index.ts";
 import { hostCli } from "../harness/index.ts";
 import { exec } from "../lib/exec.ts";
@@ -33,6 +33,7 @@ async function dockerRoot(): Promise<DoctorCheck | null> {
 
 export async function runDoctor(paths: OrbitPaths): Promise<DoctorReport> {
   const checks = await Promise.all([
+    Promise.resolve(privateStateCheck(paths)),
     Promise.resolve<DoctorCheck>({ name: "node", ok: true, warn: false, detail: process.version }),
     disk(
       "orbit data",

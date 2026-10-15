@@ -366,12 +366,15 @@ and query `/gpu`, `/runs` or `/show <id>`. Feishu webhooks, DingTalk, WeCom, Sla
 
 ```bash
 orbit notify add team --kind feishu --url-env FEISHU_HOOK --on failed,group
+orbit notify add team --kind feishu --url-stdin --on failed,group
 orbit notify test team
 orbit notify list
 ```
 
 Kinds: `feishu`, `dingtalk`, `wecom`, `slack`, `webhook`. Events: `succeeded`, `failed`, `group` (one
 summary when a group has finished). Failure messages include the reason and the last log lines.
+Use `--url-stdin` for hidden terminal input or a pipe, or `--url-env VAR`. The legacy `--url` option
+warns because webhook secrets appear in process arguments. See the [notification guide](docs/guides/notifications.md).
 
 ### Feishu bot
 
