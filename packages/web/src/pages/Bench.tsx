@@ -350,7 +350,11 @@ export function BenchJobDetail({ id }: { id: string }) {
         ) !== job.id
       )
         return;
-      const result = await api.benchConsolidate(job.id, { ...body, dryRun: false });
+      const result = await api.benchConsolidate(job.id, {
+        ...body,
+        dryRun: false,
+        expect: plan.digest,
+      });
       toast(
         `Merged ${result.adopted.length} trials, marked ${result.reclassified.length} invalid; ${result.leftovers.length} folders left on disk`,
       );

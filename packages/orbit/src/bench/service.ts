@@ -2,6 +2,7 @@
 // solve Run's after phase, for verifiers that need its container) on the same lease model as every
 // other run. BenchService advances trials when their runs change, and
 // recovers open trials from the store after a daemon restart.
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { cp } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -53,7 +54,7 @@ import { NotFoundError, type RunService, UserError } from "../runs/service.ts";
 import { type AgentFailure, runAgentFailure } from "../sessions/index.ts";
 import type { Store } from "../store/index.ts";
 import { gitSource } from "../workspace/snapshot.ts";
-import { classify, solveVerdict } from "./classify.ts";
+import { classify, cleanupOf, solveVerdict } from "./classify.ts";
 import { AdapterClient, type TrialInput, toRunSpec } from "./protocol.ts";
 import type { BenchmarkRegistry } from "./registry.ts";
 import { applyOverride, loadResources, resolveResources, usageRow } from "./resources.ts";
@@ -201,6 +202,10 @@ export class BenchService {
    * background: advancing them may call adapters, which must not hold up the daemon's start.
    */
   start(): void {
+    for (const t of this.deps.store.pendingTrialCleanup()) {
+      if (this.reconcileCleanup(t))
+        this.deps.log?.(`bench trial ${t.id}: repaired outcome cleanup`);
+    }
     this.advanceAll(this.deps.store.openTrials().map((t) => t.id));
   }
 
@@ -284,30 +289,32 @@ export class BenchService {
       createdAt: nowIso(),
       endedAt: null,
     };
-    this.deps.store.putJob(job);
     let n = 0;
     const ids: string[] = [];
-    for (const task of spec.tasks)
-      for (const m of spec.methods)
-        for (let seed = 1; seed <= spec.seeds; seed++) {
-          const t: Trial = {
-            id: `${job.id}.${String(++n).padStart(5, "0")}`,
-            jobId: job.id,
-            task,
-            method: m.name,
-            seed,
-            state: "pending",
-            solveRunId: null,
-            verifyRunId: null,
-            issues: [],
-            outcome: null,
-            history: [],
-            createdAt: job.createdAt,
-            endedAt: null,
-          };
-          this.deps.store.putTrial(t);
-          ids.push(t.id);
-        }
+    this.deps.store.tx(() => {
+      this.deps.store.putJob(job);
+      for (const task of spec.tasks)
+        for (const m of spec.methods)
+          for (let seed = 1; seed <= spec.seeds; seed++) {
+            const t: Trial = {
+              id: `${job.id}.${String(++n).padStart(5, "0")}`,
+              jobId: job.id,
+              task,
+              method: m.name,
+              seed,
+              state: "pending",
+              solveRunId: null,
+              verifyRunId: null,
+              issues: [],
+              outcome: null,
+              history: [],
+              createdAt: job.createdAt,
+              endedAt: null,
+            };
+            this.deps.store.putTrial(t);
+            ids.push(t.id);
+          }
+    });
     this.advanceAll(ids);
     return job;
   }
@@ -422,6 +429,7 @@ export class BenchService {
         });
       } catch (e) {
         skipped.push(`${r.id}: ${(e as Error).message}`);
+        continue;
       }
       writeFileSync(join(to, "run.json"), `${JSON.stringify(r, null, 2)}\n`);
       bytes += (await dirBytes(to)) ?? 0;
@@ -584,6 +592,7 @@ export class BenchService {
         if (changed)
           reclassified.push({ job: d.job.id, trial: t.id, task: t.task, kind: failure.kind });
       }
+    const newlyInvalid = new Set(reclassified.map((r) => r.trial));
     const key = (t: Trial) => JSON.stringify([t.task, t.method, t.seed]);
     const trials = new Map(target.trials.map((t) => [key(t), structuredClone(t)]));
     const adopted: BenchConsolidateResult["adopted"] = [];
@@ -645,6 +654,10 @@ export class BenchService {
           t.outcome?.evaluation === "invalid" &&
           !t.history.some((h) => h.outcome.evaluation === "valid");
         if (isValid(t) || retainInvalid) {
+          if (f.pruneInvalid && newlyInvalid.has(prev.id))
+            throw new UserError(
+              `trial ${prev.id} was just reclassified; review it without sources before pruning`,
+            );
           if (protectedTarget && !replaceFailed)
             throw new UserError(`refusing to replace valid trial ${prev.id}`);
           trials.set(key(t), { ...t, id: prev.id, jobId: id, createdAt: prev.createdAt });
@@ -652,6 +665,7 @@ export class BenchService {
           adoptedKeys.add(key(t));
         } else if (
           !f.pruneInvalid ||
+          newlyInvalid.has(t.id) ||
           t.outcome?.evaluation !== "invalid" ||
           t.history.some((h) => h.outcome.evaluation === "valid")
         ) {
@@ -661,6 +675,7 @@ export class BenchService {
     }
     if (f.pruneInvalid)
       for (const t of trials.values()) {
+        if (newlyInvalid.has(t.id)) continue;
         t.history = t.history.filter((h) => h.outcome.evaluation !== "invalid");
         if (t.outcome?.evaluation === "invalid") {
           t.verifyRunId = null;
@@ -669,7 +684,20 @@ export class BenchService {
       }
     const retained = new Set([...trials.values()].flatMap(trialRunIds));
     const removedRuns = [...oldRuns.keys()].filter((rid) => !retained.has(rid));
+    const digest = createHash("sha256")
+      .update(
+        JSON.stringify({
+          adopted: [...adopted].sort((a, b) => a.trial.localeCompare(b.trial)),
+          reclassified: [...reclassified].sort((a, b) => a.trial.localeCompare(b.trial)),
+          removedRuns: [...removedRuns].sort(),
+          removedJobs: [...sources].sort(),
+        }),
+      )
+      .digest("hex");
+    if (!f.dryRun && f.expect !== undefined && f.expect !== digest)
+      throw new UserError("plan changed since preview; preview again");
     const out: BenchConsolidateResult = {
+      digest,
       dryRun: f.dryRun,
       adopted,
       reclassified,
@@ -905,7 +933,11 @@ export class BenchService {
     this.deps.store.putTrial(t);
     const job = this.deps.store.getJob(t.jobId);
     if (job) {
-      rmSync(join(this.deps.paths.bench, job.id, t.id), { recursive: true, force: true });
+      try {
+        rmSync(join(this.deps.paths.bench, job.id, t.id), { recursive: true, force: true });
+      } catch (e) {
+        this.deps.log?.(`bench trial ${t.id}: staging cleanup: ${(e as Error).message}`);
+      }
       if (
         job.state === "running" &&
         this.deps.store.trials(job.id).every((x) => x.state === "done")
@@ -948,6 +980,15 @@ export class BenchService {
     });
   }
 
+  private reconcileCleanup(t: Trial): boolean {
+    if (t.state !== "done" || t.outcome?.cleanup !== "pending") return false;
+    const cleanup = cleanupOf(...trialRunIds(t).map((id) => this.deps.runs.get(id)));
+    if (cleanup === "pending") return false;
+    t.outcome.cleanup = cleanup;
+    this.deps.store.putTrial(t);
+    return true;
+  }
+
   private async step(id: string): Promise<void> {
     const t = this.deps.store.getTrial(id);
     const job = t ? this.deps.store.getJob(t.jobId) : null;
@@ -955,18 +996,7 @@ export class BenchService {
     const runs = this.deps.runs;
 
     if (t.state === "done") {
-      // Only the cleanup status can still change (runs are cleaned up after they end).
-      if (t.outcome?.cleanup !== "pending") return;
-      const rs = [t.solveRunId, t.verifyRunId].map((r) => (r ? runs.get(r) : null));
-      const cleanup = rs.some((r) => r?.cleanup === "failed")
-        ? "failed"
-        : rs.some((r) => r?.cleanup === "pending")
-          ? "pending"
-          : "done";
-      if (cleanup !== "pending") {
-        t.outcome.cleanup = cleanup;
-        this.deps.store.putTrial(t);
-      }
+      this.reconcileCleanup(t);
       return;
     }
 

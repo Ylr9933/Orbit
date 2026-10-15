@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,5 +46,24 @@ describe("daemon port", () => {
   it("fails when ORBIT_PORT asked for the busy port", async () => {
     const paths = orbitPaths({ ORBIT_HOME: join(dir, "b"), ORBIT_PORT: String(port) });
     await expect(startDaemon(paths, { probe })).rejects.toThrow(/EADDRINUSE/);
+    expect(existsSync(join(paths.home, "daemon.lock"))).toBe(false);
+    const d = await startDaemon(paths, { port: 0, probe });
+    await d.stop();
+  });
+
+  it("refuses a second daemon on the same home before port fallback and releases on stop", async () => {
+    const paths = orbitPaths({ ORBIT_HOME: join(dir, "single") });
+    const d = await startDaemon(paths, { port: 0, probe });
+    try {
+      await expect(
+        startDaemon({ ...paths, port: Number(new URL(d.url).port) }, { probe }),
+      ).rejects.toThrow(`running process PID ${process.pid}`);
+      expect((await tryConnect(paths))?.info.url).toBe(d.url);
+    } finally {
+      await d.stop();
+    }
+    expect(existsSync(join(paths.home, "daemon.lock"))).toBe(false);
+    const restarted = await startDaemon(paths, { port: 0, probe });
+    await restarted.stop();
   });
 });

@@ -6,7 +6,7 @@
 import type { Outcome, Run, ScoreResult } from "../contracts/index.ts";
 import type { AgentFailure } from "../sessions/index.ts";
 
-const cleanupOf = (...runs: (Run | null)[]): Outcome["cleanup"] => {
+export const cleanupOf = (...runs: (Run | null)[]): Outcome["cleanup"] => {
   const rs = runs.filter((r): r is Run => r !== null);
   if (rs.some((r) => r.cleanup === "failed")) return "failed";
   if (rs.some((r) => r.cleanup === "pending")) return "pending";

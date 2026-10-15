@@ -23,6 +23,85 @@ afterEach(async () => {
   for (const s of stores.splice(0)) s.close();
   for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true });
 });
+
+it("rejects a changed preview before mutating jobs, ownership or files", async () => {
+  const f = fixture();
+  const body = { sources: ["source"], pruneInvalid: true };
+  const plan = await f.bench.consolidate("target", body);
+  expect(plan.digest).toMatch(/^[a-f0-9]{64}$/);
+  expect((await f.bench.consolidate("target", body)).digest).toBe(plan.digest);
+  const t = f.store.getTrial("target.b");
+  if (!t?.outcome) throw new Error("missing fixture");
+  f.store.putTrial({ ...t, outcome: { ...t.outcome, evaluation: "invalid" } });
+  const before = f.bench.job("target");
+  const changed = await f.bench.consolidate("target", body);
+  expect(changed.removedRuns.length).toBeGreaterThan(plan.removedRuns.length);
+  expect(changed.digest).not.toBe(plan.digest);
+  await expect(
+    f.bench.consolidate("target", { ...body, dryRun: false, expect: plan.digest }),
+  ).rejects.toThrow("plan changed since preview; preview again");
+  expect(f.bench.job("target")).toEqual(before);
+  expect(f.store.getJob("source")).not.toBeNull();
+  expect(f.store.trialByRun("source.a-solve")?.id).toBe("source.a");
+  for (const id of changed.removedRuns) expect(existsSync(join(f.paths.runs, id))).toBe(true);
+});
+
+it.each(["valid", "unknown"] as const)(
+  "keeps freshly reclassified %s evidence until a later prune",
+  async (evaluation) => {
+    const f = fixture();
+    const run = f.runs.get("target.b-solve"),
+      t = f.store.getTrial("target.b");
+    if (!run || !t?.outcome) throw new Error("missing fixture");
+    f.store.putRun({ ...run, state: "failed", exitCode: 1 });
+    const historyRun = { ...run, id: "history-verify" };
+    f.store.putRun(historyRun);
+    mkdirSync(f.runs.dirs(historyRun.id).output, { recursive: true });
+    f.store.putTrial({
+      ...t,
+      outcome: { ...t.outcome, evaluation },
+      history: [{ verifyRunId: historyRun.id, outcome: t.outcome, endedAt: at }],
+    });
+    const dir = join(f.runs.dirs(run.id).agent, "codex/sessions/2026/10/13");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "rollout-fixture.jsonl"),
+      `${JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "task_complete",
+          error: { message: "workspace routing discovery unauthorized (401)" },
+        },
+      })}\n`,
+    );
+    const plan = await f.bench.consolidate("target", { pruneInvalid: true });
+    expect(plan.reclassified.map((r) => r.trial)).toEqual([t.id]);
+    const result = await f.bench.consolidate("target", {
+      pruneInvalid: true,
+      dryRun: false,
+      expect: plan.digest,
+    });
+    for (const rid of [run.id, t.verifyRunId as string, historyRun.id]) {
+      expect(result.removedRuns).not.toContain(rid);
+      expect(existsSync(f.runs.dirs(rid).root)).toBe(true);
+      expect(f.store.trialByRun(rid)?.id).toBe(t.id);
+    }
+    expect(f.store.getTrial(t.id)?.history).toHaveLength(1);
+    expect(f.store.getTrial(t.id)?.outcome?.evaluation).toBe("invalid");
+    const later = await f.bench.consolidate("target", { pruneInvalid: true });
+    expect(later.reclassified).toEqual([]);
+    expect(later.removedRuns).toEqual(
+      expect.arrayContaining([run.id, t.verifyRunId, historyRun.id]),
+    );
+    await f.bench.consolidate("target", {
+      pruneInvalid: true,
+      dryRun: false,
+      expect: later.digest,
+    });
+    expect(f.store.getTrial(t.id)?.history).toEqual([]);
+    expect(f.store.getRun(run.id)).toBeNull();
+  },
+);
 const at = "2026-10-10T00:00:00.000Z";
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), "orbit-consolidate-"));
@@ -146,7 +225,9 @@ it("previews without changes; merges zero scores over HTTP while retaining the t
     sources: ["source"],
     pruneInvalid: true,
     dryRun: false,
+    expect: plan.digest,
   });
+  expect(applied.digest).toBe(plan.digest);
   expect(applied.leftovers).toEqual([]);
   const result = await c.benchJob("target");
   expect(result.trials.map((t) => t.id)).toEqual(original.trials.map((t) => t.id));
@@ -442,6 +523,42 @@ it("rejects a donor whose valid mark hides a terminal model failure", async () =
   await expect(
     f.bench.consolidate("target", { sources: ["source"], dryRun: false }),
   ).rejects.toThrow(/no valid result/);
+  await expect(
+    f.bench.consolidate("target", { sources: ["source"], pruneInvalid: true, dryRun: false }),
+  ).rejects.toThrow(/no valid result/);
+  expect(f.store.getJob("source")).not.toBeNull();
+  expect(existsSync(f.runs.dirs(run.id).output)).toBe(true);
+});
+
+it("refuses pruning a newly reclassified target while also replacing its solve", async () => {
+  const f = fixture();
+  f.job("retry-b", ["b"]);
+  f.trial("retry-b", "b", true);
+  const run = f.runs.get("target.b-solve");
+  if (!run) throw new Error("missing fixture");
+  f.store.putRun({ ...run, state: "failed", exitCode: 1 });
+  const dir = join(f.runs.dirs(run.id).agent, "codex/sessions/2026/10/13");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "rollout-fixture.jsonl"),
+    `${JSON.stringify({
+      type: "event_msg",
+      payload: {
+        type: "task_complete",
+        error: { message: "workspace routing discovery unauthorized (401)" },
+      },
+    })}\n`,
+  );
+  const before = f.bench.job("target");
+  await expect(
+    f.bench.consolidate("target", {
+      sources: ["retry-b"],
+      pruneInvalid: true,
+      dryRun: false,
+    }),
+  ).rejects.toThrow(/just reclassified.*review/);
+  expect(f.bench.job("target")).toEqual(before);
+  expect(existsSync(f.runs.dirs(run.id).output)).toBe(true);
 });
 
 it("replaces a scored failed solve only by opt-in over HTTP, regardless of score", async () => {

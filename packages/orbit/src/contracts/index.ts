@@ -1078,9 +1078,15 @@ export const BenchConsolidate = z.strictObject({
   sources: z.array(z.string().min(1)).default([]),
   pruneInvalid: z.boolean().default(false),
   dryRun: z.boolean().default(true),
+  /** Digest of the preview the caller confirmed. */
+  expect: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
 });
 export type BenchConsolidateInput = z.input<typeof BenchConsolidate>;
 export const BenchConsolidateResult = z.object({
+  digest: z.string().regex(/^[a-f0-9]{64}$/),
   dryRun: z.boolean(),
   adopted: z.array(
     z.object({

@@ -17,6 +17,7 @@ import {
 } from "../contracts/index.ts";
 import { FeishuBots } from "../feishu/index.ts";
 import { hostCli } from "../harness/index.ts";
+import { acquireProcessLock } from "../lib/lock.ts";
 import { Notifier, NotifyStore } from "../notify/index.ts";
 import { readMetrics } from "../records/index.ts";
 import { probeNode } from "../resources/probe.ts";
@@ -89,8 +90,25 @@ export async function startDaemon(
   opts: DaemonOptions = {},
 ): Promise<StartedDaemon> {
   ensureHome(paths);
+  const release = acquireProcessLock(join(paths.home, "daemon.lock"));
+  let store: Store | undefined;
+  try {
+    store = new Store(paths.db);
+    return await startLockedDaemon(paths, opts, store, release);
+  } catch (e) {
+    store?.close();
+    release();
+    throw e;
+  }
+}
+
+async function startLockedDaemon(
+  paths: OrbitPaths,
+  opts: DaemonOptions,
+  store: Store,
+  release: () => void,
+): Promise<StartedDaemon> {
   const token = randomBytes(24).toString("hex");
-  const store = new Store(paths.db);
   const auth = new AuthStore(paths.auth);
   const datasets = new DatasetRegistry(paths.datasets);
   const self = opts.self ?? detectSelf();
@@ -194,27 +212,30 @@ export async function startDaemon(
       s.once("error", reject);
     });
   const wanted = opts.port ?? paths.port;
-  const server = await listen(wanted)
-    .catch((e: NodeJS.ErrnoException) => {
-      // Another user's daemon on the default port: take any free one. Clients find the daemon
-      // through daemon.json, never by the port.
-      if (e.code !== "EADDRINUSE" || opts.port !== undefined || paths.portSet) throw e;
-      console.error(`orbit: port ${wanted} is in use (another user's daemon?); using a free port`);
-      return listen(0);
-    })
-    .catch((e) => {
-      store.close();
-      throw e;
-    });
+  const server = await listen(wanted).catch((e: NodeJS.ErrnoException) => {
+    // Another user's daemon on the default port: take any free one. Clients find the daemon
+    // through daemon.json, never by the port.
+    if (e.code !== "EADDRINUSE" || opts.port !== undefined || paths.portSet) throw e;
+    console.error(`orbit: port ${wanted} is in use (another user's daemon?); using a free port`);
+    return listen(0);
+  });
   const addr = server.address();
   const port = typeof addr === "object" && addr ? addr.port : (opts.port ?? paths.port);
   const url = `http://127.0.0.1:${port}`;
   webUrl = url;
-  await runs.start();
-  await cluster.start();
-  bench.start();
-  void feishu.sync();
-  writeDaemonInfo(paths, { url, token, pid: process.pid });
+  try {
+    await runs.start();
+    await cluster.start();
+    bench.start();
+    void feishu.sync();
+    writeDaemonInfo(paths, { url, token, pid: process.pid });
+  } catch (e) {
+    feishu.stop();
+    await cluster.stop();
+    await runs.stop();
+    server.close();
+    throw e;
+  }
 
   const stop = async () => {
     removeDaemonInfo(paths, process.pid);
@@ -226,6 +247,7 @@ export async function startDaemon(
       if ("closeAllConnections" in server) server.closeAllConnections();
     });
     store.close();
+    release();
   };
   return { url, token, server, runs, cluster, stop };
 }

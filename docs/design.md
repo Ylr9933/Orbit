@@ -116,6 +116,11 @@ examples/      bench-adapters/<benchmark>/: external bench adapters (not part of
   `--port` 指定的端口被占用则报错），启动时生成随机 token，与地址一起写入
   `~/.orbit/daemon.json`（0600）；所有 `/api/v1` 请求需 `Authorization: Bearer <token>` 或 Web 登录后的
   HttpOnly cookie（token 比较为常数时间；凭 cookie 的写请求须同源，否则 403）。`ORBIT_HOME` 可覆盖 `~/.orbit`。
+  打开数据库前独占 `<home>/daemon.lock`，记录 PID、启动时刻与 boot ID；活跃持有者阻止第二个 daemon，退出时释放，
+  失效或 PID 被复用的锁可接管。锁记录原子发布，失效锁回收也串行化；CLI 用 `daemon.spawn.lock` 串行自动启动，
+  取得锁后重新检查连接。不同 home 仍可使用端口回退。
+- **事务与通知**：Store 的嵌套事务用 SAVEPOINT；Run change 事件只在最外层提交后发出，回滚丢弃相应事件。
+  监听器可开始自己的事务，SSE 和 bench 不会读到未提交状态；数据库版本高于当前程序支持的 migration 时拒绝打开并提示更新。
 - **小状态与大数据分开**：`ORBIT_HOME`（默认 `~/.orbit`）只放数据库、profile、配置与 daemon 端点；Run 目录、bench
   staging、代码 bundle 放在**数据目录**（`ORBIT_DATA`，否则 `<home>/config.json` 的 `dataDir`，否则 `ORBIT_HOME`）。
   `orbit config data <dir>` 写配置（比环境变量可靠：自动拉起的 daemon 总能读到），重启 daemon 生效，已有 Run 不自动搬。
@@ -285,7 +290,7 @@ Web 页面（参考 W&B / Neptune 的实验对比、Modal / E2B 的沙箱运行�
   就出现；`GET folders` 只给每个文件夹本身的计数与大小，树与子文件夹合计由 CLI / Web 推出。Run 清理完成后记录目录大小
   （`sizeBytes`；旧 Run 在 daemon 启动后于后台补测）。Runs 页左侧是文件夹树（`?folder=`），`orbit folders` 列出同样的树。
   需要实体目录时 `orbit export <folder> <dest>` 复制该文件夹（含子文件夹）的 Run 目录与记录（`runs/<id>/`、`run.json`）、
-  job 与 trial（`jobs/<id>.json`）和 `index.json`；`dest` 须为空且不在数据目录内，输出留在其他节点的 Run 列入 `skipped`。
+  job 与 trial（`jobs/<id>.json`）和 `index.json`；`dest` 须为空且不在数据目录内，输出留在其他节点或复制失败的 Run 列入 `skipped`；复制失败不写 `run.json`，不计入成功数量与字节数。
 - **Run 显示名**：未给 `-n` 时由 `contracts/naming.ts` 的固定规则从命令得出（去掉 `python`、`torchrun`、`accelerate
   launch`、`uv run`、`sh -c` 等启动器，取脚本或模块名，加 `key=value` / `--flag value` 参数，去掉路径与长文本，最多 60 字符；
   认不出时用截断的命令）。只影响显示，记录中的 name 仍为空、command 完整保留。
@@ -378,7 +383,8 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
   `python`、`instances`）；`env` 进入两个 Run；`passEnv` 只记变量名（如评审模型的 API key），只给 verify Run，启动时
   从 daemon 环境读取，不落盘。登记时先调用一次适配器的 `tasks`，失败则不保存。
 - **Job / Trial**：sqlite 表 `bench_jobs`、`bench_trials`。每个 trial 独立推进：`pending → solving → verifying → done`；
-  `BenchService` 监听 Run 变化推进，daemon 重启后从库中恢复未完成的 trial。solve 与 verify 都是普通 Run
+  job 和全部 trial 在同一事务内提交；`BenchService` 监听 Run 变化推进，daemon 重启后从库中恢复未完成的 trial。
+  trial 结束时 staging 删除失败只记日志，继续完成 job 状态更新。solve 与 verify 都是普通 Run
   （同一租约、队列、记录、Web 详情），`group = bench-<job>`，tags `{bench, job, trial, phase}`；verify Run
   `priority = 1`，排队时先于新的 solve 调度。
 - **重新评分**（`POST /bench/jobs/:id/rescore`，`orbit bench rescore <job> [-t task] [-m method] [--trial id]`，
@@ -399,9 +405,13 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 | verify 未启动、超时、内存不足，没有分数，或适配器判为无效（无 reward、scorer 内部错误、judge 不可用、模型不可用且 0 分） | invalid |
 | 其余 | valid |
 
-  只有 `valid` 的分数进入均分；无效或未知单独列出，不静默计入。清理状态汇总两个 Run 的 `cleanup`。
+  只有 `valid` 的分数进入均分；无效或未知单独列出，不静默计入。清理状态按 failed > pending > done 汇总 Run 的 `cleanup`。
+  BenchService 启动时对 done 且 outcome.cleanup 为 pending 的 trial 重算其全部关联 Run（含评分历史）的清理状态，
+  逐条记录修复的 trial ID；重复启动不再写入已修复结果。后续 Run 通知也使用同一汇总规则。
 - **重试归并**：`POST /bench/jobs/:id/consolidate` / `orbit bench consolidate <job> [sources...]`
-  默认只预览；`--apply` 才执行。只接收全部 trial 已完成、Run 已清理且无后台更新的任务；同 benchmark、methods、options、metrics，
+  默认只预览；`--apply` 才执行。每个计划返回 `digest`（对 adopted、reclassified、removedRuns、removedJobs 的规范排序内容计算 SHA-256）；
+  apply 可带 `expect`，CLI / Web 都传入已确认预览的 digest。daemon 在任何写入或删除前重新计算，摘要不符则拒绝并提示
+  `plan changed since preview; preview again`。只接收全部 trial 已完成、Run 已清理且无后台更新的任务；同 benchmark、methods、options、metrics，
   按 task × method × seed 对齐。归并先重读失败 solve 的会话末轮错误：明确的认证、额度、模型连接故障
   会把旧的 valid / unknown 标记改为 invalid（包括同一次 solve 的评分历史），原始分数保留，结果的 `reclassified`
   列出这些 trial；不带来源时只做这一复核；预览不写回。读取后重新检查终态及归属。
@@ -410,7 +420,9 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
   不以分数高低选择；已正常成功的有效 solve 仍受保护。新尝试若验证 invalid，仅可替换原本无有效分数及有效历史的位置，
   保留其 invalid 状态、错误和全部产物，不可和 `--prune-invalid` 同用。同一次归并拒绝多个来源替换同一位置。
   保留目标 trial ID、来源 Run ID、原产物与 source_job/source_trial 标签；daemon 在单事务内更新归属并移除来源 job，
-  再调用已有 RunService 删除废弃 Run。`--prune-invalid` 清除无效 Run 与无效评分历史，保留任务位置及失败原因。
+  再调用已有 RunService 删除废弃 Run。`--prune-invalid` 清除无效 Run 与无效评分历史，保留任务位置及失败原因；
+  本次从 valid / unknown 改为 invalid 的 trial 保留全部 Run 与历史，复核后下次调用才可清除。
+  带 prune 的调用若还要用来源替换刚重分类的位置，或丢弃刚重分类的来源 trial，则拒绝该组合，须先单独复核。
   `--append-tasks` 追加尚未出现的任务（同 methods × seeds），更新任务列表并保留新增 trial 的有效/无效/未知结果及产物；
   不可和 `--prune-invalid` 同用。拒绝来源之间重复的新任务位置。新增 Run 记录保留 source_benchmark 与原 auth。
   `--allow-transport-differences` 显式允许同 checkout 路径、adapter、config、已记录 git source、指标与方法的代理配置别名：
@@ -436,6 +448,8 @@ Outcome      = { execution, evaluation: valid|invalid|unknown, score?, maxScore,
 - 调用：daemon 执行 `<adapter> <op>`（内置为 `orbit __adapter <name> <op>`），cwd 为 benchmark 目录，stdin 为一个 JSON
   请求，stdout 为一个 JSON 回复；退出码非 0 即失败（stderr 末尾几行作为原因）。环境只含 `PATH`、`HOME`、`USER`、
   `LANG`、`LC_ALL`、`TZ`、`TMPDIR` 与 `ORBIT_ADAPTER_PROTOCOL=1`，daemon 环境里的密钥不传给适配器。每次调用 120 s 超时。
+  适配器独立进程组运行；超时立即拒绝调用并向整组发 SIGTERM，250 ms 后 SIGKILL，关闭管道并解除子进程引用，
+  不等待后代持有的 stdout 关闭。正常完成仍读到 stdout 末尾。
 - 请求：`{ protocol: 1, op, benchmark: { name, path, config }, trial?, solve?, verify? }`；`trial` =
   `{ id, task, method, seed, options, timeoutMin?, staging, hostNetwork }`（`staging` 是 trial 私有的宿主目录，用于要挂进
   Run 的副本，trial 结束时删除）；`solve` / `verify` = `{ run, output }`（Run 记录与其 `$ORBIT_OUTPUT` 的宿主路径）。

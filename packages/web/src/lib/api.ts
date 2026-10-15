@@ -128,6 +128,7 @@ export const api = {
   benchJobs: () => req<BenchJobList>("/bench/jobs").then((r) => r.jobs),
   benchJob: (id: string) => req<BenchJobDetail>(`/bench/jobs/${enc(id)}`),
   benchCancel: (id: string) => req<BenchJob>(`/bench/jobs/${enc(id)}/cancel`, { method: "POST" }),
+  /** Pass the preview digest as `expect` when applying. */
   benchConsolidate: (id: string, body: BenchConsolidateInput) =>
     req<BenchConsolidateResult>(`/bench/jobs/${enc(id)}/consolidate`, {
       method: "POST",

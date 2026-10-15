@@ -459,7 +459,9 @@ export function registerBench(program: Command, client: () => Promise<OrbitClien
             o.yes,
           );
         }
-        const result = o.apply ? await c.benchConsolidate(id, { ...body, dryRun: false }) : plan;
+        const result = o.apply
+          ? await c.benchConsolidate(id, { ...body, dryRun: false, expect: plan.digest })
+          : plan;
         print(o.json, result, () => JSON.stringify(result, null, 2));
       },
     );

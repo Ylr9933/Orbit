@@ -101,15 +101,24 @@ const IN_FOLDER = `(${FOLDER} = ? OR substr(${FOLDER}, 1, length(?) + 1) = ? || 
 /** Typed access to the local sqlite database. Only the daemon opens it. */
 export class Store {
   readonly db: DatabaseSync;
+  private readonly commits: (() => void)[][] = [];
 
   constructor(file: string) {
     this.db = new DatabaseSync(file);
-    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
-    this.migrate();
+    try {
+      this.db.exec("PRAGMA busy_timeout = 5000;");
+      this.migrate();
+      this.db.exec("PRAGMA journal_mode = WAL;");
+    } catch (e) {
+      this.db.close();
+      throw e;
+    }
   }
 
   private migrate(): void {
     const row = this.db.prepare("PRAGMA user_version").get() as { user_version: number };
+    if (row.user_version > MIGRATIONS.length)
+      throw new Error(`database version ${row.user_version} is newer than supported; update Orbit`);
     for (let v = row.user_version; v < MIGRATIONS.length; v++) {
       this.db.exec("BEGIN");
       try {
@@ -128,15 +137,41 @@ export class Store {
   }
 
   tx<T>(fn: () => T): T {
-    this.db.exec("BEGIN IMMEDIATE");
+    const depth = this.commits.length;
+    const savepoint = `orbit_tx_${depth}`;
+    this.db.exec(depth ? `SAVEPOINT ${savepoint}` : "BEGIN IMMEDIATE");
+    const callbacks: (() => void)[] = [];
+    this.commits.push(callbacks);
+    let out: T;
     try {
-      const out = fn();
-      this.db.exec("COMMIT");
-      return out;
+      out = fn();
+      this.db.exec(depth ? `RELEASE ${savepoint}` : "COMMIT");
     } catch (e) {
-      this.db.exec("ROLLBACK");
+      this.db.exec(depth ? `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}` : "ROLLBACK");
       throw e;
+    } finally {
+      this.commits.pop();
     }
+    const parent = this.commits.at(-1);
+    if (parent) parent.push(...callbacks);
+    else {
+      const errors: unknown[] = [];
+      for (const callback of callbacks) {
+        try {
+          callback();
+        } catch (e) {
+          errors.push(e);
+        }
+      }
+      if (errors.length) throw new AggregateError(errors, "after-commit callback failed");
+    }
+    return out;
+  }
+
+  afterCommit(fn: () => void): void {
+    const callbacks = this.commits.at(-1);
+    if (callbacks) callbacks.push(fn);
+    else fn();
   }
 
   // runs
@@ -449,6 +484,15 @@ export class Store {
       .all() as {
       doc: string;
     }[];
+    return rows.map((r) => Trial.parse(JSON.parse(r.doc)));
+  }
+
+  pendingTrialCleanup(): Trial[] {
+    const rows = this.db
+      .prepare(
+        "SELECT doc FROM trials WHERE state = 'done' AND json_extract(doc, '$.outcome.cleanup') = 'pending'",
+      )
+      .all() as { doc: string }[];
     return rows.map((r) => Trial.parse(JSON.parse(r.doc)));
   }
 }

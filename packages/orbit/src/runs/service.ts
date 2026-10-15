@@ -344,7 +344,7 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       const sync = this.store.getSync(id);
       if (sync) this.store.putSync({ ...sync, cancel: true });
       const event = this.store.addEvent(id, "cancel", `cancel requested on ${run.node}`);
-      this.emit("change", { run, event });
+      this.changed(run, event);
       void this.remote?.cancel(run).catch(() => {});
       return this.mustGet(id);
     }
@@ -880,8 +880,8 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
       });
       return out;
     });
-    if (saved.length === 0) this.emit("change", { run });
-    for (const event of saved) this.emit("change", { run, event });
+    if (saved.length === 0) this.changed(run);
+    for (const event of saved) this.changed(run, event);
     if (isTerminal(run.state)) void this.tick();
     return run;
   }
@@ -2156,7 +2156,12 @@ export class RunService extends EventEmitter<{ change: [RunChange]; deleted: [st
   private save(run: Run, kind?: string, message?: string): void {
     this.store.putRun(run);
     const event = kind ? this.store.addEvent(run.id, kind, message ?? "") : undefined;
-    this.emit("change", { run, event });
+    this.changed(run, event);
+  }
+
+  private changed(run: Run, event?: RunEvent): void {
+    const change = { run: structuredClone(run), event };
+    this.store.afterCommit(() => this.emit("change", change));
   }
 }
 

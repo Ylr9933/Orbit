@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Command, Option } from "commander";
 import { type OrbitClient, tryConnect } from "../client/index.ts";
@@ -12,6 +12,7 @@ import {
 } from "../config/paths.ts";
 import { isTerminal, type Run, type RunSpecInput, runDisplayName } from "../contracts/index.ts";
 import { exec } from "../lib/exec.ts";
+import { acquireProcessLock, ProcessLockError } from "../lib/lock.ts";
 import { VERSION } from "../lib/version.ts";
 import { detectAgent } from "./agent.ts";
 import { kv, registerAuth, registerNotify } from "./auth.ts";
@@ -35,25 +36,53 @@ export interface ProgramDeps {
 }
 
 /** Connect to the local daemon, starting a detached one when none is running. */
-async function connect(p: OrbitPaths): Promise<OrbitClient> {
+export async function connect(p: OrbitPaths): Promise<OrbitClient> {
   const existing = await tryConnect(p);
   if (existing) return existing;
   ensureHome(p);
-  const log = openSync(p.daemonLog, "a");
-  const entry = process.argv[1];
-  if (!entry) throw new Error("cannot locate the orbit entrypoint to start the daemon");
-  const child = spawn(process.execPath, [...process.execArgv, entry, "daemon"], {
-    detached: true,
-    stdio: ["ignore", log, log],
-    env: process.env,
-  });
-  child.unref();
+  let release: (() => void) | undefined;
   for (let i = 0; i < 100; i++) {
-    await new Promise((r) => setTimeout(r, 100));
-    const client = await tryConnect(p);
-    if (client) return client;
+    try {
+      release = acquireProcessLock(join(p.home, "daemon.spawn.lock"));
+      break;
+    } catch (e) {
+      if (!(e instanceof ProcessLockError)) throw e;
+      await new Promise((r) => setTimeout(r, 100));
+      const client = await tryConnect(p);
+      if (client) return client;
+    }
   }
-  throw new Error(`daemon did not start; see ${p.daemonLog}`);
+  if (!release) throw new Error(`daemon startup is busy; see ${p.daemonLog}`);
+  try {
+    const existing = await tryConnect(p);
+    if (existing) return existing;
+    const entry = process.argv[1];
+    if (!entry) throw new Error("cannot locate the orbit entrypoint to start the daemon");
+    const log = openSync(p.daemonLog, "a");
+    let spawnError: Error | undefined;
+    try {
+      const child = spawn(process.execPath, [...process.execArgv, entry, "daemon"], {
+        detached: true,
+        stdio: ["ignore", log, log],
+        env: process.env,
+      });
+      child.once("error", (e) => {
+        spawnError = e;
+      });
+      child.unref();
+    } finally {
+      closeSync(log);
+    }
+    for (let i = 0; i < 100; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      if (spawnError) throw spawnError;
+      const client = await tryConnect(p);
+      if (client) return client;
+    }
+    throw new Error(`daemon did not start; see ${p.daemonLog}`);
+  } finally {
+    release();
+  }
 }
 
 const collect = (v: string, prev: string[]) => [...prev, v];

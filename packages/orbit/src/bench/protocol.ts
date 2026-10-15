@@ -51,33 +51,57 @@ export function callAdapter(
     const child = spawn(argv[0] as string, [...argv.slice(1), req.op], {
       cwd,
       env,
+      detached: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
     const out: Buffer[] = [];
     let outBytes = 0;
     let err = "";
-    let killed: string | null = null;
-    const timer = setTimeout(() => {
-      killed = `timed out after ${Math.round(timeoutMs / 1000)} s`;
-      child.kill("SIGKILL");
-    }, timeoutMs);
+    let settled = false;
+    const kill = (signal: NodeJS.Signals) => {
+      if (!child.pid) return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ESRCH") child.kill(signal);
+      }
+    };
+    const abort = (message: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      kill("SIGTERM");
+      // Descendants can outlive the leader and keep its pipes open.
+      setTimeout(() => kill("SIGKILL"), 250);
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      child.unref();
+      fail(message);
+    };
+    const timer = setTimeout(
+      () => abort(`timed out after ${Math.round(timeoutMs / 1000)} s`),
+      timeoutMs,
+    );
     child.stdout.on("data", (c: Buffer) => {
       outBytes += c.length;
       if (outBytes > OUTPUT_LIMIT) {
-        killed = "reply larger than 64 MiB";
-        child.kill("SIGKILL");
+        abort("reply larger than 64 MiB");
       } else out.push(c);
     });
     child.stderr.on("data", (c: Buffer) => {
       err = (err + c.toString("utf8")).slice(-4000);
     });
     child.on("error", (e) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       fail(e.message);
     });
     child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      if (killed) return fail(killed);
       const detail = err.trim().split("\n").slice(-5).join("\n");
       if (code !== 0) return fail(`exit ${code}${detail ? `: ${detail}` : ""}`);
       try {
