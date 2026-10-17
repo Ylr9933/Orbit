@@ -1,7 +1,7 @@
 # Orbit status
 
-- **Updated at:** 2026-10-16
-- **Basis:** Opt-in failed-run filesystem checkpoints and native session continuation; local Docker restore checked with killed containers and daemon restart.
+- **Updated at:** 2026-10-17
+- **Basis:** Bounded failure checkpoints; real Docker offline restore and native Codex continuation checked after injected upstream failures.
 - **Stage:** R0–R2 validated here; R3 bench smoke-tested with oracle/empty only; R4 only as two daemons on one machine.
 - **Blockers:** none for the current release.
 
@@ -25,7 +25,7 @@
 
 ## Main gaps
 
-- ASI / TB-Science scores not yet compared with official Harbor runs (only oracle-level); codex lacks Harbor's `unified_exec`; no GPU-type placement, allowlist networks, multi-step tasks or MCP servers for Harbor tasks. R4 not run on two real machines; no bundle cache eviction. Checkpoint native session continuation still needs a real model run.
+- ASI / TB-Science scores not yet compared with official Harbor runs (only oracle-level); codex lacks Harbor's `unified_exec`; no GPU-type placement, allowlist networks, multi-step tasks or MCP servers for Harbor tasks. R4 not run on two real machines; no bundle cache eviction. Checkpoint Claude Code continuation is not yet checked with a real model.
 - Per-user daemons on one machine (busy 7717 → free port) can lease the same free GPU at once; fix when needed with a shared per-GPU lock.
 - Bench metrics: tests and fake adapters only; group notifications may fire between solve and verify. Untried: some auth kinds, real IM webhooks (the Feishu app was checked on a phone). No MCP server or dsh/pi session capture/in-container harnesses; no overcommit.
 

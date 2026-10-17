@@ -1,5 +1,5 @@
 # Failed-run checkpoints and session continuation
-branch: feat/run-resume · status: in_progress · updated: 2026-10-16
+branch: feat/run-resume · status: completed · updated: 2026-10-17
 
 ## Goal
 Preserve a bounded local Docker filesystem checkpoint and native Agent session before failure cleanup, and restore them through the existing Run execution path.
@@ -13,11 +13,12 @@ Preserve a bounded local Docker filesystem checkpoint and native Agent session b
 ## Validation
 | Check | Revision | Result | Notes |
 | --- | --- | --- | --- |
-| `pnpm verify` | working tree | passed | Format, lint, types, boundaries, unit/integration tests and builds; Docker-capable shell |
-| Checkpoint unit cases | working tree | passed | 8 tests; explicit Docker fakes and filesystem/session fixtures |
-| Real Docker failure and restore | working tree | passed | 3 tests, no model calls: killed container, daemon restart, restored files, credential clearing, size rejection, successful-run exclusion and deletion |
-| Real native Agent continuation | working tree | not_run | Requires an available requested model; session command generation is covered by unit tests only |
+| `pnpm verify` | 352b574 | passed | Format, lint, types, boundaries, unit/integration tests and builds; Docker-capable shell |
+| Checkpoint unit cases | 352b574 | passed | 8 tests; explicit Docker fakes and filesystem/session fixtures |
+| Real Docker failure and restore | 352b574 | passed | 3 tests, no model calls: killed container, daemon restart, restored files, credential clearing, size rejection, successful-run exclusion and deletion |
+| Real Codex CLI continuation | 352b574 | passed | Injected upstream errors, confirmed cleanup, offline restore without API requests, same native session and complete rollout prefix, new tool execution and another usable checkpoint; no benchmark score asserted |
+| Real Claude Code continuation | 352b574 | not_run | Command construction is covered by unit tests only |
 
 ## Next / open issues
-- Validate actual native Agent continuation after meaningful task progress and injected upstream failure with an available requested model.
+- Codex v0.162.1 emitted a state-database diagnostic while shutting down an interrupted resumed turn; both raw rollout copies and the subsequent checkpoint were verified intact. Live subprocesses still need to restart, as documented.
 - Keep private benchmark configuration and experiment evidence outside the checkout.
