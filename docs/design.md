@@ -260,7 +260,9 @@ daemon 重启时仅对仍在运行的任务重新计时。bench 的超时 issue 
 不匹配日志或其他错误文本中的 timeout 字样。
 
 **失败快照与续跑**（`runs/checkpoint.ts`）：`RunSpec.checkpoint { maxSizeGB }` 显式启用本地 Docker
-失败快照；bench job 的同名字段只传给 solve Run。命令非 0 退出且不是用户取消时，先停止容器，在 hooks / after
+失败快照。保存和恢复属于通用 Run 生命周期，不读取 benchmark 名、任务 ID、任务文件格式或评分器；普通
+`orbit run` 走相同路径，bench job 的同名字段只传给 solve Run。目前是失败捕获后显式请求续跑，不是全后端
+自动重试或运行中周期快照。命令非 0 退出且不是用户取消时，先停止容器，在 hooks / after
 评测之前保存变更层为本机 `orbit-checkpoint/<run>:saved` 镜像，单独复制 `/orbit`、项目工作区和 after copy 输入；
 移除副本的凭据和旧阶段文件，清空镜像配置中的注入密钥变量。共享基础镜像不重复归档；上限按 writable layer
 和副本文件的逻辑字节数估算，不等同于全部 Docker 磁盘用量。`Run.checkpoint` 独立记录 ready / failed、镜像内容 ID、

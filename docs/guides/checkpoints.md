@@ -7,6 +7,23 @@ orbit run --image <image> --checkpoint 4 -- <command>
 orbit bench run <benchmark> -t <task> -m <method> --checkpoint 4
 ```
 
+Checkpoints belong to the ordinary Run lifecycle. Capture and restoration do not inspect benchmark
+names, task IDs, task file formats or scorers. Benchmark jobs pass the same policy to their solve
+Runs; ordinary `orbit run` tasks use the same implementation.
+
+| Task / execution mode | Current recovery behavior |
+| --- | --- |
+| Local Docker, direct Codex command | Restores files and continues the saved native session; checked with a real model |
+| Local Docker, direct Claude Code command | Restores files and constructs native continuation; real-model continuation not yet checked |
+| Local Docker, another command | Restores files with `--command`; the application must know how to read its saved progress |
+| Process backend, services, external writable mounts, live project mounts, remote execution | Not supported by this checkpoint policy |
+
+This is opt-in failure capture followed by an explicit resume request, not automatic retry or
+periodic live snapshots. Enable it before starting the Run. The stopped container must still exist
+when Orbit captures it; loss of the container or host storage before capture cannot be recovered.
+File restoration does not infer a script's program counter. Training programs, for example, must
+save and load their own model, optimizer and iteration checkpoints to continue computation.
+
 The number is the maximum GiB of logical writable-layer data plus copied checkpoint files. Shared
 base-image layers are excluded. This is a per-checkpoint limit, not a limit on all Docker storage or
 the original run records. Large outputs still need disk space; checkpoints are not automatically
@@ -24,7 +41,7 @@ on this failure path so they cannot alter the saved solve state.
 Inspect availability with `orbit show <run>`, or the Run overview in Web. Restore into a new Run:
 
 ```bash
-orbit resume <run> --command 'pwd; ls /app' --wait
+orbit resume <run> --command 'pwd; ls "$ORBIT_OUTPUT"' --wait
 orbit resume <run>
 ```
 
