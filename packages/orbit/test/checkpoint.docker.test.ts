@@ -1,8 +1,16 @@
 // Opt-in real Docker test. No model calls; session data is an explicit fixture.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { OrbitClient } from "../src/client/index.ts";
 import { orbitPaths } from "../src/config/paths.ts";
@@ -75,7 +83,7 @@ describe.runIf(process.env.ORBIT_E2E === "1")("real Docker checkpoints", () => {
       command: [
         "sh",
         "-c",
-        "echo filesystem > /tmp/orbit-progress; echo workspace > /workspace/progress; echo output > /orbit/output/progress; sleep 300",
+        "echo filesystem > /tmp/orbit-progress; echo workspace > /workspace/progress; echo output > /orbit/output/progress.tmp; touch -d @946684800 /workspace/progress /orbit/output/progress.tmp; mv /orbit/output/progress.tmp /orbit/output/progress; sleep 300",
       ],
       after: { command: ["sh", "-c", "touch /tmp/verifier-was-here"], timeoutMin: 1 },
     });
@@ -114,11 +122,22 @@ describe.runIf(process.env.ORBIT_E2E === "1")("real Docker checkpoints", () => {
     await daemon.stop();
     daemon = await startDaemon(paths, { port: 0, tickMs: 100 });
     client = new OrbitClient({ url: daemon.url, token: daemon.token, pid: process.pid });
+    const savedOrbit = join(daemon.runs.dirs(run.id).root, "checkpoint", "orbit");
+    const count = (await client.list({ limit: 1000 })).length;
+    renameSync(savedOrbit, `${savedOrbit}-missing`);
+    try {
+      await expect(client.resume(run.id, { command: ["true"] })).rejects.toThrow(
+        "checkpoint files missing: orbit",
+      );
+      expect((await client.list({ limit: 1000 })).length).toBe(count);
+    } finally {
+      renameSync(`${savedOrbit}-missing`, savedOrbit);
+    }
     const restored = await client.resume(run.id, {
       command: [
         "sh",
         "-c",
-        "test ! -e /tmp/verifier-was-here && test ! -e /orbit/phases/main.exit && cat /tmp/orbit-progress /workspace/progress /orbit/output/progress && touch /orbit/output/restored; while test ! -e /orbit/output/release; do sleep 0.1; done",
+        'test ! -e /tmp/verifier-was-here && test ! -e /orbit/phases/main.exit && test "$(stat -c %Y /workspace/progress)" = 946684800 && test "$(stat -c %Y /orbit/output/progress)" = 946684800 && cat /tmp/orbit-progress /workspace/progress /orbit/output/progress && touch /orbit/output/restored; while test ! -e /orbit/output/release; do sleep 0.1; done',
       ],
     });
     await expect
@@ -178,5 +197,41 @@ describe.runIf(process.env.ORBIT_E2E === "1")("real Docker checkpoints", () => {
       cleanup: "done",
       checkpoint: null,
     });
+  }, 60_000);
+
+  it("rejects unsaved image volumes before execution but allows explicit bind replacements", async () => {
+    const volumeImage = `orbit-checkpoint-fixture:${basename(home)}`;
+    execFileSync("docker", ["build", "--label", `orbit.home=${home}`, "-t", volumeImage, "-"], {
+      input: `FROM ${image}\nVOLUME ["/task-state", "/orbit"]\n`,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    try {
+      const spec = {
+        image: volumeImage,
+        root: true,
+        network: false,
+        resources: { cpus: 1, memGB: 1 },
+        checkpoint: {},
+        command: ["sh", "-c", "touch /orbit/output/launched"],
+      };
+      const rejected = await finish((await client.submit(spec)).id);
+      expect(rejected).toMatchObject({
+        state: "failed",
+        cleanup: "done",
+        lease: { state: "released" },
+        checkpoint: null,
+        containerId: null,
+        reason: expect.stringContaining("image volumes: /task-state"),
+      });
+      expect(existsSync(join(daemon.runs.dirs(rejected.id).output, "launched"))).toBe(false);
+      const allowed = await client.submit({
+        ...spec,
+        mounts: [{ source: home, target: "/task-state", mode: "ro" }],
+      });
+      expect(await finish(allowed.id)).toMatchObject({ state: "succeeded", cleanup: "done" });
+      await client.deleteRuns([rejected.id, allowed.id]);
+    } finally {
+      execFileSync("docker", ["image", "rm", volumeImage], { stdio: "pipe" });
+    }
   }, 60_000);
 });

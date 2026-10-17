@@ -234,6 +234,13 @@ export async function imagePath(image: string): Promise<string | null> {
   return env.find((e) => e.startsWith("PATH="))?.slice(5) ?? null;
 }
 
+/** Image-declared volumes are excluded from `docker commit` unless replaced by our bind mounts. */
+export async function imageVolumes(image: string): Promise<string[]> {
+  const r = await docker(["image", "inspect", "--format", "{{json .Config.Volumes}}", image]);
+  if (r.code !== 0) throw new Error("cannot inspect image volumes for checkpoint support");
+  return Object.keys((JSON.parse(r.stdout) as Record<string, unknown> | null) ?? {});
+}
+
 /** `docker run --env-file` content. Values cannot span lines in that format. */
 export function envFileText(env: Record<string, string>): string {
   return Object.entries(env)

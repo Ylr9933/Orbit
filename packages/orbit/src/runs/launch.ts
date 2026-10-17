@@ -62,6 +62,13 @@ export async function launch(ctx: Context, id: string): Promise<void> {
       return void (await ctx.finalize(run, "cancelled", null, "cancelled before start"));
 
     const spec = ctx.containerSpec(run, dirs, image);
+    if (run.spec.checkpoint) {
+      const volumes = (await docker.imageVolumes(image)).filter(
+        (p) => !spec.mounts.some((m) => m.target === p),
+      );
+      if (volumes.length)
+        throw new Error(`checkpoints do not support image volumes: ${volumes.join(", ")}`);
+    }
     if (keepsContainer(run.spec)) writePhaseScript(join(dirs.orbit, "phases"));
     if (usesRunNetworks(run.spec)) {
       // Before the run's container: a failure here is the environment's, not the method's.

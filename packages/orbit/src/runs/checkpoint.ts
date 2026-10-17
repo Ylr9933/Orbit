@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { cp } from "node:fs/promises";
 import { join } from "node:path";
 import type { Run, RunCheckpoint, RunSpecInput } from "../contracts/index.ts";
@@ -57,11 +57,16 @@ export async function capture(
     }
     finishHarness(null, join(root, "orbit", "agent"));
     rmSync(join(root, "orbit", "phases"), { recursive: true, force: true });
-    if (existsSync(ctx.dirs(id).diff)) await cp(ctx.dirs(id).diff, join(root, "code.diff"));
+    if (existsSync(ctx.dirs(id).diff))
+      await cp(ctx.dirs(id).diff, join(root, "code.diff"), { preserveTimestamps: true });
     for (const [i, c] of (run.spec.after?.copy ?? []).entries()) {
       const dest = join(root, "after", String(i));
       mkdirSync(join(root, "after"), { recursive: true });
-      await cp(c.source, dest, { recursive: true, verbatimSymlinks: true });
+      await cp(c.source, dest, {
+        recursive: true,
+        verbatimSymlinks: true,
+        preserveTimestamps: true,
+      });
     }
     const filesBytes = await dirBytes(root);
     if (filesBytes === null || layerBytes + filesBytes > limit)
@@ -161,14 +166,20 @@ export function resumeSpec(run: Run, command?: string[]): RunSpecInput {
 export async function restore(ctx: Pick<Context, "dirs">, source: Run, run: Run): Promise<void> {
   const root = checkpointDir(ctx, source.id);
   const dirs = ctx.dirs(run.id);
-  for (const [from, dest] of [
-    ["orbit", dirs.orbit],
-    ["workspace", dirs.workspace],
-  ]) {
+  const paths = [["orbit", dirs.orbit], ...(source.code ? [["workspace", dirs.workspace]] : [])];
+  for (const [from] of paths)
+    if (!statSync(join(root, from as string), { throwIfNoEntry: false })?.isDirectory())
+      throw new UserError(`checkpoint files missing: ${from}`);
+  for (const [from, dest] of paths) {
     const src = join(root, from as string);
-    if (existsSync(src)) await cp(src, dest as string, { recursive: true, verbatimSymlinks: true });
+    await cp(src, dest as string, {
+      recursive: true,
+      verbatimSymlinks: true,
+      preserveTimestamps: true,
+    });
   }
-  if (existsSync(join(root, "code.diff"))) await cp(join(root, "code.diff"), dirs.diff);
+  if (existsSync(join(root, "code.diff")))
+    await cp(join(root, "code.diff"), dirs.diff, { preserveTimestamps: true });
   if (source.code) run.code = structuredClone(source.code);
   if (run.spec.after)
     run.spec.after.copy = run.spec.after.copy.map((c, i) => ({
@@ -177,6 +188,10 @@ export async function restore(ctx: Pick<Context, "dirs">, source: Run, run: Run)
     }));
   for (const [i, c] of (run.spec.after?.copy ?? []).entries()) {
     mkdirSync(join(dirs.root, "after-inputs"), { recursive: true });
-    await cp(join(root, "after", String(i)), c.source, { recursive: true, verbatimSymlinks: true });
+    await cp(join(root, "after", String(i)), c.source, {
+      recursive: true,
+      verbatimSymlinks: true,
+      preserveTimestamps: true,
+    });
   }
 }

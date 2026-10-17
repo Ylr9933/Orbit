@@ -6,6 +6,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -102,9 +104,12 @@ it("captures immutable output and native session, clears credentials and resets 
     expect.objectContaining({ "orbit.home": "fixture" }),
   );
   writeFileSync(join(ctx.dirs(run.id).output, "progress"), "changed after capture");
+  const savedProgress = join(root, "orbit", "output", "progress");
+  utimesSync(savedProgress, 946684800, 946684800);
   const next = Run.parse({ ...run, id: "next", checkpoint: null, spec: resumeSpec(run) });
   await restore(ctx, run, next);
   expect(readFileSync(join(ctx.dirs(next.id).output, "progress"), "utf8")).toBe("preserved");
+  expect(statSync(join(ctx.dirs(next.id).output, "progress")).mtimeMs).toBe(946684800000);
   expect(next.spec.timeoutMin).toBe(25);
   expect(next.spec.command.slice(0, 3)).toEqual(["codex", "exec", "resume"]);
   expect(next.spec.tags).toEqual({ resumedFrom: run.id });
@@ -149,6 +154,31 @@ it("records copy failures without publishing an unusable image", async () => {
   expect(existsSync(checkpointDir(ctx, run.id))).toBe(false);
   expect(docker.commitCheckpoint).not.toHaveBeenCalled();
 });
+
+it.each(["orbit", "workspace"])(
+  "rejects restoration when checkpoint %s is missing",
+  async (path) => {
+    const { ctx, run } = fixture();
+    run.code = {
+      repo: "/fixture",
+      subdir: "",
+      commit: null,
+      branch: null,
+      dirty: false,
+      changedFiles: [],
+      skippedSubmodules: [],
+      fileCount: 1,
+      bytes: 4,
+    };
+    mkdirSync(ctx.dirs(run.id).workspace);
+    writeFileSync(join(ctx.dirs(run.id).workspace, "seed"), "seed");
+    await capture(ctx, run.id, "container");
+    const next = Run.parse({ ...run, id: "next", checkpoint: null, spec: resumeSpec(run) });
+    rmSync(join(checkpointDir(ctx, run.id), path), { recursive: true });
+    await expect(restore(ctx, run, next)).rejects.toThrow(`checkpoint files missing: ${path}`);
+    expect(existsSync(ctx.dirs(next.id).orbit)).toBe(false);
+  },
+);
 
 it("does not silently resume a missing session or reset an exhausted time budget", async () => {
   const { ctx, run } = fixture();

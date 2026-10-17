@@ -268,9 +268,11 @@ daemon 重启时仅对仍在运行的任务重新计时。bench 的超时 issue 
 和副本文件的逻辑字节数估算，不等同于全部 Docker 磁盘用量。`Run.checkpoint` 独立记录 ready / failed、镜像内容 ID、
 大小、会话 ID、执行耗时和原因；保存失败仍执行原有采集、清理和租约释放。该失败路径跳过 hooks / after。
 不支持 process、服务容器、外部可写挂载和非快照项目；只读挂载继续引用原路径。快照 Run 不能派发到 worker。
+镜像声明的 VOLUME 不在 commit 中；未被显式挂载替换的 VOLUME 在容器启动前拒绝，避免漏存数据。
 
 `POST runs/:id/resume`（`RunResume { command? }`）与 `orbit resume <id> [--command '<shell>']` 在原 Run
 终态且清理完成后创建普通的新 Run，`parentId` 指向原 Run；镜像和快照文件只从 daemon 中读取并在入队前还原。
+缺少必需的 `/orbit` 或项目工作区快照时拒绝恢复，不创建残缺的排队 Run。文件复制保留修改时间。
 缺省使用原生 session ID 续接直接启动的 Codex / Claude 命令，保留 model / effort；command 覆盖用于离线检查，
 不运行 hooks / after。续跑请求重新注入当前 auth，沿用原执行时间的剩余预算；不恢复进程内存、tmpfs 或连接。
 原记录不变，新的 Run 不属于原 bench trial，也不自动计分。Web 概览显示快照及续接入口。删除原 Run / job 时

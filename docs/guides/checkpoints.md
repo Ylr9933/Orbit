@@ -53,13 +53,17 @@ mounted from the host as usual. Keep the same CLI version available for session 
 
 Each continuation has a new Run ID and `parentId` pointing to its source. Checkpoint files are copied
 before the new Run is queued, and its remaining execution budget excludes snapshot collection time.
-Copies avoid modifying the original failure evidence. The new Run has no benchmark trial membership
+Copies preserve file modification times and avoid modifying the original failure evidence.
+The new Run has no benchmark trial membership
 and does not replace or contribute to benchmark scores. A command override also skips verification
 and hooks. A source checkpoint cannot be deleted while a restored Run is queued or running.
 
 Limitations: local Docker only; no service containers, external writable mounts or live project
-mounts. Read-only mounts are referenced rather than copied and must remain available. Project
-workspaces and after-phase copy inputs are saved separately from the image. Process memory, GPU
+mounts. Read-only mounts are referenced rather than copied and must remain available.
+Image-declared `VOLUME` paths must be replaced by explicit mounts; otherwise checkpoint-enabled
+tasks fail before starting a container, because Docker commits exclude volume data. Project
+workspaces and after-phase copy inputs are saved separately from the image. Missing required
+checkpoint directories reject restoration before a new Run is queued. Process memory, GPU
 state, tmpfs, open shells and network connections are not restored; processes must restart from
 their saved files. A missing container or image cannot be reconstructed by this feature. An exhausted
 execution budget cannot be reset by resuming.
